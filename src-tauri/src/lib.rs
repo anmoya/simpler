@@ -1455,8 +1455,29 @@ fn git_command_reports_non_repository(output: &GitCommandOutput) -> bool {
         .contains("not a git repository")
 }
 
+fn git_command_reports_authentication_failure(output: &GitCommandOutput) -> bool {
+    let stderr = output.stderr.to_lowercase();
+    [
+        "permission denied",
+        "authentication failed",
+        "could not read username",
+        "could not read password",
+        "invalid username or password",
+        "access denied",
+        "fatal: authentication",
+    ]
+    .iter()
+    .any(|needle| stderr.contains(needle))
+}
+
 fn git_failure(context: &str, output: &GitCommandOutput) -> String {
     let details = output.stderr.trim();
+
+    if git_command_reports_authentication_failure(output) {
+        return format!(
+            "{context}: Git credentials problem - check your SSH key or credential helper ({details})"
+        );
+    }
 
     if details.is_empty() {
         format!("{context}: git exited with status {:?}", output.status_code)
@@ -2214,6 +2235,24 @@ mod tests {
     }
 
     #[test]
+    fn github_remote_connect_surfaces_authentication_failures_distinctly() {
+        let workspace = test_workspace("github_remote_connect_auth_failure");
+        let runner = StubGitRunner::new(vec![
+            Ok(git_output(Some(0), "true\n", "")),
+            Ok(git_output(
+                Some(128),
+                "",
+                "remote: Permission denied to user.\nfatal: unable to access: Authentication failed",
+            )),
+        ]);
+
+        let error = connect_github_remote(&workspace, "https://github.com/simpler/notes.git", &runner)
+            .unwrap_err();
+
+        assert!(error.contains("Git credentials problem"));
+    }
+
+    #[test]
     fn github_clone_uses_the_selected_destination_and_rejects_non_github_urls() {
         let root = test_workspace("github_clone");
         let destination = root.join("notes");
@@ -2421,6 +2460,30 @@ mod tests {
             ]
         );
         assert!(!commands.iter().any(|command| command.first().map(String::as_str) == Some("pull")));
+    }
+
+    #[test]
+    fn git_sync_surfaces_authentication_failures_distinctly() {
+        let workspace = test_workspace("git_sync_auth_failure");
+        let runner = StubGitRunner::new(vec![
+            Ok(git_output(Some(0), "true\n", "")),
+            Ok(git_output(Some(0), "origin\n", "")),
+            Ok(git_output(Some(0), "", "")),
+            Ok(git_output(Some(0), "", "")),
+            Ok(git_output(Some(0), "main\n", "")),
+            Ok(git_output(Some(0), "origin\n", "")),
+            Ok(git_output(Some(0), "abc123\trefs/heads/main\n", "")),
+            Ok(git_output(
+                Some(128),
+                "",
+                "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+            )),
+            Ok(git_output(Some(0), "", "")),
+        ]);
+
+        let error = sync_git_workspace(&workspace, &runner).unwrap_err();
+
+        assert!(error.contains("Git credentials problem"));
     }
 
     #[test]

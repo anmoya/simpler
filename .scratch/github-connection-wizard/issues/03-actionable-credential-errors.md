@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Surface Git credential failures as actionable errors
 
