@@ -1904,6 +1904,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![commands::native_command])
+        .on_window_event(|window, event| {
+            // Defense-in-depth: force the process to exit once the window is
+            // actually destroyed, in case the platform's default
+            // exit-on-last-window-closed behavior doesn't fire (see
+            // .scratch/window-close-reliability — root cause not fully
+            // pinned down, this guards against the pipeline stalling after
+            // destroy() instead of before it).
+            if let tauri::WindowEvent::Destroyed = event {
+                tauri::Manager::app_handle(window).exit(0);
+            }
+        })
         .run(tauri::generate_context!())
         .expect("failed to run Simpler");
 }

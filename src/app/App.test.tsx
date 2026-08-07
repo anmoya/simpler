@@ -6,15 +6,51 @@ import { App } from "./App";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   open: vi.fn(),
+  destroy: vi.fn(async () => undefined),
+  closeRequestedHandler: null as null | ((event: { preventDefault: () => void }) => unknown),
+  appClosingOverride: null as null | (() => void),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open }));
+vi.mock("./automaticSyncScheduler", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./automaticSyncScheduler")>();
+  return {
+    ...actual,
+    createAutomaticSyncScheduler: (options: Parameters<typeof actual.createAutomaticSyncScheduler>[0]) => {
+      const scheduler = actual.createAutomaticSyncScheduler(options);
+      return {
+        ...scheduler,
+        appClosing: mocks.appClosingOverride ?? scheduler.appClosing,
+      };
+    },
+  };
+});
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    onCloseRequested: async (handler: (event: { preventDefault: () => void }) => unknown) => {
+      mocks.closeRequestedHandler = handler;
+      return () => {
+        mocks.closeRequestedHandler = null;
+      };
+    },
+    onResized: async () => () => undefined,
+    isMaximized: async () => false,
+    minimize: async () => undefined,
+    toggleMaximize: async () => undefined,
+    close: async () => undefined,
+    destroy: mocks.destroy,
+  }),
+}));
 
 describe("App", () => {
   beforeEach(() => {
     mocks.invoke.mockReset();
     mocks.open.mockReset();
+    mocks.destroy.mockClear();
+    mocks.closeRequestedHandler = null;
+    mocks.appClosingOverride = null;
     localStorage.clear();
   });
 
@@ -1053,6 +1089,61 @@ describe("App", () => {
     window.dispatchEvent(new Event("beforeunload"));
 
     await waitFor(() => expect(gitSyncCalls).toBe(1));
+  });
+
+  it("closes the window promptly on a normal close request", async () => {
+    mocks.invoke.mockImplementation(() => {
+      throw new Error("no native calls expected");
+    });
+
+    render(<App />);
+    await waitFor(() => expect(mocks.closeRequestedHandler).not.toBeNull());
+
+    const preventDefault = vi.fn();
+    await mocks.closeRequestedHandler!({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalled();
+    expect(mocks.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("still lets the close proceed when the app-closing sync throws", async () => {
+    mocks.appClosingOverride = () => {
+      throw new Error("boom");
+    };
+    mocks.invoke.mockImplementation(() => {
+      throw new Error("no native calls expected");
+    });
+
+    render(<App />);
+    await waitFor(() => expect(mocks.closeRequestedHandler).not.toBeNull());
+
+    await expect(mocks.closeRequestedHandler!({ preventDefault: vi.fn() })).resolves.toBeUndefined();
+    expect(mocks.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("force-closes within the bounded fallback when app-closing sync never settles", async () => {
+    vi.useFakeTimers();
+    mocks.appClosingOverride = () => new Promise<void>(() => undefined) as unknown as void;
+    mocks.invoke.mockImplementation(() => {
+      throw new Error("no native calls expected");
+    });
+
+    render(<App />);
+    await vi.waitFor(() => expect(mocks.closeRequestedHandler).not.toBeNull());
+
+    const closed = mocks.closeRequestedHandler!({ preventDefault: vi.fn() });
+    let settled = false;
+    void (closed as Promise<unknown>).then(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(settled).toBe(false);
+    expect(mocks.destroy).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(settled).toBe(true);
+    expect(mocks.destroy).toHaveBeenCalledTimes(1);
   });
 
   it("persists the selected Appearance Mode and restores it on the next launch", async () => {

@@ -42,6 +42,20 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type SyncOutcome = { ok: true } | { ok: false; kind?: "conflict"; error?: string };
 
+// How long the close pipeline waits for app-closing sync before force-closing anyway.
+const closeFallbackMs = 3000;
+
+// Waits for `promise` up to `ms`, swallowing any rejection — always settles.
+function waitOrTimeout(promise: Promise<unknown>, ms: number): Promise<void> {
+  return Promise.race([
+    promise.then(
+      () => undefined,
+      () => undefined,
+    ),
+    new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  ]);
+}
+
 export function App() {
   const [appState, setAppState] = useState<AppState>(() => ({
     ...initialAppState,
@@ -74,16 +88,40 @@ export function App() {
 
   useEffect(() => {
     const requestCloseSync = () => {
-      schedulerRef.current?.appClosing();
+      try {
+        schedulerRef.current?.appClosing();
+      } catch {
+        // A throwing app-closing sync must never block the window from closing.
+      }
     };
 
     window.addEventListener("beforeunload", requestCloseSync);
 
+    // Bounded so a close request always proceeds even if app-closing sync
+    // throws, rejects, or never settles (see .scratch/window-close-reliability).
+    const runAppClosingWithFallback = () =>
+      waitOrTimeout(
+        new Promise<void>((resolve, reject) => {
+          try {
+            Promise.resolve(schedulerRef.current?.appClosing()).then(() => resolve(), reject);
+          } catch (error) {
+            reject(error);
+          }
+        }),
+        closeFallbackMs,
+      );
+
     let unlistenClose: (() => void) | null = null;
     try {
-      void getCurrentWindow()
-        .onCloseRequested(() => {
-          requestCloseSync();
+      const currentWindow = getCurrentWindow();
+      void currentWindow
+        .onCloseRequested(async (event) => {
+          // Take control of the close explicitly instead of trusting the
+          // plugin's own post-handler destroy() call, which is one of the
+          // suspected hang points (see .scratch/window-close-reliability).
+          event.preventDefault();
+          await runAppClosingWithFallback();
+          void currentWindow.destroy().catch(() => undefined);
         })
         .then((unlisten) => {
           unlistenClose = unlisten;
@@ -140,7 +178,13 @@ export function App() {
 
   const closeWindow = () => {
     try {
-      void getCurrentWindow().close();
+      const currentWindow = getCurrentWindow();
+      // In case close() itself never triggers a WINDOW_CLOSE_REQUESTED event
+      // (see .scratch/window-close-reliability), force-destroy after the
+      // same bounded fallback used for a normal close request.
+      void waitOrTimeout(currentWindow.close(), closeFallbackMs).then(() => {
+        void currentWindow.destroy().catch(() => undefined);
+      });
     } catch {
       // Browser-only tests and Vite dev do not expose Tauri window internals.
     }
