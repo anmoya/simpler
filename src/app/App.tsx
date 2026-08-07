@@ -40,7 +40,7 @@ import {
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-type SyncOutcome = { ok: true } | { ok: false; error?: string };
+type SyncOutcome = { ok: true } | { ok: false; kind?: "conflict"; error?: string };
 
 export function App() {
   const [appState, setAppState] = useState<AppState>(() => ({
@@ -213,31 +213,29 @@ export function App() {
     await openWorkspaceAtPath(response.data.workspacePath);
   };
 
-  const openGitHubConnectionWizard = () => {
+  const updateGitHubConnectionWizard = (patch: Partial<AppState["githubConnectionWizard"]>) => {
     setAppState((current) => ({
       ...current,
-      githubConnectionWizard: {
-        isOpen: true,
-        urlInput: "",
-        validationError: null,
-        isSubmitting: false,
-        submitError: null,
-      },
+      githubConnectionWizard: { ...current.githubConnectionWizard, ...patch },
     }));
+  };
+
+  const openGitHubConnectionWizard = () => {
+    updateGitHubConnectionWizard({
+      isOpen: true,
+      urlInput: "",
+      validationError: null,
+      isSubmitting: false,
+      submitError: null,
+    });
   };
 
   const closeGitHubConnectionWizard = () => {
-    setAppState((current) => ({
-      ...current,
-      githubConnectionWizard: { ...initialAppState.githubConnectionWizard },
-    }));
+    updateGitHubConnectionWizard({ ...initialAppState.githubConnectionWizard });
   };
 
   const changeGitHubWizardUrl = (url: string) => {
-    setAppState((current) => ({
-      ...current,
-      githubConnectionWizard: { ...current.githubConnectionWizard, urlInput: url, validationError: null },
-    }));
+    updateGitHubConnectionWizard({ urlInput: url, validationError: null });
   };
 
   const submitGitHubConnectionWizard = async () => {
@@ -248,47 +246,43 @@ export function App() {
 
     const remoteUrl = appState.githubConnectionWizard.urlInput.trim();
     if (!isGitHubRepositoryUrl(remoteUrl)) {
-      setAppState((current) => ({
-        ...current,
-        githubConnectionWizard: {
-          ...current.githubConnectionWizard,
-          validationError: "Enter a valid GitHub repository URL",
-        },
-      }));
+      updateGitHubConnectionWizard({ validationError: "Enter a valid GitHub repository URL" });
       return;
     }
 
-    setAppState((current) => ({
-      ...current,
-      githubConnectionWizard: { ...current.githubConnectionWizard, isSubmitting: true, submitError: null },
-    }));
+    updateGitHubConnectionWizard({ isSubmitting: true, submitError: null });
 
     const connectResponse = await connectGitHubRemote(workspacePath, remoteUrl);
     if (!connectResponse.ok || !connectResponse.data) {
-      setAppState((current) => ({
-        ...current,
-        githubConnectionWizard: {
-          ...current.githubConnectionWizard,
-          isSubmitting: false,
-          submitError: connectResponse.error ?? "No se pudo conectar el remoto de GitHub",
-        },
-      }));
+      updateGitHubConnectionWizard({
+        isSubmitting: false,
+        submitError: connectResponse.error ?? "No se pudo conectar el remoto de GitHub",
+      });
       return;
     }
 
     setAppState((current) => ({ ...current, githubRemote: connectResponse.data, workspaceError: null }));
     await refreshGitStatus(workspacePath);
 
+    if (!(schedulerRef.current?.prepareManualSync() ?? true)) {
+      updateGitHubConnectionWizard({
+        isSubmitting: false,
+        submitError: "Sync is paused until an existing conflict is resolved",
+      });
+      return;
+    }
+
     const syncOutcome = await runSyncWorkspace("manual");
     if (!syncOutcome.ok) {
-      setAppState((current) => ({
-        ...current,
-        githubConnectionWizard: {
-          ...current.githubConnectionWizard,
-          isSubmitting: false,
-          submitError: syncOutcome.error ?? "No se pudo sincronizar el Workspace",
-        },
-      }));
+      if (syncOutcome.kind === "conflict") {
+        // A conflict needs resolving in the normal Sync panel, not inside the wizard overlay.
+        closeGitHubConnectionWizard();
+        return;
+      }
+      updateGitHubConnectionWizard({
+        isSubmitting: false,
+        submitError: syncOutcome.error ?? "No se pudo sincronizar el Workspace",
+      });
       return;
     }
 
@@ -639,7 +633,7 @@ export function App() {
           workspaceError: null,
           syncEvents: recordSyncEvent(current.syncEvents, "conflict", response.data!.message),
         }));
-        return { ok: false, error: response.data.message };
+        return { ok: false, kind: "conflict", error: response.data.message };
       }
 
       schedulerRef.current?.syncSucceeded();
@@ -858,6 +852,7 @@ export function App() {
         setDialog(null);
       }}
       githubConnectionWizard={appState.githubConnectionWizard}
+      isWorkspaceGitBacked={appState.syncStatus !== "sin-git"}
       onGitHubWizardUrlChange={changeGitHubWizardUrl}
       onGitHubWizardSubmit={() => void submitGitHubConnectionWizard()}
       onGitHubWizardCancel={closeGitHubConnectionWizard}

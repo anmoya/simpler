@@ -62,6 +62,7 @@ const defaultProps: ClassicShellProps = {
     isSubmitting: false,
     submitError: null,
   },
+  isWorkspaceGitBacked: true,
   onGitHubWizardUrlChange: noop,
   onGitHubWizardSubmit: noop,
   onGitHubWizardCancel: noop,

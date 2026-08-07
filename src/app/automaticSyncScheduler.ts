@@ -14,6 +14,14 @@ export interface AutomaticSyncScheduler {
   workspaceOpened(hasProtectedChanges: boolean): void;
   localSave(): void;
   manualSync(): void;
+  /**
+   * Clears pending debounce/periodic/retry timers and marks a manual Sync
+   * in flight, without dispatching through `requestSync` — for callers that
+   * need to await the Sync result directly instead of firing-and-forgetting
+   * through the scheduler. Returns false (and does nothing) if paused for
+   * an unresolved conflict, matching manualSync()'s pause behavior.
+   */
+  prepareManualSync(): boolean;
   syncSucceeded(): void;
   syncFailed(): void;
   syncConflicted(): void;
@@ -118,6 +126,17 @@ export function createAutomaticSyncScheduler({
       clearPeriodic();
       clearRetry();
       requestScheduledSync("manual");
+    },
+
+    prepareManualSync() {
+      if (isPausedForConflict) {
+        return false;
+      }
+      clearDebounce();
+      clearPeriodic();
+      clearRetry();
+      inFlightChangeVersion = changeVersion;
+      return true;
     },
 
     syncSucceeded() {

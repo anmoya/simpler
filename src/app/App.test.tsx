@@ -202,6 +202,65 @@ describe("App", () => {
     expect(screen.getByText("https://github.com/simpler/notes.git")).toBeInTheDocument();
   });
 
+  it("keeps the wizard open with the returned error when the post-connect Sync call fails", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      if (request.domain === "workspace" && request.action === "open") {
+        return Promise.resolve({
+          ok: true,
+          domain: "workspace",
+          action: "open",
+          data: { name: "notes", path: "/tmp/notes", tree: [], metadata: { lastNotePath: null } },
+          error: null,
+        });
+      }
+      if (request.domain === "git" && request.action === "status") {
+        return Promise.resolve({
+          ok: true,
+          domain: "git",
+          action: "status",
+          data: { isRepository: true, hasRemote: false, syncStatus: "sin-remoto", conflictedFiles: [] },
+          error: null,
+        });
+      }
+      if (request.domain === "git" && request.action === "github-remote") {
+        return Promise.resolve({ ok: true, domain: "git", action: "github-remote", data: { remote: null }, error: null });
+      }
+      if (request.domain === "git" && request.action === "connect-github-remote") {
+        return Promise.resolve({
+          ok: true,
+          domain: "git",
+          action: "connect-github-remote",
+          data: { name: "origin", url: request.payload.remoteUrl },
+          error: null,
+        });
+      }
+      if (request.domain === "git" && request.action === "sync") {
+        return Promise.resolve({
+          ok: false,
+          domain: "git",
+          action: "sync",
+          data: null,
+          error: "Git credentials problem - check your SSH key or credential helper",
+        });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+
+    render(<App />);
+    await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
+
+    await user.type(screen.getByLabelText("GitHub repository URL"), "https://github.com/simpler/notes.git");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    const wizard = await screen.findByRole("dialog", { name: "GitHub Connection Wizard" });
+    expect(within(wizard).getByText("Git credentials problem - check your SSH key or credential helper")).toBeInTheDocument();
+  });
+
   it("shows an inline validation error for a non-GitHub URL without calling the native command", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue("/tmp/notes");

@@ -68,6 +68,7 @@ export interface ClassicShellProps {
   onDialogSubmit: (value: string) => void;
   onDialogCancel: () => void;
   githubConnectionWizard: GitHubConnectionWizardState;
+  isWorkspaceGitBacked: boolean;
   onGitHubWizardUrlChange: (url: string) => void;
   onGitHubWizardSubmit: () => void;
   onGitHubWizardCancel: () => void;
@@ -128,6 +129,7 @@ export function ClassicShell({
   onDialogSubmit,
   onDialogCancel,
   githubConnectionWizard,
+  isWorkspaceGitBacked,
   onGitHubWizardUrlChange,
   onGitHubWizardSubmit,
   onGitHubWizardCancel,
@@ -695,7 +697,7 @@ export function ClassicShell({
       {githubConnectionWizard.isOpen ? (
         <GitHubConnectionWizard
           state={githubConnectionWizard}
-          isGitBacked={statusLabel !== "Sin Git"}
+          isGitBacked={isWorkspaceGitBacked}
           onUrlChange={onGitHubWizardUrlChange}
           onSubmit={onGitHubWizardSubmit}
           onCancel={onGitHubWizardCancel}

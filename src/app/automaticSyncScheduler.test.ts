@@ -101,4 +101,17 @@ describe("automatic Sync scheduler", () => {
 
     expect(requestSync).toHaveBeenCalledExactlyOnceWith("manual");
   });
+
+  it("prepareManualSync clears pending timers without dispatching requestSync, and refuses while paused for a conflict", () => {
+    const requestSync = vi.fn<(trigger: AutomaticSyncTrigger) => void>();
+    const scheduler = createAutomaticSyncScheduler({ debounceMs, periodicMs, retryMs, requestSync });
+
+    scheduler.localSave();
+    expect(scheduler.prepareManualSync()).toBe(true);
+    vi.advanceTimersByTime(debounceMs);
+    expect(requestSync).not.toHaveBeenCalled();
+
+    scheduler.syncConflicted();
+    expect(scheduler.prepareManualSync()).toBe(false);
+  });
 });
