@@ -1317,23 +1317,41 @@ fn sync_git_workspace(
         )?;
     }
 
-    let pull_output = git.run(workspace_path, &["pull", "--rebase", remote, branch])?;
-    if !git_command_succeeded(&pull_output) {
-        let conflicted_files = conflicted_markdown_files(workspace_path, git)?;
-        if !conflicted_files.is_empty() {
-            return Ok(conflict_result(conflicted_files));
-        }
+    let remote_branch_output = git.run(workspace_path, &["ls-remote", "--heads", remote, branch])?;
+    if !git_command_succeeded(&remote_branch_output) {
         return Err(git_failure(
-            "failed to pull remote changes before Sync push",
-            &pull_output,
+            "failed to check remote branch before Sync",
+            &remote_branch_output,
         ));
     }
-    run_git_step(
-        git,
-        workspace_path,
-        &["push", remote, &format!("HEAD:{branch}")],
-        "failed to push Sync checkpoint",
-    )?;
+    let remote_has_branch = !remote_branch_output.stdout.trim().is_empty();
+
+    if remote_has_branch {
+        let pull_output = git.run(workspace_path, &["pull", "--rebase", remote, branch])?;
+        if !git_command_succeeded(&pull_output) {
+            let conflicted_files = conflicted_markdown_files(workspace_path, git)?;
+            if !conflicted_files.is_empty() {
+                return Ok(conflict_result(conflicted_files));
+            }
+            return Err(git_failure(
+                "failed to pull remote changes before Sync push",
+                &pull_output,
+            ));
+        }
+        run_git_step(
+            git,
+            workspace_path,
+            &["push", remote, &format!("HEAD:{branch}")],
+            "failed to push Sync checkpoint",
+        )?;
+    } else {
+        run_git_step(
+            git,
+            workspace_path,
+            &["push", "-u", remote, &format!("HEAD:{branch}")],
+            "failed to push Sync checkpoint",
+        )?;
+    }
 
     Ok(GitSyncResult {
         status: SyncResultStatus::Synced,
@@ -2316,7 +2334,7 @@ mod tests {
 
         let error = sync_git_workspace(&workspace, &SystemGitCommandRunner).unwrap_err();
 
-        assert!(error.contains("failed to pull remote changes before Sync push"));
+        assert!(error.contains("failed to check remote branch before Sync"));
         assert_eq!(
             fs::read_to_string(workspace.join("today.md")).unwrap(),
             "# Today\n\nLocal Save"
@@ -2335,6 +2353,11 @@ mod tests {
             Ok(git_output(Some(0), "origin\n", "")),
             Ok(git_output(Some(0), "", "")),
             Ok(git_output(Some(0), "[main abc123] Sync checkpoint\n", "")),
+            Ok(git_output(
+                Some(0),
+                "abc123\trefs/heads/main\n",
+                "",
+            )),
             Ok(git_output(Some(0), "", "")),
             Ok(git_output(Some(0), "", "")),
         ]);
@@ -2353,6 +2376,7 @@ mod tests {
                 vec!["remote"],
                 vec!["add", "-A"],
                 vec!["commit", "-m", "Sync checkpoint"],
+                vec!["ls-remote", "--heads", "origin", "main"],
                 vec!["pull", "--rebase", "origin", "main"],
                 vec!["push", "origin", "HEAD:main"],
             ]
@@ -2364,6 +2388,44 @@ mod tests {
                 Some("reset" | "checkout" | "restore" | "clean")
             )
         }));
+    }
+
+    #[test]
+    fn git_sync_against_an_empty_remote_skips_pull_and_pushes_with_upstream() {
+        let workspace = test_workspace("git_sync_empty_remote");
+        let runner = StubGitRunner::new(vec![
+            Ok(git_output(Some(0), "true\n", "")),
+            Ok(git_output(Some(0), "origin\n", "")),
+            Ok(git_output(Some(0), " M today.md\n", "")),
+            Ok(git_output(Some(0), "", "")),
+            Ok(git_output(Some(0), "main\n", "")),
+            Ok(git_output(Some(0), "origin\n", "")),
+            Ok(git_output(Some(0), "", "")),
+            Ok(git_output(Some(0), "[main abc123] Sync checkpoint\n", "")),
+            Ok(git_output(Some(0), "", "")),
+            Ok(git_output(Some(0), "", "")),
+        ]);
+
+        let result = sync_git_workspace(&workspace, &runner).unwrap();
+
+        assert_eq!(result.status, SyncResultStatus::Synced);
+        let commands = runner.commands();
+        assert_eq!(
+            commands,
+            vec![
+                vec!["rev-parse", "--is-inside-work-tree"],
+                vec!["remote"],
+                vec!["status", "--porcelain"],
+                vec!["diff", "--name-only", "--diff-filter=U"],
+                vec!["branch", "--show-current"],
+                vec!["remote"],
+                vec!["add", "-A"],
+                vec!["commit", "-m", "Sync checkpoint"],
+                vec!["ls-remote", "--heads", "origin", "main"],
+                vec!["push", "-u", "origin", "HEAD:main"],
+            ]
+        );
+        assert!(!commands.iter().any(|command| command.first().map(String::as_str) == Some("pull")));
     }
 
     #[test]

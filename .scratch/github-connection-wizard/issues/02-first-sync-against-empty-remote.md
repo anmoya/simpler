@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Fix first Sync against a newly connected, empty GitHub remote
 
