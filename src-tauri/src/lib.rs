@@ -1338,20 +1338,15 @@ fn sync_git_workspace(
                 &pull_output,
             ));
         }
-        run_git_step(
-            git,
-            workspace_path,
-            &["push", remote, &format!("HEAD:{branch}")],
-            "failed to push Sync checkpoint",
-        )?;
-    } else {
-        run_git_step(
-            git,
-            workspace_path,
-            &["push", "-u", remote, &format!("HEAD:{branch}")],
-            "failed to push Sync checkpoint",
-        )?;
     }
+
+    let push_target = format!("HEAD:{branch}");
+    let push_args: &[&str] = if remote_has_branch {
+        &["push", remote, &push_target]
+    } else {
+        &["push", "-u", remote, &push_target]
+    };
+    run_git_step(git, workspace_path, push_args, "failed to push Sync checkpoint")?;
 
     Ok(GitSyncResult {
         status: SyncResultStatus::Synced,
