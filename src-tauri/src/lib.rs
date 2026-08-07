@@ -1181,7 +1181,11 @@ fn connect_github_remote(
 ) -> Result<GitHubRemote, String> {
     let remote_url = normalize_github_repository_url(remote_url)?;
     let repo_probe = git.run(workspace_path, &["rev-parse", "--is-inside-work-tree"])?;
-    if !git_command_succeeded(&repo_probe) || repo_probe.stdout.trim() != "true" {
+    if !git_command_succeeded(&repo_probe) {
+        if !git_command_reports_non_repository(&repo_probe) {
+            return Err(git_failure("failed to detect git repository", &repo_probe));
+        }
+
         run_git_step(
             git,
             workspace_path,
