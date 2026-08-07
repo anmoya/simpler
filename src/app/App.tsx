@@ -33,6 +33,7 @@ import {
   moveItem,
   moveNote,
   openWorkspace,
+  postponeGitHubWizard,
   readNote,
   rememberWorkspaceNote,
   renameItem,
@@ -341,6 +342,18 @@ export function App() {
     updateGitHubConnectionWizard({ ...initialAppState.githubConnectionWizard });
   };
 
+  // Dismissing the wizard always postpones it (see CONTEXT.md's GitHub Connection
+  // Wizard entry): it never calls connect/sync, just persists the choice per
+  // Workspace so it doesn't auto-open again on this device.
+  const postponeGitHubConnectionWizard = async () => {
+    const workspacePath = appState.workspace?.path;
+    closeGitHubConnectionWizard();
+    if (!workspacePath) {
+      return;
+    }
+    await postponeGitHubWizard(workspacePath);
+  };
+
   const changeGitHubWizardUrl = (url: string) => {
     updateGitHubConnectionWizard({ urlInput: url, validationError: null });
   };
@@ -455,6 +468,15 @@ export function App() {
       refreshAdvancedGitStatus(openedWorkspace.path),
     ]);
     schedulerRef.current?.workspaceOpened(openedSyncStatus === "cambios-locales");
+
+    // syncStatus sin-git/sin-remoto already implies no remote is configured,
+    // so this never auto-opens the wizard once a remote exists.
+    if (
+      !openedWorkspace.metadata.githubWizardPostponed &&
+      (openedSyncStatus === "sin-git" || openedSyncStatus === "sin-remoto")
+    ) {
+      openGitHubConnectionWizard();
+    }
   };
 
   const selectFolder = (folderPath: string) => {
@@ -965,7 +987,7 @@ export function App() {
       isWorkspaceGitBacked={appState.syncStatus !== "sin-git"}
       onGitHubWizardUrlChange={changeGitHubWizardUrl}
       onGitHubWizardSubmit={() => void submitGitHubConnectionWizard()}
-      onGitHubWizardCancel={closeGitHubConnectionWizard}
+      onGitHubWizardCancel={() => void postponeGitHubConnectionWizard()}
       onSyncWorkspace={syncWorkspace}
       githubRemote={appState.githubRemote}
       advancedGit={appState.advancedGit}

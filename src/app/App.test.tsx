@@ -341,6 +341,165 @@ describe("App", () => {
     );
   });
 
+  describe("GitHub Connection Wizard auto-trigger and postpone", () => {
+    function mockOpenedWorkspace(syncStatus: string, githubWizardPostponed = false) {
+      mocks.invoke.mockImplementation((_command: string, { request }) => {
+        if (request.domain === "workspace" && request.action === "open") {
+          return Promise.resolve({
+            ok: true,
+            domain: "workspace",
+            action: "open",
+            data: {
+              name: "notes",
+              path: "/tmp/notes",
+              tree: [],
+              metadata: { lastNotePath: null, githubWizardPostponed },
+            },
+            error: null,
+          });
+        }
+        if (request.domain === "git" && request.action === "status") {
+          return Promise.resolve({
+            ok: true,
+            domain: "git",
+            action: "status",
+            data: { isRepository: syncStatus !== "sin-git", hasRemote: syncStatus === "sincronizado", syncStatus, conflictedFiles: [] },
+            error: null,
+          });
+        }
+        if (request.domain === "git" && request.action === "github-remote") {
+          return Promise.resolve({
+            ok: true,
+            domain: "git",
+            action: "github-remote",
+            data: { remote: syncStatus === "sincronizado" ? { name: "origin", url: "https://github.com/simpler/notes.git" } : null },
+            error: null,
+          });
+        }
+        if (request.domain === "git" && request.action === "advanced-status") {
+          return Promise.resolve({
+            ok: true,
+            domain: "git",
+            action: "advanced-status",
+            data: { isRepository: syncStatus !== "sin-git", repository: null, branch: null, latestCommit: null, pendingChanges: [] },
+            error: null,
+          });
+        }
+        if (request.domain === "workspace" && request.action === "postpone-github-wizard") {
+          return Promise.resolve({
+            ok: true,
+            domain: "workspace",
+            action: "postpone-github-wizard",
+            data: { lastNotePath: null, githubWizardPostponed: true },
+            error: null,
+          });
+        }
+        throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+      });
+    }
+
+    it("auto-opens the wizard when Workspace status is sin-git", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockOpenedWorkspace("sin-git");
+
+      render(<App />);
+      await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+
+      expect(await screen.findByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
+    });
+
+    it("auto-opens the wizard when Workspace status is sin-remoto", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockOpenedWorkspace("sin-remoto");
+
+      render(<App />);
+      await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+
+      expect(await screen.findByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
+    });
+
+    it("never auto-opens the wizard when a remote is already configured", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockOpenedWorkspace("sincronizado");
+
+      render(<App />);
+      await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("tab", { name: "Sync" }));
+
+      await waitFor(() => expect(screen.getByText("https://github.com/simpler/notes.git")).toBeInTheDocument());
+      expect(screen.queryByRole("dialog", { name: "GitHub Connection Wizard" })).not.toBeInTheDocument();
+    });
+
+    it("does not auto-open the wizard when it was previously postponed for this Workspace", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockOpenedWorkspace("sin-remoto", true);
+
+      render(<App />);
+      await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("tab", { name: "Sync" }));
+
+      await waitFor(() => expect(screen.getByRole("button", { name: "Conectar remoto GitHub" })).toBeInTheDocument());
+      expect(screen.queryByRole("dialog", { name: "GitHub Connection Wizard" })).not.toBeInTheDocument();
+    });
+
+    it("postponing closes the wizard, persists the choice, and calls no Git/connect native command", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockOpenedWorkspace("sin-remoto");
+
+      render(<App />);
+      await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+
+      expect(await screen.findByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "GitHub Connection Wizard" })).not.toBeInTheDocument());
+      expect(mocks.invoke).toHaveBeenCalledWith("native_command", {
+        request: {
+          domain: "workspace",
+          action: "postpone-github-wizard",
+          payload: { workspacePath: "/tmp/notes" },
+        },
+      });
+      expect(mocks.invoke).not.toHaveBeenCalledWith(
+        "native_command",
+        expect.objectContaining({ request: expect.objectContaining({ action: "connect-github-remote" }) }),
+      );
+      expect(mocks.invoke).not.toHaveBeenCalledWith(
+        "native_command",
+        expect.objectContaining({ request: expect.objectContaining({ domain: "git", action: "sync" }) }),
+      );
+    });
+
+    it("still lets the user open the wizard manually after postponing", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockOpenedWorkspace("sin-remoto");
+
+      render(<App />);
+      await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+
+      expect(await screen.findByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "GitHub Connection Wizard" })).not.toBeInTheDocument());
+
+      await user.click(screen.getByRole("tab", { name: "Sync" }));
+      await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
+
+      expect(screen.getByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
+    });
+  });
+
   it("opens a Global Search result as the active Raw Markdown note", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue("/tmp/notes");

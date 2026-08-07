@@ -25,6 +25,7 @@ export interface OpenedWorkspace {
 
 export interface WorkspaceMetadata {
   lastNotePath: string | null;
+  githubWizardPostponed: boolean;
 }
 
 export type SyncStatus = "sincronizado" | "cambios-locales" | "sin-git" | "sin-remoto" | "conflicto";
@@ -132,6 +133,14 @@ export function rememberWorkspaceNote(workspacePath: string, notePath: string) {
     domain: "workspace",
     action: "remember-note",
     payload: { workspacePath, notePath },
+  });
+}
+
+export function postponeGitHubWizard(workspacePath: string) {
+  return invokeNativeCommand<WorkspaceMetadata, { workspacePath: string }>({
+    domain: "workspace",
+    action: "postpone-github-wizard",
+    payload: { workspacePath },
   });
 }
 

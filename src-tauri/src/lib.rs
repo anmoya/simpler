@@ -48,6 +48,12 @@ struct RememberNotePayload {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PostponeGitHubWizardPayload {
+    workspace_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ReadNotePayload {
     workspace_path: String,
     note_path: String,
@@ -185,6 +191,7 @@ struct OpenedWorkspace {
 #[serde(rename_all = "camelCase")]
 struct WorkspaceMetadata {
     last_note_path: Option<String>,
+    github_wizard_postponed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -198,6 +205,8 @@ struct SharedWorkspaceMetadata {
 struct LocalWorkspaceMetadata {
     schema_version: u8,
     last_note_path: Option<String>,
+    #[serde(default)]
+    github_wizard_postponed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -589,6 +598,10 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
 
     if request.domain == NativeDomain::Workspace && request.action == "remember-note" {
         return native_response(request, remember_note_payload);
+    }
+
+    if request.domain == NativeDomain::Workspace && request.action == "postpone-github-wizard" {
+        return native_response(request, postpone_github_wizard_payload);
     }
 
     if request.domain == NativeDomain::Filesystem && request.action == "read-note" {
@@ -1541,13 +1554,29 @@ fn remember_note_payload(payload: serde_json::Value) -> Result<serde_json::Value
         return Err("note file is missing".to_string());
     }
 
-    let local_metadata = LocalWorkspaceMetadata {
-        schema_version: 1,
-        last_note_path: Some(payload.note_path),
-    };
+    let mut local_metadata = read_local_workspace_metadata(&workspace_path)?;
+    local_metadata.last_note_path = Some(payload.note_path);
     write_local_workspace_metadata(&workspace_path, &local_metadata)?;
     serde_json::to_value(WorkspaceMetadata {
         last_note_path: local_metadata.last_note_path,
+        github_wizard_postponed: local_metadata.github_wizard_postponed,
+    })
+    .map_err(|_| "failed to serialize workspace metadata".to_string())
+}
+
+fn postpone_github_wizard_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: PostponeGitHubWizardPayload =
+        serde_json::from_value(payload).map_err(|_| "workspacePath is required".to_string())?;
+    let workspace_path = PathBuf::from(&payload.workspace_path);
+    ensure_workspace_folder(&workspace_path)?;
+
+    let mut local_metadata = read_local_workspace_metadata(&workspace_path)?;
+    local_metadata.github_wizard_postponed = true;
+    write_local_workspace_metadata(&workspace_path, &local_metadata)?;
+
+    serde_json::to_value(WorkspaceMetadata {
+        last_note_path: local_metadata.last_note_path,
+        github_wizard_postponed: local_metadata.github_wizard_postponed,
     })
     .map_err(|_| "failed to serialize workspace metadata".to_string())
 }
@@ -1595,6 +1624,7 @@ fn ensure_workspace_metadata(workspace_path: &Path) -> Result<(), String> {
         let local_metadata = LocalWorkspaceMetadata {
             schema_version: 1,
             last_note_path: None,
+            github_wizard_postponed: false,
         };
         write_json_file(&local_metadata_path, &local_metadata)?;
     }
@@ -1604,12 +1634,16 @@ fn ensure_workspace_metadata(workspace_path: &Path) -> Result<(), String> {
 
 fn read_workspace_metadata(workspace_path: &Path) -> Result<WorkspaceMetadata, String> {
     let local_metadata = read_local_workspace_metadata(workspace_path)?;
+    let github_wizard_postponed = local_metadata.github_wizard_postponed;
     let last_note_path = local_metadata.last_note_path.filter(|note_path| {
         resolve_note_path(&workspace_path.to_string_lossy(), note_path)
             .is_ok_and(|path| path.is_file())
     });
 
-    Ok(WorkspaceMetadata { last_note_path })
+    Ok(WorkspaceMetadata {
+        last_note_path,
+        github_wizard_postponed,
+    })
 }
 
 fn read_local_workspace_metadata(workspace_path: &Path) -> Result<LocalWorkspaceMetadata, String> {
@@ -2766,6 +2800,85 @@ mod tests {
         assert_eq!(
             reopened_response.data.unwrap()["metadata"]["lastNotePath"],
             serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn postpones_the_github_wizard_and_reports_it_persisted_on_reopen() {
+        let workspace = test_workspace("postpone_github_wizard");
+
+        let open_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert_eq!(
+            open_response.data.unwrap()["metadata"]["githubWizardPostponed"],
+            serde_json::json!(false)
+        );
+
+        let postpone_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "postpone-github-wizard".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert!(postpone_response.ok);
+        assert_eq!(
+            postpone_response.data.unwrap()["githubWizardPostponed"],
+            serde_json::json!(true)
+        );
+
+        let reopened_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert_eq!(
+            reopened_response.data.unwrap()["metadata"]["githubWizardPostponed"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn postponing_the_github_wizard_preserves_the_remembered_last_note() {
+        let workspace = test_workspace("postpone_preserves_last_note");
+        fs::write(workspace.join("today.md"), "# Today").unwrap();
+
+        dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "remember-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "today.md",
+            }),
+        });
+
+        let postpone_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "postpone-github-wizard".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert_eq!(
+            postpone_response.data.unwrap()["lastNotePath"],
+            serde_json::json!("today.md")
+        );
+
+        dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "remember-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "today.md",
+            }),
+        });
+        let reopened_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert_eq!(
+            reopened_response.data.unwrap()["metadata"]["githubWizardPostponed"],
+            serde_json::json!(true)
         );
     }
 
