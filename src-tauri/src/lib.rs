@@ -1904,13 +1904,69 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![commands::native_command])
+        .setup(|app| {
+            // Root cause of window-close hangs on Linux/Wayland (see
+            // .scratch/window-close-reliability): the compositor's
+            // xdg_toplevel.close() request does reach the client (confirmed
+            // via WAYLAND_DEBUG=1 on a live Hyprland reproduction), but
+            // tao/tauri's translation of that into
+            // `WindowEvent::CloseRequested` never fires for
+            // window-manager-initiated closes — a known upstream issue
+            // (tauri-apps/tauri#10555). GTK's own `delete-event` signal is
+            // the lower-level GDK mechanism the Wayland backend uses to
+            // surface that close request, so we connect to it directly
+            // instead of relying on tao's (broken, for this case)
+            // translation — confirmed live to reliably close the window and
+            // exit the process where a bare WM close previously hung
+            // indefinitely.
+            //
+            // This handler was also tried re-routing through
+            // `Window::close()` and through manually re-emitting
+            // "tauri://close-requested" to hand control back to the
+            // frontend's `onCloseRequested` (app-closing sync, then
+            // `destroy()`). Neither reached the frontend in live testing —
+            // `emit()` returned `Ok(())` but the window only ever closed via
+            // the timer below, at the timer's exact delay, never sooner —
+            // so a window-manager-initiated close currently skips the
+            // pending-changes sync that the in-app close button still gets.
+            // That's a known, deliberate gap versus a full fix: closing
+            // reliably takes priority, and it doesn't regress today's
+            // behavior (WM closes don't sync today either). Investigating
+            // exactly why the emitted event isn't reaching the webview
+            // (possibly related to the WebKitCache corruption noted in the
+            // original investigation) is follow-up work.
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd"
+            ))]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(gtk_window) = window.gtk_window() {
+                        let app_handle_for_exit = app.handle().clone();
+                        gtk::prelude::WidgetExt::connect_delete_event(&gtk_window, move |_, _| {
+                            let app_handle = app_handle_for_exit.clone();
+                            gtk::glib::source::timeout_add_local(
+                                std::time::Duration::from_millis(1500),
+                                move || {
+                                    app_handle.exit(0);
+                                    gtk::glib::ControlFlow::Break
+                                },
+                            );
+                            gtk::glib::Propagation::Proceed
+                        });
+                    }
+                }
+            }
+            Ok(())
+        })
         .on_window_event(|window, event| {
             // Defense-in-depth: force the process to exit once the window is
             // actually destroyed, in case the platform's default
-            // exit-on-last-window-closed behavior doesn't fire (see
-            // .scratch/window-close-reliability — root cause not fully
-            // pinned down, this guards against the pipeline stalling after
-            // destroy() instead of before it).
+            // exit-on-last-window-closed behavior doesn't fire.
             if let tauri::WindowEvent::Destroyed = event {
                 tauri::Manager::app_handle(window).exit(0);
             }
