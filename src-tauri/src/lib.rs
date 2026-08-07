@@ -1194,7 +1194,7 @@ fn connect_github_remote(
         )?;
     }
 
-    run_git_step(
+    run_network_git_step(
         git,
         workspace_path,
         &["remote", "add", "origin", remote_url],
@@ -1319,7 +1319,7 @@ fn sync_git_workspace(
 
     let remote_branch_output = git.run(workspace_path, &["ls-remote", "--heads", remote, branch])?;
     if !git_command_succeeded(&remote_branch_output) {
-        return Err(git_failure(
+        return Err(network_git_failure(
             "failed to check remote branch before Sync",
             &remote_branch_output,
         ));
@@ -1333,7 +1333,7 @@ fn sync_git_workspace(
             if !conflicted_files.is_empty() {
                 return Ok(conflict_result(conflicted_files));
             }
-            return Err(git_failure(
+            return Err(network_git_failure(
                 "failed to pull remote changes before Sync push",
                 &pull_output,
             ));
@@ -1346,7 +1346,7 @@ fn sync_git_workspace(
     } else {
         &["push", "-u", remote, &push_target]
     };
-    run_git_step(git, workspace_path, push_args, "failed to push Sync checkpoint")?;
+    run_network_git_step(git, workspace_path, push_args, "failed to push Sync checkpoint")?;
 
     Ok(GitSyncResult {
         status: SyncResultStatus::Synced,
@@ -1444,6 +1444,21 @@ fn run_git_step(
     }
 }
 
+fn run_network_git_step(
+    git: &impl GitCommandRunner,
+    workspace_path: &Path,
+    args: &[&str],
+    context: &str,
+) -> Result<(), String> {
+    let output = git.run(workspace_path, args)?;
+
+    if git_command_succeeded(&output) {
+        Ok(())
+    } else {
+        Err(network_git_failure(context, &output))
+    }
+}
+
 fn git_command_succeeded(output: &GitCommandOutput) -> bool {
     output.status_code == Some(0)
 }
@@ -1473,16 +1488,27 @@ fn git_command_reports_authentication_failure(output: &GitCommandOutput) -> bool
 fn git_failure(context: &str, output: &GitCommandOutput) -> String {
     let details = output.stderr.trim();
 
-    if git_command_reports_authentication_failure(output) {
-        return format!(
-            "{context}: Git credentials problem - check your SSH key or credential helper ({details})"
-        );
-    }
-
     if details.is_empty() {
         format!("{context}: git exited with status {:?}", output.status_code)
     } else {
         format!("{context}: {details}")
+    }
+}
+
+/// Like `git_failure`, but for commands that talk to a remote (push, pull,
+/// ls-remote, remote add), where an auth-shaped stderr should be reported as
+/// a credentials problem rather than a raw Git message. Local-only commands
+/// (init, commit, checkout, rebase, status probes) should use `git_failure`
+/// instead, since a filesystem "permission denied" there isn't a credentials
+/// issue.
+fn network_git_failure(context: &str, output: &GitCommandOutput) -> String {
+    if git_command_reports_authentication_failure(output) {
+        let details = output.stderr.trim();
+        format!(
+            "{context}: Git credentials problem - check your SSH key or credential helper ({details})"
+        )
+    } else {
+        git_failure(context, output)
     }
 }
 
