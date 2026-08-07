@@ -11,7 +11,8 @@
     "test:ui": "vitest run",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "test:native": "cargo test --manifest-path src-tauri/Cargo.toml"
+    "test:native": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.2",

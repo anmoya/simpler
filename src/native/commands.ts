@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type NativeDomain = "workspace" | "filesystem" | "git" | "auth";
+export type NativeDomain = "workspace" | "filesystem" | "git" | "auth" | "update";
 
 export interface NativeCommandRequest<TPayload = unknown> {
   domain: NativeDomain;
@@ -315,4 +315,20 @@ export function storeGitHubPersonalAccessToken(token: string) {
 
 export function disconnectGitHub() {
   return invokeNativeCommand<GitHubAuthStatus>({ domain: "auth", action: "disconnect", payload: {} });
+}
+
+export type InstallKind = "appimage" | "packaged";
+
+export interface InstallKindResponse {
+  installKind: InstallKind;
+}
+
+/**
+ * Reports whether this build can self-update (AppImage) or only link out to
+ * the GitHub Release page (deb/rpm). checkForUpdate/downloadAndInstallUpdate
+ * are not yet wired — they depend on the real signing pubkey and Release
+ * endpoint from issue 02 (.scratch/in-place-updates/issues/02).
+ */
+export function getInstallKind() {
+  return invokeNativeCommand<InstallKindResponse>({ domain: "update", action: "get-install-kind", payload: {} });
 }

@@ -12,6 +12,7 @@ pub enum NativeDomain {
     Filesystem,
     Git,
     Auth,
+    Update,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,6 +327,42 @@ enum GitHubAuthState {
 struct GitHubAuthStatus {
     state: GitHubAuthState,
     message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum InstallKind {
+    Appimage,
+    Packaged,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallKindResponse {
+    install_kind: InstallKind,
+}
+
+trait EnvLookup {
+    fn var(&self, key: &str) -> Option<String>;
+}
+
+struct SystemEnvLookup;
+
+impl EnvLookup for SystemEnvLookup {
+    fn var(&self, key: &str) -> Option<String> {
+        std::env::var(key).ok()
+    }
+}
+
+/// Reports whether the running binary is an AppImage (which can self-update)
+/// vs. a packaged deb/rpm install (which can only link out to the release
+/// page), by checking for the `APPIMAGE` env var AppImage's runtime sets.
+fn get_install_kind(env: &impl EnvLookup) -> InstallKind {
+    if env.var("APPIMAGE").is_some() {
+        InstallKind::Appimage
+    } else {
+        InstallKind::Packaged
+    }
 }
 
 trait GitHubCredentialStore {
@@ -688,6 +725,10 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
         return native_response(request, disconnect_github_payload);
     }
 
+    if request.domain == NativeDomain::Update && request.action == "get-install-kind" {
+        return native_response(request, get_install_kind_payload);
+    }
+
     NativeCommandResponse {
         ok: false,
         domain: request.domain,
@@ -695,6 +736,12 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
         data: None,
         error: Some("unsupported native command".to_string()),
     }
+}
+
+fn get_install_kind_payload(_: serde_json::Value) -> Result<serde_json::Value, String> {
+    let install_kind = get_install_kind(&SystemEnvLookup);
+    serde_json::to_value(InstallKindResponse { install_kind })
+        .map_err(|_| "failed to serialize install kind".to_string())
 }
 
 fn github_auth_status_payload(_: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -2016,6 +2063,30 @@ pub fn run() {}
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    struct StubEnvLookup(Option<&'static str>);
+
+    impl EnvLookup for StubEnvLookup {
+        fn var(&self, key: &str) -> Option<String> {
+            if key == "APPIMAGE" {
+                self.0.map(str::to_string)
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn install_kind_is_appimage_when_appimage_env_var_is_set() {
+        let env = StubEnvLookup(Some("/tmp/Simpler.AppImage"));
+        assert_eq!(get_install_kind(&env), InstallKind::Appimage);
+    }
+
+    #[test]
+    fn install_kind_is_packaged_when_appimage_env_var_is_absent() {
+        let env = StubEnvLookup(None);
+        assert_eq!(get_install_kind(&env), InstallKind::Packaged);
+    }
 
     #[derive(Default)]
     struct StubCredentialStore {
