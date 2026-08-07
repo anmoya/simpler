@@ -1182,7 +1182,12 @@ fn connect_github_remote(
     let remote_url = normalize_github_repository_url(remote_url)?;
     let repo_probe = git.run(workspace_path, &["rev-parse", "--is-inside-work-tree"])?;
     if !git_command_succeeded(&repo_probe) || repo_probe.stdout.trim() != "true" {
-        return Err("Connecting a GitHub remote requires a Git-backed Workspace".to_string());
+        run_git_step(
+            git,
+            workspace_path,
+            &["init", "--initial-branch=main"],
+            "failed to initialize Git repository",
+        )?;
     }
 
     run_git_step(
@@ -2165,6 +2170,29 @@ mod tests {
             )
             .unwrap_err(),
             "A GitHub repository URL is required"
+        );
+    }
+
+    #[test]
+    fn github_remote_connect_initializes_a_repository_when_the_workspace_is_not_yet_git_backed() {
+        let workspace = test_workspace("github_remote_connect_init");
+        let runner = StubGitRunner::new(vec![
+            Ok(git_output(Some(1), "", "fatal: not a git repository")),
+            Ok(git_output(Some(0), "", "")),
+            Ok(git_output(Some(0), "", "")),
+        ]);
+
+        let remote = connect_github_remote(&workspace, "https://github.com/simpler/notes.git", &runner).unwrap();
+
+        assert_eq!(remote.name, "origin");
+        assert_eq!(remote.url, "https://github.com/simpler/notes.git");
+        assert_eq!(
+            runner.commands(),
+            vec![
+                vec!["rev-parse", "--is-inside-work-tree"],
+                vec!["init", "--initial-branch=main"],
+                vec!["remote", "add", "origin", "https://github.com/simpler/notes.git"],
+            ]
         );
     }
 

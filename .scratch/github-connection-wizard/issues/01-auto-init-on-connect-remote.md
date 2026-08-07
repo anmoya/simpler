@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Auto-init a Git repository when connecting a GitHub remote
 
