@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ClassicShell } from "../components/ClassicShell";
+import { isGitHubRepositoryUrl } from "../components/GitHubConnectionWizard";
 import { initialAppState, type AppState, type DialogRequest, type EditorError, type ThemeMode } from "./appState";
 import type { AppRoute } from "./routes";
 import {
@@ -38,6 +39,8 @@ import {
 } from "../native/commands";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+
+type SyncOutcome = { ok: true } | { ok: false; error?: string };
 
 export function App() {
   const [appState, setAppState] = useState<AppState>(() => ({
@@ -210,28 +213,86 @@ export function App() {
     await openWorkspaceAtPath(response.data.workspacePath);
   };
 
-  const connectExistingGitHubRemote = async () => {
+  const openGitHubConnectionWizard = () => {
+    setAppState((current) => ({
+      ...current,
+      githubConnectionWizard: {
+        isOpen: true,
+        urlInput: "",
+        validationError: null,
+        isSubmitting: false,
+        submitError: null,
+      },
+    }));
+  };
+
+  const closeGitHubConnectionWizard = () => {
+    setAppState((current) => ({
+      ...current,
+      githubConnectionWizard: { ...initialAppState.githubConnectionWizard },
+    }));
+  };
+
+  const changeGitHubWizardUrl = (url: string) => {
+    setAppState((current) => ({
+      ...current,
+      githubConnectionWizard: { ...current.githubConnectionWizard, urlInput: url, validationError: null },
+    }));
+  };
+
+  const submitGitHubConnectionWizard = async () => {
     const workspacePath = appState.workspace?.path;
     if (!workspacePath) {
       return;
     }
-    const remoteUrl = window.prompt("GitHub repository URL");
-    if (!remoteUrl) {
-      return;
-    }
 
-    setAppState((current) => ({ ...current, workspaceError: null }));
-    const response = await connectGitHubRemote(workspacePath, remoteUrl);
-    if (!response.ok || !response.data) {
+    const remoteUrl = appState.githubConnectionWizard.urlInput.trim();
+    if (!isGitHubRepositoryUrl(remoteUrl)) {
       setAppState((current) => ({
         ...current,
-        workspaceError: response.error ?? "No se pudo conectar el remoto de GitHub",
+        githubConnectionWizard: {
+          ...current.githubConnectionWizard,
+          validationError: "Enter a valid GitHub repository URL",
+        },
       }));
       return;
     }
 
-    setAppState((current) => ({ ...current, githubRemote: response.data, workspaceError: null }));
+    setAppState((current) => ({
+      ...current,
+      githubConnectionWizard: { ...current.githubConnectionWizard, isSubmitting: true, submitError: null },
+    }));
+
+    const connectResponse = await connectGitHubRemote(workspacePath, remoteUrl);
+    if (!connectResponse.ok || !connectResponse.data) {
+      setAppState((current) => ({
+        ...current,
+        githubConnectionWizard: {
+          ...current.githubConnectionWizard,
+          isSubmitting: false,
+          submitError: connectResponse.error ?? "No se pudo conectar el remoto de GitHub",
+        },
+      }));
+      return;
+    }
+
+    setAppState((current) => ({ ...current, githubRemote: connectResponse.data, workspaceError: null }));
     await refreshGitStatus(workspacePath);
+
+    const syncOutcome = await runSyncWorkspace("manual");
+    if (!syncOutcome.ok) {
+      setAppState((current) => ({
+        ...current,
+        githubConnectionWizard: {
+          ...current.githubConnectionWizard,
+          isSubmitting: false,
+          submitError: syncOutcome.error ?? "No se pudo sincronizar el Workspace",
+        },
+      }));
+      return;
+    }
+
+    closeGitHubConnectionWizard();
   };
 
   const openWorkspaceAtPath = async (workspacePath: string) => {
@@ -537,20 +598,20 @@ export function App() {
     schedulerRef.current?.manualSync();
   };
 
-  const runSyncWorkspace = async (trigger: AutomaticSyncTrigger) => {
+  const runSyncWorkspace = async (trigger: AutomaticSyncTrigger): Promise<SyncOutcome> => {
     const workspacePath = appStateRef.current.workspace?.path ?? activeWorkspacePathRef.current;
 
     if (!workspacePath) {
-      return;
+      return { ok: false };
     }
 
     const currentSyncStatus = appStateRef.current.syncStatus;
     if (trigger !== "manual" && trigger !== "open" && !canRunAutomaticSync(currentSyncStatus)) {
-      return;
+      return { ok: false };
     }
 
     if (currentSyncStatus === "sincronizando") {
-      return;
+      return { ok: false };
     }
 
     setAppState((current) => ({ ...current, syncStatus: "sincronizando", workspaceError: null }));
@@ -566,7 +627,7 @@ export function App() {
           workspaceError: response.error ?? "No se pudo sincronizar el Workspace",
           syncEvents: recordSyncEvent(current.syncEvents, "error", response.error ?? "No se pudo sincronizar el Workspace"),
         }));
-        return;
+        return { ok: false, error: response.error ?? "No se pudo sincronizar el Workspace" };
       }
 
       if (response.data.status === "conflict") {
@@ -578,7 +639,7 @@ export function App() {
           workspaceError: null,
           syncEvents: recordSyncEvent(current.syncEvents, "conflict", response.data!.message),
         }));
-        return;
+        return { ok: false, error: response.data.message };
       }
 
       schedulerRef.current?.syncSucceeded();
@@ -596,6 +657,7 @@ export function App() {
       }));
       await refreshGitStatus(workspacePath);
       await refreshAdvancedGitStatus(workspacePath);
+      return { ok: true };
     } catch {
       schedulerRef.current?.syncFailed();
       setAppState((current) => ({
@@ -604,6 +666,7 @@ export function App() {
         workspaceError: "No se pudo sincronizar el Workspace",
         syncEvents: recordSyncEvent(current.syncEvents, "error", "No se pudo sincronizar el Workspace"),
       }));
+      return { ok: false, error: "No se pudo sincronizar el Workspace" };
     }
   };
 
@@ -794,6 +857,10 @@ export function App() {
         }
         setDialog(null);
       }}
+      githubConnectionWizard={appState.githubConnectionWizard}
+      onGitHubWizardUrlChange={changeGitHubWizardUrl}
+      onGitHubWizardSubmit={() => void submitGitHubConnectionWizard()}
+      onGitHubWizardCancel={closeGitHubConnectionWizard}
       onSyncWorkspace={syncWorkspace}
       githubRemote={appState.githubRemote}
       advancedGit={appState.advancedGit}
@@ -804,7 +871,7 @@ export function App() {
           void refreshAdvancedGitStatus(appState.workspace.path);
         }
       }}
-      onConnectGitHubRemote={connectExistingGitHubRemote}
+      onConnectGitHubRemote={openGitHubConnectionWizard}
       conflictedFiles={appState.conflictedFiles}
       onResolveConflict={resolveConflict}
       onEditConflictManually={editConflictManually}

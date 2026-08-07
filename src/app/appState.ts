@@ -22,6 +22,14 @@ export interface WorkspaceTreeItem {
   children: WorkspaceTreeItem[];
 }
 
+export interface GitHubConnectionWizardState {
+  isOpen: boolean;
+  urlInput: string;
+  validationError: string | null;
+  isSubmitting: boolean;
+  submitError: string | null;
+}
+
 export interface AppState {
   activeRoute: AppRoute;
   workspace: WorkspaceSummary | null;
@@ -42,6 +50,7 @@ export interface AppState {
   githubRemote: GitHubRemote | null;
   advancedGit: AdvancedGitStatus | null;
   syncEvents: SyncEvent[];
+  githubConnectionWizard: GitHubConnectionWizardState;
 }
 
 export interface SyncEvent {
@@ -77,4 +86,11 @@ export const initialAppState: AppState = {
   githubRemote: null,
   advancedGit: null,
   syncEvents: [],
+  githubConnectionWizard: {
+    isOpen: false,
+    urlInput: "",
+    validationError: null,
+    isSubmitting: false,
+    submitError: null,
+  },
 };

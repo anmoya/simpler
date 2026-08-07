@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type DragEvent, type MouseEvent } from "react";
 import type { AppRoute } from "../app/routes";
-import type { EditorError, FileSearchJump, SyncEvent, ThemeMode, WorkspaceTreeItem } from "../app/appState";
+import type { EditorError, FileSearchJump, GitHubConnectionWizardState, SyncEvent, ThemeMode, WorkspaceTreeItem } from "../app/appState";
 import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { Icon } from "./icons";
+import { GitHubConnectionWizard } from "./GitHubConnectionWizard";
 
 type CommandAction = () => void;
 
@@ -66,6 +67,10 @@ export interface ClassicShellProps {
   dialog: DialogRequest | null;
   onDialogSubmit: (value: string) => void;
   onDialogCancel: () => void;
+  githubConnectionWizard: GitHubConnectionWizardState;
+  onGitHubWizardUrlChange: (url: string) => void;
+  onGitHubWizardSubmit: () => void;
+  onGitHubWizardCancel: () => void;
   isWindowMaximized: boolean;
   onMinimizeWindow: () => void;
   onToggleMaximizeWindow: () => void;
@@ -122,6 +127,10 @@ export function ClassicShell({
   dialog,
   onDialogSubmit,
   onDialogCancel,
+  githubConnectionWizard,
+  onGitHubWizardUrlChange,
+  onGitHubWizardSubmit,
+  onGitHubWizardCancel,
   isWindowMaximized,
   onMinimizeWindow,
   onToggleMaximizeWindow,
@@ -683,6 +692,15 @@ export function ClassicShell({
         <CommandHelp commands={availableCommands} onClose={() => setIsCommandHelpOpen(false)} />
       ) : null}
       {dialog ? <AppDialog dialog={dialog} onSubmit={onDialogSubmit} onCancel={onDialogCancel} /> : null}
+      {githubConnectionWizard.isOpen ? (
+        <GitHubConnectionWizard
+          state={githubConnectionWizard}
+          isGitBacked={statusLabel !== "Sin Git"}
+          onUrlChange={onGitHubWizardUrlChange}
+          onSubmit={onGitHubWizardSubmit}
+          onCancel={onGitHubWizardCancel}
+        />
+      ) : null}
       {treeContextMenu ? (
         <TreeContextMenu
           x={treeContextMenu.x}

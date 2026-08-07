@@ -123,10 +123,9 @@ describe("App", () => {
     expect(within(advanced).getByRole("button", { name: "Refresh Git details" })).toBeInTheDocument();
   });
 
-  it("connects a GitHub remote to an opened Workspace and reports connection errors", async () => {
+  it("connects a GitHub remote through the GitHubConnectionWizard, syncs, and reports connection errors", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue("/tmp/notes");
-    vi.spyOn(window, "prompt").mockReturnValue("https://github.com/simpler/notes.git");
     let connectShouldFail = true;
     mocks.invoke.mockImplementation((_command: string, { request }) => {
       if (request.domain === "workspace" && request.action === "open") {
@@ -147,6 +146,15 @@ describe("App", () => {
           error: null,
         });
       }
+      if (request.domain === "git" && request.action === "advanced-status") {
+        return Promise.resolve({
+          ok: true,
+          domain: "git",
+          action: "advanced-status",
+          data: { isRepository: true, repository: null, branch: null, latestCommit: null, pendingChanges: [] },
+          error: null,
+        });
+      }
       if (request.domain === "git" && request.action === "github-remote") {
         return Promise.resolve({ ok: true, domain: "git", action: "github-remote", data: { remote: null }, error: null });
       }
@@ -154,6 +162,15 @@ describe("App", () => {
         return Promise.resolve(connectShouldFail
           ? { ok: false, domain: "git", action: "connect-github-remote", data: null, error: "remote origin already exists" }
           : { ok: true, domain: "git", action: "connect-github-remote", data: { name: "origin", url: request.payload.remoteUrl }, error: null });
+      }
+      if (request.domain === "git" && request.action === "sync") {
+        return Promise.resolve({
+          ok: true,
+          domain: "git",
+          action: "sync",
+          data: { status: "synced", message: "Sync completed", conflictedFiles: [] },
+          error: null,
+        });
       }
       throw new Error(`unexpected native command ${request.domain}/${request.action}`);
     });
@@ -164,9 +181,15 @@ describe("App", () => {
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
 
-    expect(screen.getByText("remote origin already exists")).toBeInTheDocument();
+    const urlInput = screen.getByLabelText("GitHub repository URL");
+    await user.type(urlInput, "https://github.com/simpler/notes.git");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    expect(await screen.findByText("remote origin already exists")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
+
     connectShouldFail = false;
-    await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
+    await user.click(screen.getByRole("button", { name: "Connect" }));
 
     expect(mocks.invoke).toHaveBeenCalledWith("native_command", {
       request: {
@@ -175,7 +198,52 @@ describe("App", () => {
         payload: { workspacePath: "/tmp/notes", remoteUrl: "https://github.com/simpler/notes.git" },
       },
     });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "GitHub Connection Wizard" })).not.toBeInTheDocument());
     expect(screen.getByText("https://github.com/simpler/notes.git")).toBeInTheDocument();
+  });
+
+  it("shows an inline validation error for a non-GitHub URL without calling the native command", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      if (request.domain === "workspace" && request.action === "open") {
+        return Promise.resolve({
+          ok: true,
+          domain: "workspace",
+          action: "open",
+          data: { name: "notes", path: "/tmp/notes", tree: [], metadata: { lastNotePath: null } },
+          error: null,
+        });
+      }
+      if (request.domain === "git" && request.action === "status") {
+        return Promise.resolve({
+          ok: true,
+          domain: "git",
+          action: "status",
+          data: { isRepository: true, hasRemote: false, syncStatus: "sin-remoto", conflictedFiles: [] },
+          error: null,
+        });
+      }
+      if (request.domain === "git" && request.action === "github-remote") {
+        return Promise.resolve({ ok: true, domain: "git", action: "github-remote", data: { remote: null }, error: null });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+
+    render(<App />);
+    await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
+
+    await user.type(screen.getByLabelText("GitHub repository URL"), "https://gitlab.com/simpler/notes.git");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+
+    expect(await screen.findByText("Enter a valid GitHub repository URL")).toBeInTheDocument();
+    expect(mocks.invoke).not.toHaveBeenCalledWith(
+      "native_command",
+      expect.objectContaining({ request: expect.objectContaining({ action: "connect-github-remote" }) }),
+    );
   });
 
   it("opens a Global Search result as the active Raw Markdown note", async () => {

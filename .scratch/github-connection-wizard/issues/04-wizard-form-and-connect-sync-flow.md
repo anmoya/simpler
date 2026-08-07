@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # GitHub Connection Wizard: inline form and connect-then-sync flow
 
