@@ -67,3 +67,7 @@ _Avoid_: Palette, skin, style
 **Appearance Mode**:
 The light/dark variant selected within the current Theme.
 _Avoid_: Color scheme, dark mode (when referring to the axis rather than the dark value specifically)
+
+**Close Sync Prompt**:
+A blocking dialog shown when the in-app close action is used while changes are pending Sync, letting the user choose to wait for Sync to finish or close without it. Always resolves to closing — it never cancels the close outright. Not shown for a window-manager-initiated close (that path bypasses the app's JS entirely).
+_Avoid_: Confirm dialog, exit warning

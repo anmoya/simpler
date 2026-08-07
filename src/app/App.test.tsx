@@ -1146,6 +1146,225 @@ describe("App", () => {
     expect(mocks.destroy).toHaveBeenCalledTimes(1);
   });
 
+  describe("Close Sync Prompt", () => {
+    function mockWorkspaceWithGitSync(syncHandler: () => { status: string; message: string; conflictedFiles?: string[] } | null) {
+      mocks.invoke.mockImplementation((_command: string, { request }) => {
+        if (request.domain === "workspace" && request.action === "open") {
+          return Promise.resolve({
+            ok: true,
+            domain: "workspace",
+            action: "open",
+            data: {
+              name: "notes",
+              path: "/tmp/notes",
+              tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }],
+              metadata: { lastNotePath: "today.md" },
+            },
+            error: null,
+          });
+        }
+        if (request.domain === "filesystem" && request.action === "read-note") {
+          return Promise.resolve({ ok: true, domain: "filesystem", action: "read-note", data: { content: "# Today" }, error: null });
+        }
+        if (request.domain === "filesystem" && request.action === "write-note") {
+          return Promise.resolve({
+            ok: true,
+            domain: "filesystem",
+            action: "write-note",
+            data: { content: request.payload.content },
+            error: null,
+          });
+        }
+        if (request.domain === "workspace" && request.action === "remember-note") {
+          return Promise.resolve({
+            ok: true,
+            domain: "workspace",
+            action: "remember-note",
+            data: { lastNotePath: request.payload.notePath },
+            error: null,
+          });
+        }
+        if (request.domain === "git" && request.action === "status") {
+          return Promise.resolve({
+            ok: true,
+            domain: "git",
+            action: "status",
+            data: { isRepository: true, hasRemote: true, syncStatus: "sincronizado", conflictedFiles: [] },
+            error: null,
+          });
+        }
+        if (request.domain === "git" && request.action === "sync") {
+          const result = syncHandler();
+          if (result === null) {
+            return Promise.resolve({ ok: false, domain: "git", action: "sync", data: null, error: "No se pudo sincronizar el Workspace" });
+          }
+          return Promise.resolve({ ok: true, domain: "git", action: "sync", data: result, error: null });
+        }
+        throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+      });
+    }
+
+    async function openWorkspaceAndMakePending(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+      await user.type(editable, "{End}\nmore text");
+    }
+
+    it("closes immediately with no prompt when there are no pending changes", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockWorkspaceWithGitSync(() => ({ status: "synced", message: "Sync completed", conflictedFiles: [] }));
+
+      render(<App />);
+      await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+
+      await user.click(screen.getByRole("button", { name: "Cerrar" }));
+
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(1));
+    });
+
+    it("shows the prompt with pending changes; waiting for sync closes automatically on success", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockWorkspaceWithGitSync(() => ({ status: "synced", message: "Sync completed", conflictedFiles: [] }));
+
+      render(<App />);
+      await openWorkspaceAndMakePending(user);
+
+      await user.click(screen.getByRole("button", { name: "Cerrar" }));
+      expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Esperar a Sync" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Esperar a Sync" }));
+
+      await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(1));
+    });
+
+    it("closing without sync closes immediately without waiting for Sync", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      let syncCalled = false;
+      mockWorkspaceWithGitSync(() => {
+        syncCalled = true;
+        return { status: "synced", message: "Sync completed", conflictedFiles: [] };
+      });
+
+      render(<App />);
+      await openWorkspaceAndMakePending(user);
+
+      await user.click(screen.getByRole("button", { name: "Cerrar" }));
+      await user.click(screen.getByRole("button", { name: "Cerrar sin sincronizar" }));
+
+      await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(1));
+      expect(syncCalled).toBe(false);
+    });
+
+    it("does not re-run Sync when close() re-triggers the onCloseRequested listener after 'close without sync'", async () => {
+      // In real Tauri, currentWindow.close() re-emits close-requested, which the
+      // app's own onCloseRequested listener (App.tsx) intercepts and would call
+      // appClosing() from — this must be suppressed once the Close Sync Prompt
+      // has already decided to skip Sync, or the user's choice is silently overridden.
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      let syncCalled = false;
+      mockWorkspaceWithGitSync(() => {
+        syncCalled = true;
+        return { status: "synced", message: "Sync completed", conflictedFiles: [] };
+      });
+
+      render(<App />);
+      await openWorkspaceAndMakePending(user);
+      await waitFor(() => expect(mocks.closeRequestedHandler).not.toBeNull());
+
+      await user.click(screen.getByRole("button", { name: "Cerrar" }));
+      await user.click(screen.getByRole("button", { name: "Cerrar sin sincronizar" }));
+
+      // Simulate close() re-emitting close-requested, as it does in real Tauri.
+      await mocks.closeRequestedHandler!({ preventDefault: vi.fn() });
+
+      expect(syncCalled).toBe(false);
+    });
+
+    it("does not force-close via the bounded fallback timers while the prompt is open and undecided", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockWorkspaceWithGitSync(() => ({ status: "synced", message: "Sync completed", conflictedFiles: [] }));
+
+      render(<App />);
+      await openWorkspaceAndMakePending(user);
+
+      await user.click(screen.getByRole("button", { name: "Cerrar" }));
+      expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(mocks.destroy).not.toHaveBeenCalled();
+    });
+
+    it("shows the error state and offers close-without-sync when Sync fails while waiting", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockWorkspaceWithGitSync(() => null);
+
+      render(<App />);
+      await openWorkspaceAndMakePending(user);
+
+      await user.click(screen.getByRole("button", { name: "Cerrar" }));
+      await user.click(screen.getByRole("button", { name: "Esperar a Sync" }));
+
+      const dialog = await screen.findByRole("alertdialog");
+      expect(within(dialog).getByText("No se pudo sincronizar el Workspace")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Esperar a Sync" })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Cerrar sin sincronizar" }));
+      await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(1));
+    });
+
+    it("shows the error state when Sync conflicts while waiting", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockWorkspaceWithGitSync(() => ({ status: "conflict", message: "Sync needs conflict resolution", conflictedFiles: ["today.md"] }));
+
+      render(<App />);
+      await openWorkspaceAndMakePending(user);
+
+      await user.click(screen.getByRole("button", { name: "Cerrar" }));
+      await user.click(screen.getByRole("button", { name: "Esperar a Sync" }));
+
+      expect(await screen.findByText("Sync needs conflict resolution")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Esperar a Sync" })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Cerrar sin sincronizar" }));
+      await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(1));
+    });
+
+    it("skips the wait option and shows the error state immediately when a conflict is already paused", async () => {
+      const user = userEvent.setup();
+      mocks.open.mockResolvedValue("/tmp/notes");
+      mockWorkspaceWithGitSync(() => ({ status: "conflict", message: "Sync needs conflict resolution", conflictedFiles: ["today.md"] }));
+
+      render(<App />);
+      await openWorkspaceAndMakePending(user);
+
+      await user.click(screen.getByRole("tab", { name: "Sync" }));
+      await user.click(screen.getByRole("button", { name: "Sync now" }));
+      expect(await screen.findByRole("region", { name: "Conflicted Markdown files" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Cerrar" }));
+
+      expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Esperar a Sync" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Cerrar sin sincronizar" })).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Cerrar sin sincronizar" }));
+      await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(1));
+    });
+  });
+
   it("persists the selected Appearance Mode and restores it on the next launch", async () => {
     const user = userEvent.setup();
 

@@ -70,6 +70,9 @@ const defaultProps: ClassicShellProps = {
   onMinimizeWindow: noop,
   onToggleMaximizeWindow: noop,
   onCloseWindow: noop,
+  closeSyncPrompt: null,
+  onWaitForSyncBeforeClose: noop,
+  onCloseWithoutSync: noop,
 };
 
 function renderShell(props: Partial<ClassicShellProps> = {}) {

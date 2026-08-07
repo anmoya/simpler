@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ClassicShell } from "../components/ClassicShell";
 import { isGitHubRepositoryUrl } from "../components/GitHubConnectionWizard";
-import { initialAppState, type AppState, type DialogRequest, type EditorError, type ThemeMode } from "./appState";
+import {
+  initialAppState,
+  type AppState,
+  type CloseSyncPromptState,
+  type DialogRequest,
+  type EditorError,
+  type ThemeMode,
+} from "./appState";
 import type { AppRoute } from "./routes";
 import {
   createAutomaticSyncScheduler,
@@ -42,6 +49,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type SyncOutcome = { ok: true } | { ok: false; kind?: "conflict"; error?: string };
 
+const syncPausedForConflictMessage = "Sync is paused until an existing conflict is resolved";
+
 // How long the close pipeline waits for app-closing sync before force-closing anyway.
 const closeFallbackMs = 3000;
 
@@ -63,6 +72,7 @@ export function App() {
     themeMode: readThemeMode(),
   }));
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
+  const [closeSyncPrompt, setCloseSyncPrompt] = useState<CloseSyncPromptState | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
   const requestPrompt = (title: string, defaultValue = "") =>
@@ -74,6 +84,11 @@ export function App() {
   const activeWorkspacePathRef = useRef<string | null>(null);
   const syncWorkspaceRef = useRef<(trigger: AutomaticSyncTrigger) => void>(() => undefined);
   const schedulerRef = useRef<AutomaticSyncScheduler | null>(null);
+  // Set right before a decided close (via performClose) calls currentWindow.close(),
+  // which re-triggers onCloseRequested below — without this, that listener's own
+  // appClosing() call would silently re-run Sync after the Close Sync Prompt already
+  // decided to skip it, contradicting the user's "close without sync" choice.
+  const skipCloseRequestedSyncRef = useRef(false);
 
   appStateRef.current = appState;
 
@@ -99,8 +114,13 @@ export function App() {
 
     // Bounded so a close request always proceeds even if app-closing sync
     // throws, rejects, or never settles (see .scratch/window-close-reliability).
-    const runAppClosingWithFallback = () =>
-      waitOrTimeout(
+    const runAppClosingWithFallback = () => {
+      if (skipCloseRequestedSyncRef.current) {
+        skipCloseRequestedSyncRef.current = false;
+        return Promise.resolve();
+      }
+
+      return waitOrTimeout(
         new Promise<void>((resolve, reject) => {
           try {
             Promise.resolve(schedulerRef.current?.appClosing()).then(() => resolve(), reject);
@@ -110,6 +130,7 @@ export function App() {
         }),
         closeFallbackMs,
       );
+    };
 
     let unlistenClose: (() => void) | null = null;
     try {
@@ -176,9 +197,15 @@ export function App() {
     }
   };
 
-  const closeWindow = () => {
+  // Only invoked once the user has decided (or there was nothing to decide),
+  // so the bounded close-fallback timer below never starts while the Close
+  // Sync Prompt is still waiting on input.
+  const performClose = () => {
     try {
       const currentWindow = getCurrentWindow();
+      // close() re-triggers onCloseRequested above; the Close Sync Prompt has
+      // already made the sync decision, so that listener must not run appClosing() again.
+      skipCloseRequestedSyncRef.current = true;
       // In case close() itself never triggers a WINDOW_CLOSE_REQUESTED event
       // (see .scratch/window-close-reliability), force-destroy after the
       // same bounded fallback used for a normal close request.
@@ -188,6 +215,42 @@ export function App() {
     } catch {
       // Browser-only tests and Vite dev do not expose Tauri window internals.
     }
+  };
+
+  const closeWindow = () => {
+    if (!(schedulerRef.current?.hasPendingChanges() ?? false)) {
+      performClose();
+      return;
+    }
+
+    if (schedulerRef.current?.isPausedForConflict()) {
+      setCloseSyncPrompt({ kind: "error", message: syncPausedForConflictMessage });
+      return;
+    }
+
+    setCloseSyncPrompt({ kind: "choice" });
+  };
+
+  const waitForSyncBeforeClose = async () => {
+    if (!(schedulerRef.current?.prepareManualSync() ?? true)) {
+      setCloseSyncPrompt({ kind: "error", message: syncPausedForConflictMessage });
+      return;
+    }
+
+    setCloseSyncPrompt({ kind: "waiting" });
+    const outcome = await runSyncWorkspace("close");
+    if (outcome.ok) {
+      setCloseSyncPrompt(null);
+      performClose();
+      return;
+    }
+
+    setCloseSyncPrompt({ kind: "error", message: outcome.error ?? "No se pudo sincronizar el Workspace" });
+  };
+
+  const closeWithoutSync = () => {
+    setCloseSyncPrompt(null);
+    performClose();
   };
 
   const openRoute = (activeRoute: AppRoute) => {
@@ -311,7 +374,7 @@ export function App() {
     if (!(schedulerRef.current?.prepareManualSync() ?? true)) {
       updateGitHubConnectionWizard({
         isSubmitting: false,
-        submitError: "Sync is paused until an existing conflict is resolved",
+        submitError: syncPausedForConflictMessage,
       });
       return;
     }
@@ -878,6 +941,9 @@ export function App() {
       onMinimizeWindow={minimizeWindow}
       onToggleMaximizeWindow={toggleMaximizeWindow}
       onCloseWindow={closeWindow}
+      closeSyncPrompt={closeSyncPrompt}
+      onWaitForSyncBeforeClose={() => void waitForSyncBeforeClose()}
+      onCloseWithoutSync={closeWithoutSync}
       dialog={dialog}
       onDialogSubmit={(value) => {
         if (dialog?.kind === "prompt") {

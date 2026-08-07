@@ -10,6 +10,15 @@ export type DialogRequest =
   | { kind: "prompt"; title: string; defaultValue: string; resolve: (value: string | null) => void }
   | { kind: "confirm"; title: string; resolve: (value: boolean) => void };
 
+// State machine for the Close Sync Prompt (see CONTEXT.md): "choice" offers
+// wait-for-sync/close-without-sync, "waiting" is the in-flight Sync, and
+// "error" (reached from a failed/conflicted Sync, or a pre-existing paused
+// conflict) offers only close-without-sync.
+export type CloseSyncPromptState =
+  | { kind: "choice" }
+  | { kind: "waiting" }
+  | { kind: "error"; message: string };
+
 export interface WorkspaceSummary {
   name: string;
   path: string;

@@ -27,6 +27,10 @@ export interface AutomaticSyncScheduler {
   syncConflicted(): void;
   appClosing(): void;
   dispose(): void;
+  /** Whether there are changes that haven't made it through a successful Sync yet. */
+  hasPendingChanges(): boolean;
+  /** Whether automatic Sync is paused because of an unresolved conflict. */
+  isPausedForConflict(): boolean;
 }
 
 const defaultDebounceMs = 45_000;
@@ -184,6 +188,14 @@ export function createAutomaticSyncScheduler({
       clearDebounce();
       clearPeriodic();
       clearRetry();
+    },
+
+    hasPendingChanges() {
+      return hasPendingChanges;
+    },
+
+    isPausedForConflict() {
+      return isPausedForConflict;
     },
   };
 }

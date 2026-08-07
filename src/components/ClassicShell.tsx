@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState, type DragEvent, type MouseEvent } from "react";
 import type { AppRoute } from "../app/routes";
-import type { EditorError, FileSearchJump, GitHubConnectionWizardState, SyncEvent, ThemeMode, WorkspaceTreeItem } from "../app/appState";
+import type {
+  CloseSyncPromptState,
+  EditorError,
+  FileSearchJump,
+  GitHubConnectionWizardState,
+  SyncEvent,
+  ThemeMode,
+  WorkspaceTreeItem,
+} from "../app/appState";
 import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -76,6 +84,9 @@ export interface ClassicShellProps {
   onMinimizeWindow: () => void;
   onToggleMaximizeWindow: () => void;
   onCloseWindow: () => void;
+  closeSyncPrompt: CloseSyncPromptState | null;
+  onWaitForSyncBeforeClose: () => void;
+  onCloseWithoutSync: () => void;
 }
 
 export function ClassicShell({
@@ -137,6 +148,9 @@ export function ClassicShell({
   onMinimizeWindow,
   onToggleMaximizeWindow,
   onCloseWindow,
+  closeSyncPrompt,
+  onWaitForSyncBeforeClose,
+  onCloseWithoutSync,
 }: ClassicShellProps) {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCommandHelpOpen, setIsCommandHelpOpen] = useState(false);
@@ -694,6 +708,13 @@ export function ClassicShell({
         <CommandHelp commands={availableCommands} onClose={() => setIsCommandHelpOpen(false)} />
       ) : null}
       {dialog ? <AppDialog dialog={dialog} onSubmit={onDialogSubmit} onCancel={onDialogCancel} /> : null}
+      {closeSyncPrompt ? (
+        <CloseSyncPromptDialog
+          state={closeSyncPrompt}
+          onWaitForSync={onWaitForSyncBeforeClose}
+          onCloseWithoutSync={onCloseWithoutSync}
+        />
+      ) : null}
       {githubConnectionWizard.isOpen ? (
         <GitHubConnectionWizard
           state={githubConnectionWizard}
@@ -766,6 +787,61 @@ function AppDialog({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function CloseSyncPromptDialog({
+  state,
+  onWaitForSync,
+  onCloseWithoutSync,
+}: {
+  state: CloseSyncPromptState;
+  onWaitForSync: () => void;
+  onCloseWithoutSync: () => void;
+}) {
+  return (
+    <div className="dialog-overlay" role="presentation">
+      <div
+        className="command-popover app-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-label="Cerrar con Sync pendiente"
+      >
+        {state.kind === "choice" ? (
+          <>
+            <p className="app-dialog__title">Hay cambios sin sincronizar. ¿Esperar a que termine Sync antes de cerrar?</p>
+            <div className="app-dialog__actions">
+              <button type="button" onClick={onCloseWithoutSync}>
+                Cerrar sin sincronizar
+              </button>
+              <button type="button" className="app-dialog__confirm" onClick={onWaitForSync}>
+                Esperar a Sync
+              </button>
+            </div>
+          </>
+        ) : null}
+        {state.kind === "waiting" ? (
+          <>
+            <p className="app-dialog__title">Sincronizando antes de cerrar…</p>
+            <div className="app-dialog__actions">
+              <button type="button" onClick={onCloseWithoutSync}>
+                Cerrar sin sincronizar
+              </button>
+            </div>
+          </>
+        ) : null}
+        {state.kind === "error" ? (
+          <>
+            <p className="app-dialog__title">{state.message}</p>
+            <div className="app-dialog__actions">
+              <button type="button" className="app-dialog__confirm" onClick={onCloseWithoutSync}>
+                Cerrar sin sincronizar
+              </button>
+            </div>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
