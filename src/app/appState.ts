@@ -39,6 +39,12 @@ export interface GitHubConnectionWizardState {
   submitError: string | null;
 }
 
+// Only the states the notice actually renders something for — "idle"/"checking"/"up-to-date" show no notice.
+export type UpdateNoticeState =
+  | { kind: "downloading" }
+  | { kind: "update-ready"; version: string | undefined }
+  | { kind: "update-available"; version: string | undefined };
+
 export interface AppState {
   activeRoute: AppRoute;
   workspace: WorkspaceSummary | null;
@@ -60,6 +66,7 @@ export interface AppState {
   advancedGit: AdvancedGitStatus | null;
   syncEvents: SyncEvent[];
   githubConnectionWizard: GitHubConnectionWizardState;
+  updateNotice: UpdateNoticeState | null;
 }
 
 export interface SyncEvent {
@@ -102,4 +109,5 @@ export const initialAppState: AppState = {
     isSubmitting: false,
     submitError: null,
   },
+  updateNotice: null,
 };

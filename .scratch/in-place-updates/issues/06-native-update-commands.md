@@ -1,6 +1,8 @@
-Status: ready-for-human
+Status: done
 
-Note: `update` domain + `getInstallKind` implemented and unit-tested (pure fn against injected `EnvLookup` trait). `checkForUpdate`/`downloadAndInstallUpdate` and the `tauri-plugin-updater` dependency/config were NOT added — they need the real public key + Release endpoint from issue 02, and wiring them also requires deciding how to make the sync `native_command` dispatch handle the plugin's async check/download calls (today's `dispatch_native_command` is fully synchronous). Left for whoever picks up issue 02.
+`tauri-plugin-updater` added (Cargo.toml + registered in `run()`), configured in `tauri.conf.json` with the real pubkey from issue 02 and endpoint `https://github.com/anmoya/simpler/releases/latest/download/latest.json` (the manifest path `tauri-action` publishes to on a GitHub Release). `updater:default` capability added.
+
+Async/sync split: `checkForUpdate`/`downloadAndInstallUpdate` need an `AppHandle`, which `dispatch_native_command` doesn't have (it's a plain fn over `serde_json::Value`, used directly in Rust unit tests too). Rather than making the whole sync dispatcher async, `commands::native_command` became `async fn(app: AppHandle, request)` and intercepts these two `Update`-domain actions before calling into `dispatch_native_command`, routing them to a new `handle_update_command` that awaits the plugin. `getInstallKind` (pure, no AppHandle needed) stays on the sync path. `checkForUpdate`/`downloadAndInstallUpdate` are thin passthroughs per the spec's testing guidance — not unit tested, since that would mean testing the plugin's own behavior.
 
 # Native update commands (checkForUpdate, downloadAndInstallUpdate, getInstallKind)
 

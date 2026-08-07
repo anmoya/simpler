@@ -1,6 +1,6 @@
-Status: blocked
+Status: done
 
-Note: genuinely blocked — `checkForUpdate`/`downloadAndInstallUpdate` (issue 06) don't exist yet, since they need the real pubkey/endpoint from issue 02 and a decision on how the sync `native_command` dispatch handles the plugin's async calls. Wiring `App.tsx`/`ClassicShell.tsx` to non-existent commands would mean fabricating the integration. `updateScheduler` (issue 05) and `getInstallKind` (issue 06) are both ready and tested for whoever picks this up next.
+`updateScheduler` wired into `App.tsx` (mount-time effect: fetches install kind, creates the scheduler, calls `appOpened()`, and reflects scheduler state into `appState.updateNotice`). `ClassicShell.tsx` renders a non-blocking `role="status"` notice in the footer: "Downloading update…" while downloading, "Install & Restart" button once ready (AppImage), "View Release" link to the GitHub Release page for packaged (deb/rpm) installs, nothing for idle/checking/up-to-date. Added a `restart-to-apply-update` native action (calls `app.restart()`) for the button. Tests added in `ClassicShell.test.tsx` covering all four notice states.
 
 # Update notice wired end-to-end in the UI
 

@@ -342,6 +342,15 @@ struct InstallKindResponse {
     install_kind: InstallKind,
 }
 
+#[cfg(not(test))]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCheckResponse {
+    update_available: bool,
+    version: Option<String>,
+    notes: Option<String>,
+}
+
 trait EnvLookup {
     fn var(&self, key: &str) -> Option<String>;
 }
@@ -728,6 +737,11 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
     if request.domain == NativeDomain::Update && request.action == "get-install-kind" {
         return native_response(request, get_install_kind_payload);
     }
+
+    // "check-for-update" and "download-and-install-update" (Update domain)
+    // need an AppHandle for tauri-plugin-updater and are handled in
+    // commands::native_command via handle_update_command before reaching
+    // this sync dispatcher.
 
     NativeCommandResponse {
         ok: false,
@@ -1972,11 +1986,70 @@ fn folder_rank(item: &WorkspaceTreeItem) -> u8 {
 
 #[cfg(not(test))]
 mod commands {
-    use super::{dispatch_native_command, NativeCommandRequest, NativeCommandResponse};
+    use super::{dispatch_native_command, handle_update_command, NativeCommandRequest, NativeCommandResponse, NativeDomain};
 
     #[tauri::command]
-    pub fn native_command(request: NativeCommandRequest) -> NativeCommandResponse {
+    pub async fn native_command(app: tauri::AppHandle, request: NativeCommandRequest) -> NativeCommandResponse {
+        if request.domain == NativeDomain::Update
+            && (request.action == "check-for-update"
+                || request.action == "download-and-install-update"
+                || request.action == "restart-to-apply-update")
+        {
+            return handle_update_command(app, request).await;
+        }
         dispatch_native_command(request)
+    }
+}
+
+/// Handles the two `update` actions that need an `AppHandle` (and are
+/// therefore async, unlike the rest of `dispatch_native_command`) because
+/// `tauri-plugin-updater`'s check/download API requires one.
+#[cfg(not(test))]
+async fn handle_update_command(app: tauri::AppHandle, request: NativeCommandRequest) -> NativeCommandResponse {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let result: Result<serde_json::Value, String> = async {
+        // Restart doesn't need the updater handle, and `app.restart()` never
+        // returns (it exits and relaunches the process) — handle it before
+        // reaching for `app.updater()`, which the other two actions need.
+        if request.action == "restart-to-apply-update" {
+            app.restart();
+        }
+
+        let updater = app.updater().map_err(|error| error.to_string())?;
+        match request.action.as_str() {
+            "check-for-update" => {
+                let update = updater.check().await.map_err(|error| format!("failed to check for update: {error}"))?;
+                let response = match update {
+                    Some(update) => UpdateCheckResponse {
+                        update_available: true,
+                        version: Some(update.version.clone()),
+                        notes: update.body.clone(),
+                    },
+                    None => UpdateCheckResponse { update_available: false, version: None, notes: None },
+                };
+                serde_json::to_value(response).map_err(|_| "failed to serialize update check result".to_string())
+            }
+            "download-and-install-update" => {
+                let update = updater
+                    .check()
+                    .await
+                    .map_err(|error| format!("failed to check for update: {error}"))?
+                    .ok_or_else(|| "no update available to install".to_string())?;
+                update
+                    .download_and_install(|_, _| {}, || {})
+                    .await
+                    .map_err(|error| format!("failed to download and install update: {error}"))?;
+                Ok(serde_json::Value::Null)
+            }
+            _ => Err("unsupported native command".to_string()),
+        }
+    }
+    .await;
+
+    match result {
+        Ok(data) => NativeCommandResponse { ok: true, domain: request.domain, action: request.action, data: Some(data), error: None },
+        Err(error) => NativeCommandResponse { ok: false, domain: request.domain, action: request.action, data: None, error: Some(error) },
     }
 }
 
@@ -1984,6 +2057,7 @@ mod commands {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![commands::native_command])
         .setup(|app| {
             // Root cause of window-close hangs on Linux/Wayland (see

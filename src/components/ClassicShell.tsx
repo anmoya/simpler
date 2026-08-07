@@ -7,6 +7,7 @@ import type {
   GitHubConnectionWizardState,
   SyncEvent,
   ThemeMode,
+  UpdateNoticeState,
   WorkspaceTreeItem,
 } from "../app/appState";
 import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult } from "../native/commands";
@@ -87,7 +88,11 @@ export interface ClassicShellProps {
   closeSyncPrompt: CloseSyncPromptState | null;
   onWaitForSyncBeforeClose: () => void;
   onCloseWithoutSync: () => void;
+  updateNotice: UpdateNoticeState | null;
+  onInstallAndRestart: () => void;
 }
+
+const releasePageUrl = "https://github.com/anmoya/simpler/releases/latest";
 
 export function ClassicShell({
   activeRoute,
@@ -151,6 +156,8 @@ export function ClassicShell({
   closeSyncPrompt,
   onWaitForSyncBeforeClose,
   onCloseWithoutSync,
+  updateNotice,
+  onInstallAndRestart,
 }: ClassicShellProps) {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCommandHelpOpen, setIsCommandHelpOpen] = useState(false);
@@ -699,6 +706,27 @@ export function ClassicShell({
 
       <footer className="status-bar" aria-label="Workspace status">
         <span>{statusLabel}</span>
+        {updateNotice ? (
+          <span className="update-notice" role="status">
+            {updateNotice.kind === "downloading" ? (
+              "Downloading update…"
+            ) : updateNotice.kind === "update-ready" ? (
+              <>
+                Update ready{updateNotice.version ? ` (v${updateNotice.version})` : ""} — restart to install.{" "}
+                <button type="button" onClick={onInstallAndRestart}>
+                  Install &amp; Restart
+                </button>
+              </>
+            ) : (
+              <>
+                Update available{updateNotice.version ? ` (v${updateNotice.version})` : ""}.{" "}
+                <a href={releasePageUrl} target="_blank" rel="noreferrer">
+                  View Release
+                </a>
+              </>
+            )}
+          </span>
+        ) : null}
         <span>Escritorio</span>
       </footer>
       {isCommandPaletteOpen ? (

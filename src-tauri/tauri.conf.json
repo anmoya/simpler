@@ -28,5 +28,11 @@
     "active": true,
     "targets": ["deb", "rpm", "appimage"],
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhENEZEQjgzOEQwRDZBQ0IKUldUTGFnMk5nOXRQalNaOXovaGJtRGU0elY0TURjSmFmZXpjRUg5ck5ncnEyU0xPYUxUeUNtT1gK",
+      "endpoints": ["https://github.com/anmoya/simpler/releases/latest/download/latest.json"]
+    }
   }
 }

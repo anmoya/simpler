@@ -73,6 +73,8 @@ const defaultProps: ClassicShellProps = {
   closeSyncPrompt: null,
   onWaitForSyncBeforeClose: noop,
   onCloseWithoutSync: noop,
+  updateNotice: null,
+  onInstallAndRestart: noop,
 };
 
 function renderShell(props: Partial<ClassicShellProps> = {}) {
@@ -89,6 +91,40 @@ describe("ClassicShell", () => {
     expect(screen.getByRole("main", { name: "Markdown editor area" })).toBeInTheDocument();
     expect(screen.getByRole("contentinfo", { name: "Workspace status" })).toBeInTheDocument();
     expect(screen.getByText("Sin workspace")).toBeInTheDocument();
+  });
+
+  it("shows no update notice when updateNotice is null", () => {
+    renderShell({ updateNotice: null });
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("shows a non-blocking downloading notice with no action", () => {
+    renderShell({ updateNotice: { kind: "downloading" } });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Downloading update");
+    expect(screen.queryByRole("button", { name: /install/i })).not.toBeInTheDocument();
+  });
+
+  it("shows Install & Restart for an AppImage update that's ready, and triggers it on click", async () => {
+    const onInstallAndRestart = vi.fn();
+    renderShell({ updateNotice: { kind: "update-ready", version: "1.2.0" }, onInstallAndRestart });
+
+    expect(screen.getByRole("status")).toHaveTextContent("v1.2.0");
+    await userEvent.click(screen.getByRole("button", { name: /install.*restart/i }));
+
+    expect(onInstallAndRestart).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a View Release link (not an install action) for a packaged install update", () => {
+    renderShell({ updateNotice: { kind: "update-available", version: "1.2.0" } });
+
+    expect(screen.getByRole("status")).toHaveTextContent("v1.2.0");
+    expect(screen.getByRole("link", { name: "View Release" })).toHaveAttribute(
+      "href",
+      "https://github.com/anmoya/simpler/releases/latest",
+    );
+    expect(screen.queryByRole("button", { name: /install/i })).not.toBeInTheDocument();
   });
 
   it("toggles the Sync and Settings sidebar panels through typed route ids", async () => {

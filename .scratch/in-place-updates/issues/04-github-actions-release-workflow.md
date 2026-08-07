@@ -1,4 +1,8 @@
-Status: ready-for-agent
+Status: ready-for-human
+
+`.github/workflows/release.yml` created: triggers on `v*.*.*` tags, installs Linux/Tauri build deps, and uses `tauri-apps/tauri-action@v0` to build all three configured bundle targets (deb/rpm/appimage from `tauri.conf.json`), sign the AppImage + updater manifest with the `TAURI_SIGNING_PRIVATE_KEY`/`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets from issue 02, and publish a GitHub Release with everything attached.
+
+Not done: end-to-end verification by pushing a real tag — that's a maintainer action (pushes to the shared remote, triggers a real public Release) that needs your explicit go-ahead rather than being done autonomously. Push a `v0.1.0`-style tag (after bumping via `npm run release -- <version>`) whenever you're ready to test it; I can walk through the resulting Actions run with you if anything fails.
 
 # GitHub Actions release workflow
 

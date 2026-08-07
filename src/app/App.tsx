@@ -15,20 +15,25 @@ import {
   type AutomaticSyncScheduler,
   type AutomaticSyncTrigger,
 } from "./automaticSyncScheduler";
+import { createUpdateScheduler, type UpdateScheduler } from "./updateScheduler";
 import {
   createFolder,
   createNote,
+  checkForUpdate,
   cloneGitHubRepository,
   connectGitHubRemote,
   advancedGitStatus,
   deleteItem,
   disconnectGitHub,
+  downloadAndInstallUpdate,
+  getInstallKind,
   githubRemote,
   gitSync,
   gitStatus,
   githubAuthStatus,
   pollGitHubDeviceFlow,
   resolveGitConflict,
+  restartToApplyUpdate,
   globalSearch,
   moveItem,
   moveNote,
@@ -101,6 +106,97 @@ export function App() {
       },
     });
   }
+
+  const updateSchedulerRef = useRef<UpdateScheduler | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const applySchedulerState = () => {
+      const scheduler = updateSchedulerRef.current;
+      if (!scheduler || cancelled) {
+        return;
+      }
+      const state = scheduler.getState();
+      const version = scheduler.getAvailableVersion();
+      const updateNotice =
+        state === "downloading"
+          ? { kind: "downloading" as const }
+          : state === "update-ready"
+            ? { kind: "update-ready" as const, version }
+            : state === "update-available"
+              ? { kind: "update-available" as const, version }
+              : null;
+      setAppState((current) => ({ ...current, updateNotice }));
+    };
+
+    const requestCheck = () => {
+      void (async () => {
+        try {
+          const response = await checkForUpdate();
+          if (response?.ok && response.data) {
+            updateSchedulerRef.current?.checkSucceeded({
+              updateAvailable: response.data.updateAvailable,
+              version: response.data.version ?? undefined,
+              notes: response.data.notes ?? undefined,
+            });
+          } else {
+            updateSchedulerRef.current?.checkFailed();
+          }
+        } catch {
+          updateSchedulerRef.current?.checkFailed();
+        } finally {
+          applySchedulerState();
+        }
+      })();
+    };
+
+    const requestDownload = () => {
+      void (async () => {
+        try {
+          const response = await downloadAndInstallUpdate();
+          if (response?.ok) {
+            updateSchedulerRef.current?.downloadSucceeded();
+          } else {
+            updateSchedulerRef.current?.downloadFailed();
+          }
+        } catch {
+          updateSchedulerRef.current?.downloadFailed();
+        } finally {
+          applySchedulerState();
+        }
+      })();
+    };
+
+    void (async () => {
+      try {
+        const response = await getInstallKind();
+        if (cancelled) {
+          return;
+        }
+        const installKind = response?.ok && response.data ? response.data.installKind : "packaged";
+        updateSchedulerRef.current = createUpdateScheduler({ installKind, requestCheck, requestDownload });
+        updateSchedulerRef.current.appOpened();
+        applySchedulerState();
+      } catch {
+        // Leave update checks disabled for this session if install-kind detection fails.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      updateSchedulerRef.current?.dispose();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount, mirroring the automaticSyncScheduler effect below.
+  }, []);
+
+  const onInstallAndRestart = () => {
+    try {
+      restartToApplyUpdate()?.catch(() => undefined);
+    } catch {
+      // Restarting is best-effort — if the native call fails to fire, the user can restart manually.
+    }
+  };
 
   useEffect(() => {
     const requestCloseSync = () => {
@@ -1012,6 +1108,8 @@ export function App() {
       onCheckGitHubDeviceFlow={checkGitHubDeviceFlow}
       onStoreGitHubPersonalAccessToken={saveGitHubPersonalAccessToken}
       onDisconnectGitHub={disconnectGitHubAccount}
+      updateNotice={appState.updateNotice}
+      onInstallAndRestart={onInstallAndRestart}
     />
   );
 }

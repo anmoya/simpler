@@ -1,4 +1,6 @@
-Status: ready-for-human
+Status: done
+
+Repo: git@github.com:anmoya/simpler.git (origin configured). Signing keypair generated; private key + password stored as GitHub Actions secrets (TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD). Public key: `dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDhENEZEQjgzOEQwRDZBQ0IKUldUTGFnMk5nOXRQalNaOXovaGJtRGU0elY0TURjSmFmZXpjRUg5ck5ncnEyU0xPYUxUeUNtT1gK`
 
 # Repo setup & signing key provisioning
 

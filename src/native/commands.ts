@@ -323,12 +323,27 @@ export interface InstallKindResponse {
   installKind: InstallKind;
 }
 
-/**
- * Reports whether this build can self-update (AppImage) or only link out to
- * the GitHub Release page (deb/rpm). checkForUpdate/downloadAndInstallUpdate
- * are not yet wired — they depend on the real signing pubkey and Release
- * endpoint from issue 02 (.scratch/in-place-updates/issues/02).
- */
+/** Reports whether this build can self-update (AppImage) or only link out to the GitHub Release page (deb/rpm). */
 export function getInstallKind() {
   return invokeNativeCommand<InstallKindResponse>({ domain: "update", action: "get-install-kind", payload: {} });
+}
+
+export interface UpdateCheckResponse {
+  updateAvailable: boolean;
+  version: string | null;
+  notes: string | null;
+}
+
+export function checkForUpdate() {
+  return invokeNativeCommand<UpdateCheckResponse>({ domain: "update", action: "check-for-update", payload: {} });
+}
+
+/** Downloads and installs the pending update in the background (does not restart). Only valid for AppImage installs. */
+export function downloadAndInstallUpdate() {
+  return invokeNativeCommand<null>({ domain: "update", action: "download-and-install-update", payload: {} });
+}
+
+/** Restarts the app to run the already-installed update. Only valid for AppImage installs. */
+export function restartToApplyUpdate() {
+  return invokeNativeCommand<null>({ domain: "update", action: "restart-to-apply-update", payload: {} });
 }
