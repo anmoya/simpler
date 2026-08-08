@@ -1008,6 +1008,7 @@ describe("App", () => {
     const user = userEvent.setup();
     const writes: string[] = [];
     let syncCalls = 0;
+    let resolveStalePreview!: (response: unknown) => void;
     mocks.open.mockResolvedValue("/tmp/notes");
     mocks.invoke.mockImplementation((_command: string, { request }) => {
       if (request.domain === "workspace" && request.action === "open") {
@@ -1044,12 +1045,20 @@ describe("App", () => {
           ok: true,
           domain: "git",
           action: "note-history",
-          data: [{ commitId: "abc123", date: "2026-08-07T09:30:00Z", summary: "Earlier words" }],
+          data: [
+            { commitId: "abc123", date: "2026-08-07T09:30:00Z", summary: "Earlier words" },
+            { commitId: "def456", date: "2026-08-06T09:30:00Z", summary: "Chosen words" },
+          ],
           error: null,
         });
       }
       if (request.domain === "git" && request.action === "note-content-at-commit") {
-        return Promise.resolve({ ok: true, domain: "git", action: "note-content-at-commit", data: { content: "# Earlier\n\nPast words." }, error: null });
+        if (request.payload.commitId === "abc123") {
+          return new Promise((resolve) => {
+            resolveStalePreview = resolve;
+          });
+        }
+        return Promise.resolve({ ok: true, domain: "git", action: "note-content-at-commit", data: { content: "# Chosen\n\nChosen words." }, error: null });
       }
       if (request.domain === "filesystem" && request.action === "write-note") {
         writes.push(request.payload.content);
@@ -1068,11 +1077,14 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Open note history" }));
     await user.click(await screen.findByRole("button", { name: /Earlier words/ }));
-    expect(await screen.findByRole("region", { name: "Historical note preview" })).toHaveTextContent("Past words.");
+    await user.click(await screen.findByRole("button", { name: /Chosen words/ }));
+    expect(await screen.findByRole("region", { name: "Historical note preview" })).toHaveTextContent("Chosen words.");
+    resolveStalePreview({ ok: true, domain: "git", action: "note-content-at-commit", data: { content: "# Stale\n\nWrong words." }, error: null });
+    await waitFor(() => expect(screen.getByRole("region", { name: "Historical note preview" })).not.toHaveTextContent("Wrong words."));
 
     await user.click(screen.getByRole("button", { name: "Restore this version" }));
-    await waitFor(() => expect(writes).toEqual(["# Earlier\n\nPast words."]));
-    expect(screen.getByTestId("markdown-editor").textContent).toContain("Past words.");
+    await waitFor(() => expect(writes).toEqual(["# Chosen\n\nChosen words."]));
+    expect(screen.getByTestId("markdown-editor").textContent).toContain("Chosen words.");
 
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Sync now" }));

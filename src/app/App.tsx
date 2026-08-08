@@ -115,6 +115,7 @@ export function App() {
     new Promise<boolean>((resolve) => setDialog({ kind: "confirm", title, resolve }));
   const appStateRef = useRef(appState);
   const activeWorkspacePathRef = useRef<string | null>(null);
+  const noteHistoryRequestRef = useRef(0);
   const syncWorkspaceRef = useRef<(trigger: AutomaticSyncTrigger) => void>(() => undefined);
   const schedulerRef = useRef<AutomaticSyncScheduler | null>(null);
   // Set right before a decided close (via performClose) calls currentWindow.close(),
@@ -626,6 +627,7 @@ export function App() {
   };
 
   const selectFolder = (folderPath: string) => {
+    noteHistoryRequestRef.current += 1;
     setNoteHistoryPanel(closedNoteHistoryPanel);
     setAppState((current) => ({
       ...current,
@@ -661,6 +663,7 @@ export function App() {
     revealInTree = false,
     revealState?: Pick<AppState, "workspaceTree" | "openFolderPaths" | "treeMode">,
   ) => {
+    noteHistoryRequestRef.current += 1;
     setNoteHistoryPanel(closedNoteHistoryPanel);
     const response = await readNote(workspacePath, notePath);
     const currentRevealState = revealState ?? appStateRef.current;
@@ -795,7 +798,13 @@ export function App() {
     return true;
   };
 
-  const closeNoteHistory = () => setNoteHistoryPanel(closedNoteHistoryPanel);
+  const closeNoteHistory = () => {
+    noteHistoryRequestRef.current += 1;
+    setNoteHistoryPanel(closedNoteHistoryPanel);
+  };
+
+  const isStillActiveNote = (workspacePath: string, notePath: string) =>
+    appStateRef.current.workspace?.path === workspacePath && appStateRef.current.activeNotePath === notePath;
 
   const openNoteHistory = async () => {
     const workspace = appState.workspace;
@@ -804,9 +813,10 @@ export function App() {
       return;
     }
 
+    const requestId = ++noteHistoryRequestRef.current;
     setNoteHistoryPanel({ ...closedNoteHistoryPanel, isOpen: true, loading: true });
     const response = await noteHistory(workspace.path, notePath);
-    if (appStateRef.current.workspace?.path !== workspace.path || appStateRef.current.activeNotePath !== notePath) {
+    if (noteHistoryRequestRef.current !== requestId || !isStillActiveNote(workspace.path, notePath)) {
       return;
     }
     setNoteHistoryPanel({
@@ -824,6 +834,7 @@ export function App() {
       return;
     }
 
+    const requestId = ++noteHistoryRequestRef.current;
     setNoteHistoryPanel((current) => ({
       ...current,
       selectedCommitId: entry.commitId,
@@ -832,7 +843,7 @@ export function App() {
       error: null,
     }));
     const response = await noteContentAtCommit(workspace.path, notePath, entry.commitId);
-    if (appStateRef.current.workspace?.path !== workspace.path || appStateRef.current.activeNotePath !== notePath) {
+    if (noteHistoryRequestRef.current !== requestId || !isStillActiveNote(workspace.path, notePath)) {
       return;
     }
     setNoteHistoryPanel((current) => ({
