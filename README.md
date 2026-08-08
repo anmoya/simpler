@@ -54,3 +54,7 @@ The Linux bundles are written under `src-tauri/target/release/bundle/`:
 - `rpm/Simpler-0.1.0-1.x86_64.rpm`
 
 See [the MVP readiness record](docs/mvp-readiness.md) for the workflows verified in this checkout and the remaining environment-dependent checks.
+
+## Releases
+
+Current version: see `package.json`. Releases are published to [GitHub Releases](https://github.com/anmoya/simpler/releases) via `.github/workflows/release.yml` on `v*.*.*` tags, producing `.deb`, `.rpm`, and a self-updating `.AppImage` (see `docs/adr/0012-tauri-updater-with-appimage-for-linux.md`). To cut a release, see `docs/release-checklist.md` or run `npm run release:cut -- <version>`.

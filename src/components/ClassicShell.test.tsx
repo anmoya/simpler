@@ -276,7 +276,7 @@ describe("ClassicShell", () => {
       onFocusActiveNote,
     });
 
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Workspace Tree Mode" }), "accordion");
+    await userEvent.click(screen.getByRole("button", { name: "Workspace Tree Mode" }));
     await userEvent.click(screen.getByRole("button", { name: "Focus Active Note" }));
 
     expect(onTreeModeChange).toHaveBeenCalledWith("accordion");

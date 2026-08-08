@@ -557,24 +557,30 @@ export function ClassicShell({
         ) : (
           <>
             <div className="tree-controls">
-              <label>
-                <span>Workspace Tree Mode</span>
-                <select
-                  aria-label="Workspace Tree Mode"
-                  value={treeMode}
-                  onChange={(event) => onTreeModeChange(event.target.value as TreeMode)}
-                  disabled={!canManageWorkspace}
-                >
-                  <option value="free">Free Tree Mode</option>
-                  <option value="accordion">Accordion Tree Mode</option>
-                </select>
-              </label>
               <button
                 type="button"
+                className="tree-controls__icon-button"
+                aria-label="Workspace Tree Mode"
+                aria-pressed={treeMode === "accordion"}
+                title={
+                  treeMode === "accordion"
+                    ? "Tree mode: Accordion (opening a folder collapses its siblings). Click for Free mode."
+                    : "Tree mode: Free (opening a folder never collapses others). Click for Accordion mode."
+                }
+                onClick={() => onTreeModeChange(treeMode === "accordion" ? "free" : "accordion")}
+                disabled={!canManageWorkspace}
+              >
+                <Icon name="tree-mode" size={16} />
+              </button>
+              <button
+                type="button"
+                className="tree-controls__icon-button"
+                aria-label="Focus Active Note"
+                title="Focus Active Note: collapse everything except the path to the note you're editing."
                 onClick={onFocusActiveNote}
                 disabled={activeNotePath === null}
               >
-                Focus Active Note
+                <Icon name="target" size={16} />
               </button>
             </div>
             <div className="global-search" role="search" aria-label="Global Search">

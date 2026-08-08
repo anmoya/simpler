@@ -12,6 +12,18 @@ _Avoid_: Vault, project, proprietary store
 The real folder and Markdown file hierarchy inside the workspace as shown in the app sidebar.
 _Avoid_: Virtual tree, database-backed folders
 
+**Accordion Tree Mode**:
+A Workspace Tree display setting where opening a folder collapses its sibling folders at that same level (cascading their descendants closed), without affecting unrelated branches elsewhere in the tree. A per-device preference, not shared via the Workspace.
+_Avoid_: Auto-collapse, single-open mode
+
+**Free Tree Mode**:
+A Workspace Tree display setting where opening a folder never collapses any other folder. The default for a Workspace no one has configured yet.
+_Avoid_: Manual mode, multi-open mode
+
+**Focus Active Note**:
+A Workspace Tree action that collapses every folder except the full path from the root to the folder containing the active note. Available regardless of the current Accordion/Free Tree Mode.
+_Avoid_: Reveal in tree, collapse all
+
 **Note Identity**:
 The note's real path and filename inside the workspace.
 _Avoid_: Heading, display title

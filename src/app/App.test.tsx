@@ -747,7 +747,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
 
-    expect(screen.getByRole("combobox", { name: "Workspace Tree Mode" })).toHaveValue("accordion");
+    expect(screen.getByRole("button", { name: "Workspace Tree Mode" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "today.md" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "plan.md" })).not.toBeInTheDocument();
 
@@ -761,7 +761,7 @@ describe("App", () => {
       ),
     ).toHaveLength(treeWritesBeforeDirectSelection);
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Workspace Tree Mode" }), "free");
+    await user.click(screen.getByRole("button", { name: "Workspace Tree Mode" }));
     await user.keyboard("{Control>}k{/Control}");
     await user.click(
       within(screen.getByRole("dialog", { name: "Command Palette" })).getByRole("button", {

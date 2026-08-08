@@ -22,6 +22,8 @@ const paths: Record<string, string> = {
   "window-minimize": "M5 19h14",
   "window-maximize": "M5 5h14v14H5V5Z",
   "window-restore": "M8 8h11v11H8V8Zm-3-3h11v3H8v8H5V5Z",
+  "tree-mode": "M9 4h11M11 8h9M13 12h7M9 16h11M4 4h.01M4 8h.01M4 12h.01M4 16h.01",
+  target: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-4a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0-3a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z",
 };
 
 export type IconName = keyof typeof paths;
