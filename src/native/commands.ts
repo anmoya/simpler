@@ -249,6 +249,17 @@ export function saveAttachment(
   });
 }
 
+export function importAttachment(workspacePath: string, parentPath: string, sourcePath: string) {
+  return invokeNativeCommand<
+    FilesystemOperationResult,
+    { workspacePath: string; parentPath: string; sourcePath: string }
+  >({
+    domain: "filesystem",
+    action: "import-attachment",
+    payload: { workspacePath, parentPath, sourcePath },
+  });
+}
+
 export function renameItem(workspacePath: string, itemPath: string, newName: string) {
   return invokeNativeCommand<
     FilesystemOperationResult,

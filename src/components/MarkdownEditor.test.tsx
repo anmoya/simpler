@@ -3,11 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { EditorView } from "codemirror";
 import { MarkdownEditor } from "./MarkdownEditor";
-import { readClipboardImage, saveAttachment } from "../native/commands";
+import { importAttachment, readClipboardImage, saveAttachment } from "../native/commands";
 
 vi.mock("../native/commands", () => ({
   saveAttachment: vi.fn(),
   readClipboardImage: vi.fn(),
+  importAttachment: vi.fn(),
 }));
 
 function makeImageFile(name = "screenshot.png", type = "image/png") {
@@ -18,6 +19,7 @@ describe("MarkdownEditor", () => {
   beforeEach(() => {
     vi.mocked(saveAttachment).mockReset();
     vi.mocked(readClipboardImage).mockReset();
+    vi.mocked(importAttachment).mockReset();
   });
 
   describe("pasting an image via Ctrl+V (system clipboard)", () => {
@@ -206,6 +208,56 @@ describe("MarkdownEditor", () => {
           "daily",
           expect.stringMatching(/^\d{4}-\d{2}-\d{2}-\d{6}\.png$/),
           expect.any(String),
+        );
+      });
+
+      await waitFor(() => {
+        expect(editable.textContent).toContain("![](assets/2026-08-08-143022.png)");
+      });
+
+      posAtCoordsSpy.mockRestore();
+    });
+
+    it("imports a file-manager drop delivered only as text/uri-list", async () => {
+      vi.mocked(importAttachment).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "import-attachment",
+        error: null,
+        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+      });
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value={"# Today\n\nSome body text far from the drop point"}
+          onChange={() => undefined}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+
+      const posAtCoordsSpy = vi.spyOn(EditorView.prototype, "posAtCoords").mockReturnValue(9);
+
+      fireEvent.drop(editable, {
+        dataTransfer: {
+          files: [],
+          items: [],
+          types: ["text/uri-list", "text/html"],
+          getData: (type: string) =>
+            type === "text/uri-list" ? "file:///home/user/Pictures/screenshot.png" : "",
+        },
+        clientX: 42,
+        clientY: 7,
+      });
+
+      await waitFor(() => {
+        expect(importAttachment).toHaveBeenCalledWith(
+          "/workspace",
+          "daily",
+          "/home/user/Pictures/screenshot.png",
         );
       });
 

@@ -5,7 +5,8 @@ import { markdown } from "@codemirror/lang-markdown";
 import type { FileSearchJump } from "../app/appState";
 import { markdownEditorTheme } from "./markdownEditorTheme";
 import { listContinuationKeymap } from "./listContinuation";
-import { readClipboardImage, saveAttachment } from "../native/commands";
+import { importAttachment, readClipboardImage, saveAttachment } from "../native/commands";
+import type { FilesystemOperationResult, NativeCommandResponse } from "../native/commands";
 
 export interface MarkdownEditorProps {
   notePath: string;
@@ -70,6 +71,26 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+function insertAttachmentReference(
+  view: EditorView,
+  notePath: string,
+  insertAt: { from: number; to: number },
+  response: NativeCommandResponse<FilesystemOperationResult>,
+) {
+  if (!response.ok || !response.data) {
+    console.error("failed to save attachment", response.error);
+    return;
+  }
+
+  const relativePath = response.data.itemPath.slice(parentFolderPath(notePath).length);
+  const assetPath = relativePath.startsWith("/") ? relativePath.slice(1) : relativePath;
+
+  view.dispatch({
+    changes: { from: insertAt.from, to: insertAt.to, insert: `![](${assetPath})` },
+    selection: { anchor: insertAt.from + `![](${assetPath})`.length },
+  });
+}
+
 async function saveAndInsertAttachment(
   view: EditorView,
   workspacePath: string,
@@ -85,19 +106,7 @@ async function saveAndInsertAttachment(
     fileName,
     contentBase64,
   );
-
-  if (!response.ok || !response.data) {
-    console.error("failed to save attachment", response.error);
-    return;
-  }
-
-  const relativePath = response.data.itemPath.slice(parentFolderPath(notePath).length);
-  const assetPath = relativePath.startsWith("/") ? relativePath.slice(1) : relativePath;
-
-  view.dispatch({
-    changes: { from: insertAt.from, to: insertAt.to, insert: `![](${assetPath})` },
-    selection: { anchor: insertAt.from + `![](${assetPath})`.length },
-  });
+  insertAttachmentReference(view, notePath, insertAt, response);
 }
 
 async function insertAttachment(
@@ -109,6 +118,48 @@ async function insertAttachment(
 ) {
   const contentBase64 = await fileToBase64(file);
   await saveAndInsertAttachment(view, workspacePath, notePath, insertAt, contentBase64, file.type);
+}
+
+const importableImageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+
+// WebKitGTK's `drop` DOM event delivers files dragged from a file manager as
+// a `text/uri-list` (a `file://` URI), not as a `File` object with readable
+// bytes, so this decodes the local path and imports it through a native
+// command instead of reading bytes in the browser.
+function findDroppedImagePath(dataTransfer: DataTransfer | null | undefined) {
+  const uriList = dataTransfer?.getData?.("text/uri-list");
+  if (!uriList) {
+    return undefined;
+  }
+
+  const uri = uriList
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith("#"));
+
+  if (!uri || !uri.startsWith("file://")) {
+    return undefined;
+  }
+
+  const path = decodeURIComponent(uri.slice("file://".length));
+  const extension = path.split(".").pop()?.toLowerCase();
+
+  if (!extension || !importableImageExtensions.has(extension)) {
+    return undefined;
+  }
+
+  return path;
+}
+
+async function importAndInsertAttachment(
+  view: EditorView,
+  workspacePath: string,
+  notePath: string,
+  insertAt: { from: number; to: number },
+  sourcePath: string,
+) {
+  const response = await importAttachment(workspacePath, parentFolderPath(notePath), sourcePath);
+  insertAttachmentReference(view, notePath, insertAt, response);
 }
 
 // WebKitGTK's `paste` DOM event does not expose image bytes on Linux
@@ -217,26 +268,54 @@ export function MarkdownEditor({
               );
               return true;
             },
+            dragover: (event) => {
+              const types = event.dataTransfer?.types ?? [];
+              const hasDraggedFile =
+                Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === "file") ||
+                Array.from(types).includes("text/uri-list") ||
+                Array.from(types).includes("Files");
+
+              if (hasDraggedFile) {
+                event.preventDefault();
+              }
+              return false;
+            },
             drop: (event, view) => {
               const imageFile = findImageFile(event.dataTransfer?.files, event.dataTransfer?.items);
               const currentWorkspacePath = workspacePathRef.current;
 
-              if (!imageFile || !currentWorkspacePath) {
-                return false;
+              if (imageFile && currentWorkspacePath) {
+                event.preventDefault();
+                const dropPosition =
+                  view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
+                  view.state.selection.main.from;
+                void insertAttachment(
+                  view,
+                  imageFile,
+                  currentWorkspacePath,
+                  notePathRef.current,
+                  { from: dropPosition, to: dropPosition },
+                );
+                return true;
               }
 
-              event.preventDefault();
-              const dropPosition =
-                view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
-                view.state.selection.main.from;
-              void insertAttachment(
-                view,
-                imageFile,
-                currentWorkspacePath,
-                notePathRef.current,
-                { from: dropPosition, to: dropPosition },
-              );
-              return true;
+              const droppedImagePath = findDroppedImagePath(event.dataTransfer);
+              if (droppedImagePath && currentWorkspacePath) {
+                event.preventDefault();
+                const dropPosition =
+                  view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
+                  view.state.selection.main.from;
+                void importAndInsertAttachment(
+                  view,
+                  currentWorkspacePath,
+                  notePathRef.current,
+                  { from: dropPosition, to: dropPosition },
+                  droppedImagePath,
+                );
+                return true;
+              }
+
+              return false;
             },
           }),
           EditorView.updateListener.of((update) => {

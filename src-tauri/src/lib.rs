@@ -104,6 +104,14 @@ struct SaveAttachmentPayload {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ImportAttachmentPayload {
+    workspace_path: String,
+    parent_path: String,
+    source_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RenameItemPayload {
     workspace_path: String,
     item_path: String,
@@ -818,6 +826,10 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
         return native_response(request, save_attachment_payload);
     }
 
+    if request.domain == NativeDomain::Filesystem && request.action == "import-attachment" {
+        return native_response(request, import_attachment_payload);
+    }
+
     if request.domain == NativeDomain::Filesystem && request.action == "rename-item" {
         return native_response(request, rename_item_payload);
     }
@@ -1101,6 +1113,54 @@ fn save_attachment_payload(payload: serde_json::Value) -> Result<serde_json::Val
         item_path: relative_workspace_path(&workspace_path, &attachment_path),
     })
     .map_err(|_| "failed to serialize filesystem response".to_string())
+}
+
+const IMPORTABLE_IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+/// Copies an image dropped from the OS file explorer into `assets/`.
+///
+/// WebKitGTK's `drop` DOM event delivers files dragged from a file manager
+/// as a `text/uri-list` (a `file://` URI), not as a `File` object with
+/// readable bytes, so the frontend can't read the bytes itself the way it
+/// does for a real `DataTransferItem` file. It instead sends the decoded
+/// absolute path here and the file is copied directly through `fs::copy`.
+fn import_attachment_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: ImportAttachmentPayload = serde_json::from_value(payload)
+        .map_err(|_| "workspacePath, parentPath, and sourcePath are required".to_string())?;
+    let workspace_path = PathBuf::from(&payload.workspace_path);
+    ensure_workspace_folder(&workspace_path)?;
+    let parent_path = resolve_workspace_folder(&workspace_path, &payload.parent_path)?;
+
+    let source_path = PathBuf::from(&payload.source_path);
+    if !source_path.is_file() {
+        return Err("source file does not exist".to_string());
+    }
+
+    let extension = source_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_lowercase())
+        .filter(|extension| IMPORTABLE_IMAGE_EXTENSIONS.contains(&extension.as_str()))
+        .ok_or_else(|| "only image files can be imported as attachments".to_string())?;
+
+    let assets_path = parent_path.join("assets");
+    fs::create_dir_all(&assets_path)
+        .map_err(|error| format!("failed to create assets folder: {error}"))?;
+
+    let file_name = format!("{}.{extension}", attachment_timestamp());
+    let attachment_path = unique_attachment_path(&assets_path, &file_name);
+    fs::copy(&source_path, &attachment_path)
+        .map_err(|error| format!("failed to import attachment: {error}"))?;
+
+    serde_json::to_value(FilesystemOperationResult {
+        tree: read_workspace_tree(&workspace_path, &workspace_path)?,
+        item_path: relative_workspace_path(&workspace_path, &attachment_path),
+    })
+    .map_err(|_| "failed to serialize filesystem response".to_string())
+}
+
+fn attachment_timestamp() -> String {
+    chrono::Local::now().format("%Y-%m-%d-%H%M%S").to_string()
 }
 
 fn unique_attachment_path(assets_path: &Path, file_name: &str) -> PathBuf {
@@ -4256,6 +4316,56 @@ mod tests {
         );
         let original = fs::read(workspace.join("daily/assets/2026-08-08-143022.png")).unwrap();
         assert_eq!(original, b"first-image");
+    }
+
+    #[test]
+    fn imports_an_attachment_dropped_from_the_os_file_explorer_by_path() {
+        let workspace = test_workspace("import_attachment");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        let source_dir = std::env::temp_dir().join("simpler_import_attachment_source");
+        fs::create_dir_all(&source_dir).unwrap();
+        let source_path = source_dir.join("screenshot.png");
+        fs::write(&source_path, b"dropped-image-bytes").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "import-attachment".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "parentPath": "daily",
+                "sourcePath": source_path,
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        let item_path = data["itemPath"].as_str().unwrap().to_string();
+        assert!(item_path.starts_with("daily/assets/"));
+        assert!(item_path.ends_with(".png"));
+        let saved = fs::read(workspace.join(&item_path)).unwrap();
+        assert_eq!(saved, b"dropped-image-bytes");
+    }
+
+    #[test]
+    fn rejects_importing_a_non_image_file_as_an_attachment() {
+        let workspace = test_workspace("import_attachment_reject");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        let source_dir = std::env::temp_dir().join("simpler_import_attachment_reject_source");
+        fs::create_dir_all(&source_dir).unwrap();
+        let source_path = source_dir.join("notes.txt");
+        fs::write(&source_path, b"not an image").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "import-attachment".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "parentPath": "daily",
+                "sourcePath": source_path,
+            }),
+        });
+
+        assert!(!response.ok);
     }
 
     #[test]
