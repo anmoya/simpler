@@ -5,6 +5,7 @@
 set -euo pipefail
 
 APPIMAGE_PATH="${1:?Usage: patch-appimage-wayland-fix.sh <path-to-appimage>}"
+APPIMAGE_PATH="$(realpath "$APPIMAGE_PATH")"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK_SRC="$ROOT_DIR/src-tauri/appimage-hooks/webkit-wayland-fix.sh"
 WORK_DIR="$(mktemp -d)"
