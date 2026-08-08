@@ -220,6 +220,19 @@ export function createNote(workspacePath: string, parentPath: string, noteName: 
   });
 }
 
+export interface ClipboardImage {
+  contentBase64: string;
+  mimeType: string;
+}
+
+export function readClipboardImage() {
+  return invokeNativeCommand<ClipboardImage, Record<string, never>>({
+    domain: "filesystem",
+    action: "read-clipboard-image",
+    payload: {},
+  });
+}
+
 export function saveAttachment(
   workspacePath: string,
   parentPath: string,

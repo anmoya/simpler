@@ -3,10 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { EditorView } from "codemirror";
 import { MarkdownEditor } from "./MarkdownEditor";
-import { saveAttachment } from "../native/commands";
+import { readClipboardImage, saveAttachment } from "../native/commands";
 
 vi.mock("../native/commands", () => ({
   saveAttachment: vi.fn(),
+  readClipboardImage: vi.fn(),
 }));
 
 function makeImageFile(name = "screenshot.png", type = "image/png") {
@@ -16,6 +17,91 @@ function makeImageFile(name = "screenshot.png", type = "image/png") {
 describe("MarkdownEditor", () => {
   beforeEach(() => {
     vi.mocked(saveAttachment).mockReset();
+    vi.mocked(readClipboardImage).mockReset();
+  });
+
+  describe("pasting an image via Ctrl+V (system clipboard)", () => {
+    it("reads the clipboard image natively and inserts a Markdown image reference", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: null,
+        data: { contentBase64: "ZmFrZS1pbWFnZS1ieXRlcw==", mimeType: "image/png" },
+      });
+      vi.mocked(saveAttachment).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "save-attachment",
+        error: null,
+        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+      });
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(readClipboardImage).toHaveBeenCalled();
+        expect(saveAttachment).toHaveBeenCalledWith(
+          "/workspace",
+          "daily",
+          expect.stringMatching(/^\d{4}-\d{2}-\d{2}-\d{6}\.png$/),
+          "ZmFrZS1pbWFnZS1ieXRlcw==",
+        );
+      });
+
+      await waitFor(() => {
+        expect(editable.textContent).toContain("![](assets/2026-08-08-143022.png)");
+      });
+    });
+
+    it("falls back to clipboard text when there is no clipboard image", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: false,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: "clipboard does not contain an image",
+        data: null,
+      });
+      const readText = vi.fn().mockResolvedValue("pasted text");
+      Object.defineProperty(navigator, "clipboard", {
+        value: { readText },
+        configurable: true,
+      });
+
+      const onChange = vi.fn();
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value=""
+          onChange={onChange}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(saveAttachment).not.toHaveBeenCalled();
+        expect(onChange).toHaveBeenCalledWith("pasted text");
+      });
+    });
   });
 
   describe("pasting an image", () => {

@@ -5,7 +5,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import type { FileSearchJump } from "../app/appState";
 import { markdownEditorTheme } from "./markdownEditorTheme";
 import { listContinuationKeymap } from "./listContinuation";
-import { saveAttachment } from "../native/commands";
+import { readClipboardImage, saveAttachment } from "../native/commands";
 
 export interface MarkdownEditorProps {
   notePath: string;
@@ -27,6 +27,24 @@ const imageExtensionByMimeType: Record<string, string> = {
 function parentFolderPath(notePath: string) {
   const lastSlash = notePath.lastIndexOf("/");
   return lastSlash === -1 ? "" : notePath.slice(0, lastSlash);
+}
+
+function findImageFile(files: FileList | null | undefined, items: DataTransferItemList | null | undefined) {
+  const fileMatch = Array.from(files ?? []).find((file) => file.type.startsWith("image/"));
+  if (fileMatch) {
+    return fileMatch;
+  }
+
+  for (const item of Array.from(items ?? [])) {
+    if (item.kind === "file" && item.type.startsWith("image/")) {
+      const file = item.getAsFile();
+      if (file) {
+        return file;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function attachmentFileName(mimeType: string) {
@@ -52,15 +70,15 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-async function insertAttachment(
+async function saveAndInsertAttachment(
   view: EditorView,
-  file: File,
   workspacePath: string,
   notePath: string,
   insertAt: { from: number; to: number },
+  contentBase64: string,
+  mimeType: string,
 ) {
-  const fileName = attachmentFileName(file.type);
-  const contentBase64 = await fileToBase64(file);
+  const fileName = attachmentFileName(mimeType);
   const response = await saveAttachment(
     workspacePath,
     parentFolderPath(notePath),
@@ -69,6 +87,7 @@ async function insertAttachment(
   );
 
   if (!response.ok || !response.data) {
+    console.error("failed to save attachment", response.error);
     return;
   }
 
@@ -79,6 +98,55 @@ async function insertAttachment(
     changes: { from: insertAt.from, to: insertAt.to, insert: `![](${assetPath})` },
     selection: { anchor: insertAt.from + `![](${assetPath})`.length },
   });
+}
+
+async function insertAttachment(
+  view: EditorView,
+  file: File,
+  workspacePath: string,
+  notePath: string,
+  insertAt: { from: number; to: number },
+) {
+  const contentBase64 = await fileToBase64(file);
+  await saveAndInsertAttachment(view, workspacePath, notePath, insertAt, contentBase64, file.type);
+}
+
+// WebKitGTK's `paste` DOM event does not expose image bytes on Linux
+// (`clipboardData` comes back empty even when the OS clipboard holds an
+// image), so Ctrl+V reads the system clipboard through a native command
+// instead of relying on the browser paste event for images. Plain text
+// still goes through the browser's normal clipboard read.
+async function pasteFromSystemClipboard(
+  view: EditorView,
+  workspacePath: string,
+  notePath: string,
+  insertAt: { from: number; to: number },
+) {
+  const imageResponse = await readClipboardImage();
+
+  if (imageResponse.ok && imageResponse.data) {
+    await saveAndInsertAttachment(
+      view,
+      workspacePath,
+      notePath,
+      insertAt,
+      imageResponse.data.contentBase64,
+      imageResponse.data.mimeType,
+    );
+    return;
+  }
+
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      view.dispatch({
+        changes: { from: insertAt.from, to: insertAt.to, insert: text },
+        selection: { anchor: insertAt.from + text.length },
+      });
+    }
+  } catch (error) {
+    console.error("failed to read clipboard text", error);
+  }
 }
 
 export function MarkdownEditor({
@@ -113,9 +181,25 @@ export function MarkdownEditor({
           EditorView.lineWrapping,
           markdownEditorTheme(),
           EditorView.domEventHandlers({
+            keydown: (event, view) => {
+              const isPasteShortcut =
+                (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v";
+              const currentWorkspacePath = workspacePathRef.current;
+
+              if (!isPasteShortcut || !currentWorkspacePath) {
+                return false;
+              }
+
+              event.preventDefault();
+              const selection = view.state.selection.main;
+              void pasteFromSystemClipboard(view, currentWorkspacePath, notePathRef.current, {
+                from: selection.from,
+                to: selection.to,
+              });
+              return true;
+            },
             paste: (event, view) => {
-              const files = Array.from(event.clipboardData?.files ?? []);
-              const imageFile = files.find((file) => file.type.startsWith("image/"));
+              const imageFile = findImageFile(event.clipboardData?.files, event.clipboardData?.items);
               const currentWorkspacePath = workspacePathRef.current;
 
               if (!imageFile || !currentWorkspacePath) {
@@ -134,8 +218,7 @@ export function MarkdownEditor({
               return true;
             },
             drop: (event, view) => {
-              const files = Array.from(event.dataTransfer?.files ?? []);
-              const imageFile = files.find((file) => file.type.startsWith("image/"));
+              const imageFile = findImageFile(event.dataTransfer?.files, event.dataTransfer?.items);
               const currentWorkspacePath = workspacePathRef.current;
 
               if (!imageFile || !currentWorkspacePath) {

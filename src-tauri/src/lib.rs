@@ -298,6 +298,14 @@ struct FilesystemOperationResult {
     item_path: String,
 }
 
+#[cfg(not(test))]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardImage {
+    content_base64: String,
+    mime_type: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GlobalSearchResults {
@@ -2592,8 +2600,8 @@ fn folder_rank(item: &WorkspaceTreeItem) -> u8 {
 #[cfg(not(test))]
 mod commands {
     use super::{
-        dispatch_native_command, handle_update_command, NativeCommandRequest,
-        NativeCommandResponse, NativeDomain,
+        dispatch_native_command, handle_read_clipboard_image_command, handle_update_command,
+        NativeCommandRequest, NativeCommandResponse, NativeDomain,
     };
 
     #[tauri::command]
@@ -2608,7 +2616,105 @@ mod commands {
         {
             return handle_update_command(app, request).await;
         }
+        if request.domain == NativeDomain::Filesystem && request.action == "read-clipboard-image" {
+            return handle_read_clipboard_image_command(app, request).await;
+        }
         dispatch_native_command(request)
+    }
+}
+
+/// Reads an image from the system clipboard.
+///
+/// WebKitGTK's `paste` DOM event does not expose image bytes on Linux
+/// (`clipboardData` comes back empty even when the OS clipboard holds an
+/// image), so this reads the clipboard directly through GTK instead of
+/// relying on the browser paste API. GTK's clipboard must be accessed from
+/// the main thread, so the read happens inside `run_on_main_thread` and the
+/// result is relayed back through a oneshot channel.
+#[cfg(not(test))]
+async fn handle_read_clipboard_image_command(
+    app: tauri::AppHandle,
+    request: NativeCommandRequest,
+) -> NativeCommandResponse {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let main_thread_result = app.run_on_main_thread(move || {
+            let clipboard = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD);
+            let image = clipboard.wait_for_image().and_then(|pixbuf| {
+                pixbuf
+                    .save_to_bufferv("png", &[])
+                    .ok()
+                    .map(|bytes| (bytes, "image/png".to_string()))
+            });
+            let _ = tx.send(image);
+        });
+
+        if main_thread_result.is_err() {
+            return NativeCommandResponse {
+                ok: false,
+                domain: request.domain,
+                action: request.action,
+                data: None,
+                error: Some("failed to read the system clipboard".to_string()),
+            };
+        }
+
+        return match rx.await {
+            Ok(Some((bytes, mime_type))) => {
+                let content_base64 =
+                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+                match serde_json::to_value(ClipboardImage {
+                    content_base64,
+                    mime_type,
+                }) {
+                    Ok(data) => NativeCommandResponse {
+                        ok: true,
+                        domain: request.domain,
+                        action: request.action,
+                        data: Some(data),
+                        error: None,
+                    },
+                    Err(_) => NativeCommandResponse {
+                        ok: false,
+                        domain: request.domain,
+                        action: request.action,
+                        data: None,
+                        error: Some("failed to serialize clipboard image".to_string()),
+                    },
+                }
+            }
+            _ => NativeCommandResponse {
+                ok: false,
+                domain: request.domain,
+                action: request.action,
+                data: None,
+                error: Some("clipboard does not contain an image".to_string()),
+            },
+        };
+    }
+
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    )))]
+    {
+        NativeCommandResponse {
+            ok: false,
+            domain: request.domain,
+            action: request.action,
+            data: None,
+            error: Some("clipboard image reads are only supported on Linux".to_string()),
+        }
     }
 }
 
