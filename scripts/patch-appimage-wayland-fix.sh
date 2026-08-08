@@ -15,6 +15,15 @@ if ! command -v appimagetool >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ ! -f "$APPIMAGE_PATH" ]]; then
+  echo "AppImage not found at: $APPIMAGE_PATH" >&2
+  echo "Contents of $(dirname "$APPIMAGE_PATH"):" >&2
+  ls -la "$(dirname "$APPIMAGE_PATH")" >&2 || true
+  exit 1
+fi
+
+chmod +x "$APPIMAGE_PATH"
+
 cd "$WORK_DIR"
 "$APPIMAGE_PATH" --appimage-extract >/dev/null
 
