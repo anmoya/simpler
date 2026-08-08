@@ -1204,6 +1204,7 @@ fn delete_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "item path must include a valid name".to_string())?;
+    let item_name = sanitize_child_name(item_name)?;
     let trashed_relative_path = format!(".simpler/local/trash/{id}-{item_name}");
     let trashed_path = workspace_path.join(&trashed_relative_path);
     fs::rename(&item_path, &trashed_path)
@@ -1308,20 +1309,19 @@ fn restore_trash_item_payload(payload: serde_json::Value) -> Result<serde_json::
 fn resolve_trash_entry_path(workspace_path: &Path, relative_path: &str) -> Result<PathBuf, String> {
     let relative_path = Path::new(relative_path);
     let trash_relative = Path::new(".simpler/local/trash");
-    if relative_path.is_absolute()
-        || !relative_path.starts_with(trash_relative)
-        || relative_path.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::Prefix(_)
-                    | std::path::Component::RootDir
-            )
-        })
-    {
-        return Err("trash index contains an invalid item path".to_string());
-    }
-    Ok(workspace_path.join(relative_path))
+    let child_path = relative_path
+        .strip_prefix(trash_relative)
+        .map_err(|_| "trash index contains an invalid item path".to_string())?;
+    let mut components = child_path.components();
+    let child_name = match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(name)), None) => name
+            .to_str()
+            .ok_or_else(|| "trash index contains an invalid item path".to_string())?,
+        _ => return Err("trash index contains an invalid item path".to_string()),
+    };
+    let child_name = sanitize_child_name(child_name)
+        .map_err(|_| "trash index contains an invalid item path".to_string())?;
+    Ok(trash_folder(workspace_path).join(child_name))
 }
 
 fn purge_expired_trash(
@@ -2179,7 +2179,8 @@ fn postpone_github_wizard_payload(payload: serde_json::Value) -> Result<serde_js
 fn open_workspace(workspace_path: &Path) -> Result<OpenedWorkspace, String> {
     ensure_workspace_folder(workspace_path)?;
     ensure_workspace_metadata(workspace_path)?;
-    purge_expired_trash(workspace_path, chrono::Utc::now())?;
+    // Automatic trash housekeeping must never prevent access to the Workspace.
+    let _ = purge_expired_trash(workspace_path, chrono::Utc::now());
 
     let name = workspace_path
         .file_name()
@@ -2984,6 +2985,51 @@ mod tests {
         assert_eq!(
             runner.commands(),
             vec![vec!["show", "abc123:daily/today.md"]]
+        );
+    }
+
+    #[test]
+    fn note_content_at_commit_follows_the_note_path_across_a_rename() {
+        let workspace = test_workspace("note_content_after_rename");
+        let old_commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let new_commit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let runner = StubGitRunner::new(vec![
+            Ok(git_output(
+                Some(128),
+                "",
+                "fatal: path 'daily/today.md' does not exist in old commit",
+            )),
+            Ok(git_output(
+                Some(0),
+                &format!("{new_commit}\n\ndaily/today.md\n\n{old_commit}\n\narchive/today.md\n"),
+                "",
+            )),
+            Ok(git_output(Some(0), "# Before rename\n", "")),
+        ]);
+
+        let content = read_note_content_at_commit(
+            &workspace,
+            "daily/today.md",
+            old_commit,
+            &runner,
+        )
+        .unwrap();
+
+        assert_eq!(content, "# Before rename\n");
+        assert_eq!(
+            runner.commands(),
+            vec![
+                vec!["show", &format!("{old_commit}:daily/today.md")],
+                vec![
+                    "log",
+                    "--follow",
+                    "--format=%H",
+                    "--name-only",
+                    "--",
+                    "daily/today.md",
+                ],
+                vec!["show", &format!("{old_commit}:archive/today.md")],
+            ]
         );
     }
 
@@ -4510,6 +4556,66 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["recent"]
         );
+    }
+
+    #[test]
+    fn trash_purge_never_blocks_opening_a_workspace() {
+        let workspace = test_workspace("quiet_trash_purge");
+        ensure_trash_folder(&workspace).unwrap();
+        fs::write(workspace.join(".simpler/local/trash/bad-date.md"), "keep").unwrap();
+        write_trash_index(
+            &workspace,
+            &[TrashEntry {
+                id: "bad-date".to_string(),
+                original_relative_path: "today.md".to_string(),
+                trashed_relative_path: ".simpler/local/trash/bad-date.md".to_string(),
+                deleted_at: "not-a-date".to_string(),
+                is_directory: false,
+            }],
+        )
+        .unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+
+        assert!(response.ok, "{:?}", response.error);
+        assert!(workspace.join(".simpler/local/trash/bad-date.md").exists());
+    }
+
+    #[test]
+    fn trash_index_paths_must_name_one_safe_child_of_the_trash_folder() {
+        let workspace = test_workspace("safe_trash_path");
+
+        assert!(resolve_trash_entry_path(&workspace, ".simpler/local/trash").is_err());
+        assert!(
+            resolve_trash_entry_path(&workspace, ".simpler/local/trash/nested/item.md").is_err()
+        );
+        assert!(resolve_trash_entry_path(&workspace, ".simpler/local/trash/item.md").is_ok());
+    }
+
+    #[test]
+    fn local_trash_is_excluded_from_git_status() {
+        let workspace = test_workspace("gitignored_trash");
+        git_ok(&workspace, &["init", "--initial-branch=main"]);
+        fs::write(workspace.join("today.md"), "# Today").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "delete-item".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "itemPath": "today.md" }),
+        });
+        assert!(response.ok, "{:?}", response.error);
+
+        let status = Command::new("git")
+            .args(["status", "--short", "--untracked-files=all"])
+            .current_dir(&workspace)
+            .output()
+            .unwrap();
+        let status = String::from_utf8(status.stdout).unwrap();
+        assert!(!status.contains(".simpler/local/"), "{status}");
     }
 
     #[test]
