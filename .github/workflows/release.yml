@@ -49,24 +49,31 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
+          set -x
           APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -n1)
+          if [[ -z "$APPIMAGE" ]]; then
+            echo "No .AppImage found under src-tauri/target/release/bundle/appimage" >&2
+            ls -la src-tauri/target/release/bundle/appimage >&2 || true
+            exit 1
+          fi
           npm run tauri signer sign -- "$APPIMAGE"
-          VERSION="${GITHUB_REF_NAME#v}"
-          SIGNATURE=$(cat "$APPIMAGE.sig")
-          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          cat > latest.json <<EOF
-          {
-            "version": "$VERSION",
-            "notes": "",
-            "pub_date": "$PUB_DATE",
-            "platforms": {
-              "linux-x86_64": {
-                "signature": "$SIGNATURE",
-                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$(basename "$APPIMAGE")"
-              }
-            }
-          }
-          EOF
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const [, appImage, repo, refName] = process.argv;
+            const manifest = {
+              version: refName.replace(/^v/, ""),
+              notes: "",
+              pub_date: new Date().toISOString(),
+              platforms: {
+                "linux-x86_64": {
+                  signature: fs.readFileSync(appImage + ".sig", "utf8").trim(),
+                  url: `https://github.com/${repo}/releases/download/${refName}/${path.basename(appImage)}`,
+                },
+              },
+            };
+            fs.writeFileSync("latest.json", JSON.stringify(manifest, null, 2));
+          ' "$APPIMAGE" "${{ github.repository }}" "${{ github.ref_name }}"
 
       - name: Publish release
         env:
