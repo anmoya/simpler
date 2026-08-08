@@ -3,6 +3,7 @@ import type { AdvancedGitStatus, GitHubAuthStatus, GitHubRemote, GlobalSearchRes
 
 export type SyncStatus = GitSyncStatus | "workspace-abierto" | "sincronizando" | "desconectado" | "error";
 export type ThemeMode = "light" | "dark";
+export type TreeMode = "free" | "accordion";
 export type EditorError =
   | { kind: "missing-note"; message: string }
   | { kind: "file-error"; message: string };
@@ -50,6 +51,8 @@ export interface AppState {
   workspace: WorkspaceSummary | null;
   recentWorkspaces: WorkspaceSummary[];
   workspaceTree: WorkspaceTreeItem[];
+  openFolderPaths: Set<string>;
+  treeMode: TreeMode;
   activeNotePath: string | null;
   activeFolderPath: string;
   noteContent: string;
@@ -87,6 +90,8 @@ export const initialAppState: AppState = {
   workspace: null,
   recentWorkspaces: [],
   workspaceTree: [],
+  openFolderPaths: new Set(),
+  treeMode: "free",
   activeNotePath: null,
   activeFolderPath: "",
   noteContent: "",

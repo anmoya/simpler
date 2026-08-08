@@ -12,6 +12,7 @@ const paths: Record<string, string> = {
   close: "m5 5 14 14M19 5 5 19",
   "chevron-up": "m6 15 6-6 6 6",
   "chevron-down": "m6 9 6 6 6-6",
+  "chevron-right": "m9 6 6 6-6 6",
   search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm10 17-5.5-5.5",
   workspace: "M4 4h7v7H4V4Zm9 0h7v4h-7V4Zm0 7h7v9h-7v-9ZM4 14h7v7H4v-7Z",
   sync: "M4 4v5h5M20 20v-5h-5M4.5 15a8 8 0 0 0 14.5 3.5M19.5 9A8 8 0 0 0 5 5.5",

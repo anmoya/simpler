@@ -8,6 +8,8 @@ const noop = () => undefined;
 const defaultProps: ClassicShellProps = {
   activeRoute: "workspace",
   workspaceTree: [],
+  openFolderPaths: new Set(),
+  treeMode: "free",
   statusLabel: "Sin workspace",
   workspaceError: null,
   workspaceName: "Abrir carpeta",
@@ -26,6 +28,10 @@ const defaultProps: ClassicShellProps = {
   onThemeChange: noop,
   onSelectFolder: noop,
   onSelectNote: noop,
+  onToggleFolder: noop,
+  onTreeModeChange: noop,
+  onFocusActiveNote: noop,
+  onNavigateToNote: noop,
   onNoteChange: noop,
   onCreateFolder: noop,
   onCreateNote: noop,
@@ -229,6 +235,7 @@ describe("ClassicShell", () => {
         },
         { name: "ideas.md", path: "ideas.md", kind: "note", children: [] },
       ],
+      openFolderPaths: new Set(["daily"]),
       statusLabel: "Cambios locales",
       workspaceName: "notes",
     });
@@ -236,6 +243,70 @@ describe("ClassicShell", () => {
     expect(screen.getAllByText("daily")).toHaveLength(1);
     expect(screen.getByRole("button", { name: /today.md/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /ideas.md/ })).toBeInTheDocument();
+  });
+
+  it("hides and shows a folder's children through its expand toggle", async () => {
+    const onToggleFolder = vi.fn();
+    const workspaceTree = [
+      {
+        name: "daily",
+        path: "daily",
+        kind: "folder" as const,
+        children: [{ name: "today.md", path: "daily/today.md", kind: "note" as const, children: [] }],
+      },
+    ];
+    const { rerender } = renderShell({ workspaceTree, openFolderPaths: new Set(["daily"]), onToggleFolder });
+
+    await userEvent.click(screen.getByRole("button", { name: "Collapse daily" }));
+    expect(onToggleFolder).toHaveBeenCalledWith("daily");
+
+    rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={new Set()} />);
+    expect(screen.queryByRole("button", { name: /today.md/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand daily" })).toBeInTheDocument();
+  });
+
+  it("switches Tree Mode and focuses the active note from the sidebar header", async () => {
+    const onTreeModeChange = vi.fn();
+    const onFocusActiveNote = vi.fn();
+    renderShell({
+      canManageWorkspace: true,
+      activeNotePath: "daily/today.md",
+      treeMode: "free",
+      onTreeModeChange,
+      onFocusActiveNote,
+    });
+
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Workspace Tree Mode" }), "accordion");
+    await userEvent.click(screen.getByRole("button", { name: "Focus Active Note" }));
+
+    expect(onTreeModeChange).toHaveBeenCalledWith("accordion");
+    expect(onFocusActiveNote).toHaveBeenCalledOnce();
+  });
+
+  it("offers Workspace notes as Command Palette jumps", async () => {
+    const user = userEvent.setup();
+    const onNavigateToNote = vi.fn();
+    renderShell({
+      canManageWorkspace: true,
+      workspaceTree: [
+        {
+          name: "daily",
+          path: "daily",
+          kind: "folder",
+          children: [{ name: "today.md", path: "daily/today.md", kind: "note", children: [] }],
+        },
+      ],
+      onNavigateToNote,
+    });
+
+    await user.keyboard("{Control>}k{/Control}");
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Command Palette" })).getByRole("button", {
+        name: "Open note: daily/today.md",
+      }),
+    );
+
+    expect(onNavigateToNote).toHaveBeenCalledWith("daily/today.md");
   });
 
   it("opens the Workspace menu and calls the open Workspace handler", async () => {
@@ -274,7 +345,7 @@ describe("ClassicShell", () => {
       onSelectFolder,
     });
 
-    const folder = screen.getByRole("button", { name: /daily/ });
+    const folder = screen.getByRole("button", { name: "daily" });
     expect(folder).not.toHaveClass("note-tree__folder--active");
 
     await userEvent.click(folder);
@@ -524,6 +595,7 @@ describe("ClassicShell", () => {
   it("keeps deeply nested folders and long note names reachable", () => {
     renderShell({
       workspaceName: "notes",
+      openFolderPaths: new Set(["research", "research/archive"]),
       workspaceTree: [
         {
           name: "research",

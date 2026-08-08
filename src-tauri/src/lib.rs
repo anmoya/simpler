@@ -49,6 +49,14 @@ struct RememberNotePayload {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct RememberTreeStatePayload {
+    workspace_path: String,
+    open_folder_paths: Vec<String>,
+    tree_mode: TreeMode,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PostponeGitHubWizardPayload {
     workspace_path: String,
 }
@@ -193,6 +201,21 @@ struct OpenedWorkspace {
 struct WorkspaceMetadata {
     last_note_path: Option<String>,
     github_wizard_postponed: bool,
+    open_folder_paths: Vec<String>,
+    tree_mode: TreeMode,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum TreeMode {
+    Free,
+    Accordion,
+}
+
+impl Default for TreeMode {
+    fn default() -> Self {
+        Self::Free
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -208,6 +231,10 @@ struct LocalWorkspaceMetadata {
     last_note_path: Option<String>,
     #[serde(default)]
     github_wizard_postponed: bool,
+    #[serde(default)]
+    open_folder_paths: Vec<String>,
+    #[serde(default)]
+    tree_mode: TreeMode,
 }
 
 #[derive(Debug, Serialize)]
@@ -644,6 +671,10 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
 
     if request.domain == NativeDomain::Workspace && request.action == "remember-note" {
         return native_response(request, remember_note_payload);
+    }
+
+    if request.domain == NativeDomain::Workspace && request.action == "remember-tree-state" {
+        return native_response(request, remember_tree_state_payload);
     }
 
     if request.domain == NativeDomain::Workspace && request.action == "postpone-github-wizard" {
@@ -1618,11 +1649,25 @@ fn remember_note_payload(payload: serde_json::Value) -> Result<serde_json::Value
     let mut local_metadata = read_local_workspace_metadata(&workspace_path)?;
     local_metadata.last_note_path = Some(payload.note_path);
     write_local_workspace_metadata(&workspace_path, &local_metadata)?;
-    serde_json::to_value(WorkspaceMetadata {
-        last_note_path: local_metadata.last_note_path,
-        github_wizard_postponed: local_metadata.github_wizard_postponed,
-    })
+    serde_json::to_value(read_workspace_metadata(&workspace_path)?)
     .map_err(|_| "failed to serialize workspace metadata".to_string())
+}
+
+fn remember_tree_state_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: RememberTreeStatePayload = serde_json::from_value(payload)
+        .map_err(|_| "workspacePath, openFolderPaths, and treeMode are required".to_string())?;
+    let workspace_path = PathBuf::from(&payload.workspace_path);
+    ensure_workspace_folder(&workspace_path)?;
+    for folder_path in &payload.open_folder_paths {
+        resolve_workspace_path(&workspace_path, folder_path)?;
+    }
+
+    let mut local_metadata = read_local_workspace_metadata(&workspace_path)?;
+    local_metadata.open_folder_paths = payload.open_folder_paths;
+    local_metadata.tree_mode = payload.tree_mode;
+    write_local_workspace_metadata(&workspace_path, &local_metadata)?;
+    serde_json::to_value(read_workspace_metadata(&workspace_path)?)
+        .map_err(|_| "failed to serialize workspace metadata".to_string())
 }
 
 fn postpone_github_wizard_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1635,10 +1680,7 @@ fn postpone_github_wizard_payload(payload: serde_json::Value) -> Result<serde_js
     local_metadata.github_wizard_postponed = true;
     write_local_workspace_metadata(&workspace_path, &local_metadata)?;
 
-    serde_json::to_value(WorkspaceMetadata {
-        last_note_path: local_metadata.last_note_path,
-        github_wizard_postponed: local_metadata.github_wizard_postponed,
-    })
+    serde_json::to_value(read_workspace_metadata(&workspace_path)?)
     .map_err(|_| "failed to serialize workspace metadata".to_string())
 }
 
@@ -1686,6 +1728,8 @@ fn ensure_workspace_metadata(workspace_path: &Path) -> Result<(), String> {
             schema_version: 1,
             last_note_path: None,
             github_wizard_postponed: false,
+            open_folder_paths: Vec::new(),
+            tree_mode: TreeMode::Free,
         };
         write_json_file(&local_metadata_path, &local_metadata)?;
     }
@@ -1701,10 +1745,30 @@ fn read_workspace_metadata(workspace_path: &Path) -> Result<WorkspaceMetadata, S
             .is_ok_and(|path| path.is_file())
     });
 
+    let tree = read_workspace_tree(workspace_path, workspace_path)?;
+    let mut existing_folder_paths = Vec::new();
+    collect_folder_paths(&tree, &mut existing_folder_paths);
+    let open_folder_paths = local_metadata
+        .open_folder_paths
+        .into_iter()
+        .filter(|path| existing_folder_paths.contains(path))
+        .collect();
+
     Ok(WorkspaceMetadata {
         last_note_path,
         github_wizard_postponed,
+        open_folder_paths,
+        tree_mode: local_metadata.tree_mode,
     })
+}
+
+fn collect_folder_paths(items: &[WorkspaceTreeItem], paths: &mut Vec<String>) {
+    for item in items {
+        if matches!(item.kind, WorkspaceTreeItemKind::Folder) {
+            paths.push(item.path.clone());
+            collect_folder_paths(&item.children, paths);
+        }
+    }
 }
 
 fn read_local_workspace_metadata(workspace_path: &Path) -> Result<LocalWorkspaceMetadata, String> {
@@ -2982,6 +3046,77 @@ mod tests {
             reopened_response.data.unwrap()["metadata"]["githubWizardPostponed"],
             serde_json::json!(true)
         );
+    }
+
+    #[test]
+    fn persists_and_restores_workspace_tree_preferences() {
+        let workspace = test_workspace("tree_preferences_round_trip");
+        fs::create_dir_all(workspace.join("daily").join("archive")).unwrap();
+
+        let remember_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "remember-tree-state".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "openFolderPaths": ["daily", "daily/archive"],
+                "treeMode": "accordion",
+            }),
+        });
+        assert!(remember_response.ok);
+
+        let reopened_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        let metadata = &reopened_response.data.unwrap()["metadata"];
+        assert_eq!(metadata["openFolderPaths"], serde_json::json!(["daily", "daily/archive"]));
+        assert_eq!(metadata["treeMode"], serde_json::json!("accordion"));
+    }
+
+    #[test]
+    fn ignores_stale_open_folder_paths_when_reopening_a_workspace() {
+        let workspace = test_workspace("tree_preferences_stale_path");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+
+        let remember_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "remember-tree-state".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "openFolderPaths": ["daily", "missing"],
+                "treeMode": "free",
+            }),
+        });
+        assert!(remember_response.ok);
+
+        fs::remove_dir(workspace.join("daily")).unwrap();
+        let reopened_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert_eq!(
+            reopened_response.data.unwrap()["metadata"]["openFolderPaths"],
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn rejects_tree_preferences_with_paths_outside_the_workspace() {
+        let workspace = test_workspace("tree_preferences_invalid_path");
+        let remember_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "remember-tree-state".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "openFolderPaths": ["../outside"],
+                "treeMode": "free",
+            }),
+        });
+
+        assert!(!remember_response.ok);
+        assert_eq!(remember_response.error.as_deref(), Some("path must stay inside the workspace"));
     }
 
     #[test]

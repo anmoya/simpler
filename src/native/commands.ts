@@ -26,6 +26,8 @@ export interface OpenedWorkspace {
 export interface WorkspaceMetadata {
   lastNotePath: string | null;
   githubWizardPostponed: boolean;
+  openFolderPaths: string[];
+  treeMode: "free" | "accordion";
 }
 
 export type SyncStatus = "sincronizado" | "cambios-locales" | "sin-git" | "sin-remoto" | "conflicto";
@@ -133,6 +135,21 @@ export function rememberWorkspaceNote(workspacePath: string, notePath: string) {
     domain: "workspace",
     action: "remember-note",
     payload: { workspacePath, notePath },
+  });
+}
+
+export function rememberWorkspaceTreeState(
+  workspacePath: string,
+  openFolderPaths: readonly string[],
+  treeMode: "free" | "accordion",
+) {
+  return invokeNativeCommand<
+    WorkspaceMetadata,
+    { workspacePath: string; openFolderPaths: readonly string[]; treeMode: "free" | "accordion" }
+  >({
+    domain: "workspace",
+    action: "remember-tree-state",
+    payload: { workspacePath, openFolderPaths, treeMode },
   });
 }
 

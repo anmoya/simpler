@@ -8,7 +8,9 @@ import {
   type DialogRequest,
   type EditorError,
   type ThemeMode,
+  type TreeMode,
 } from "./appState";
+import { expandPathToNote, focusActiveNote, restoreOpenFolderPaths, toggleFolder } from "./workspaceTreeState";
 import type { AppRoute } from "./routes";
 import {
   createAutomaticSyncScheduler,
@@ -41,6 +43,7 @@ import {
   postponeGitHubWizard,
   readNote,
   rememberWorkspaceNote,
+  rememberWorkspaceTreeState,
   renameItem,
   startGitHubDeviceFlow,
   storeGitHubPersonalAccessToken,
@@ -532,12 +535,19 @@ export function App() {
       name: openedWorkspace.name,
       path: openedWorkspace.path,
     });
+    const restoredOpenFolderPaths = restoreOpenFolderPaths(
+      openedWorkspace.metadata.openFolderPaths ?? [],
+      openedWorkspace.tree,
+    );
+    const restoredTreeMode = openedWorkspace.metadata.treeMode ?? "free";
 
     setAppState((current) => ({
       ...current,
       workspace: { name: openedWorkspace.name, path: openedWorkspace.path },
       recentWorkspaces,
       workspaceTree: openedWorkspace.tree,
+      openFolderPaths: restoredOpenFolderPaths,
+      treeMode: restoredTreeMode,
       activeNotePath: null,
       activeFolderPath: "",
       noteContent: "",
@@ -555,7 +565,11 @@ export function App() {
     activeWorkspacePathRef.current = openedWorkspace.path;
 
     if (openedWorkspace.metadata.lastNotePath) {
-      await openNoteInWorkspace(openedWorkspace.path, openedWorkspace.metadata.lastNotePath, null, true);
+      await openNoteInWorkspace(openedWorkspace.path, openedWorkspace.metadata.lastNotePath, null, true, true, {
+        workspaceTree: openedWorkspace.tree,
+        openFolderPaths: restoredOpenFolderPaths,
+        treeMode: restoredTreeMode,
+      });
     }
 
     const [openedSyncStatus] = await Promise.all([
@@ -595,17 +609,40 @@ export function App() {
     await openNoteInWorkspace(appState.workspace.path, notePath, fileSearchJump, true);
   };
 
+  const navigateToNote = async (notePath: string, fileSearchJump: AppState["fileSearchJump"] = null) => {
+    if (!appState.workspace) {
+      return;
+    }
+    await openNoteInWorkspace(appState.workspace.path, notePath, fileSearchJump, true, true);
+  };
+
   const openNoteInWorkspace = async (
     workspacePath: string,
     notePath: string,
     fileSearchJump: AppState["fileSearchJump"] = null,
     rememberNote = false,
+    revealInTree = false,
+    revealState?: Pick<AppState, "workspaceTree" | "openFolderPaths" | "treeMode">,
   ) => {
     const response = await readNote(workspacePath, notePath);
+    const currentRevealState = revealState ?? appStateRef.current;
+    const openFolderPaths = revealInTree
+      ? expandPathToNote(
+          currentRevealState.openFolderPaths,
+          notePath,
+          currentRevealState.workspaceTree,
+          currentRevealState.treeMode,
+        )
+      : currentRevealState.openFolderPaths;
+
+    if (revealInTree) {
+      persistWorkspaceTreeState(workspacePath, openFolderPaths, currentRevealState.treeMode);
+    }
 
     if (!response.ok || response.data === null) {
       setAppState((current) => ({
         ...current,
+        openFolderPaths: revealInTree ? openFolderPaths : current.openFolderPaths,
         activeNotePath: notePath,
         activeFolderPath: parentFolderPath(notePath),
         noteContent: "",
@@ -617,11 +654,12 @@ export function App() {
     }
 
     if (rememberNote) {
-      await rememberWorkspaceNote(workspacePath, notePath).catch(() => undefined);
+      void rememberWorkspaceNote(workspacePath, notePath).catch(() => undefined);
     }
 
     setAppState((current) => ({
       ...current,
+      openFolderPaths: revealInTree ? openFolderPaths : current.openFolderPaths,
       activeNotePath: notePath,
       activeFolderPath: parentFolderPath(notePath),
       noteContent: response.data!.content,
@@ -658,12 +696,37 @@ export function App() {
   };
 
   const selectGlobalSearchResult = async (result: GlobalSearchResult) => {
-    await selectNote(result.notePath, {
+    await navigateToNote(result.notePath, {
       notePath: result.notePath,
       lineNumber: result.lineNumber,
       matchStart: result.matchStart,
       matchEnd: result.matchEnd,
     });
+  };
+
+  const toggleWorkspaceFolder = (folderPath: string) => {
+    const openFolderPaths = toggleFolder(
+      appState.openFolderPaths,
+      folderPath,
+      appState.workspaceTree,
+      appState.treeMode,
+    );
+    setAppState((current) => ({ ...current, openFolderPaths }));
+    persistWorkspaceTreeState(appState.workspace?.path, openFolderPaths, appState.treeMode);
+  };
+
+  const changeTreeMode = (treeMode: TreeMode) => {
+    setAppState((current) => ({ ...current, treeMode }));
+    persistWorkspaceTreeState(appState.workspace?.path, appState.openFolderPaths, treeMode);
+  };
+
+  const focusCurrentNote = () => {
+    if (!appState.activeNotePath) {
+      return;
+    }
+    const openFolderPaths = focusActiveNote(appState.activeNotePath, appState.workspaceTree);
+    setAppState((current) => ({ ...current, openFolderPaths }));
+    persistWorkspaceTreeState(appState.workspace?.path, openFolderPaths, appState.treeMode);
   };
 
   const changeNoteContent = async (content: string) => {
@@ -1030,6 +1093,8 @@ export function App() {
     <ClassicShell
       activeRoute={appState.activeRoute}
       workspaceTree={appState.workspaceTree}
+      openFolderPaths={appState.openFolderPaths}
+      treeMode={appState.treeMode}
       statusLabel={statusLabel}
       workspaceError={appState.workspaceError}
       workspaceName={appState.workspace?.name ?? "Abrir carpeta"}
@@ -1048,6 +1113,10 @@ export function App() {
       onThemeChange={changeTheme}
       onSelectFolder={selectFolder}
       onSelectNote={selectNote}
+      onToggleFolder={toggleWorkspaceFolder}
+      onTreeModeChange={changeTreeMode}
+      onFocusActiveNote={focusCurrentNote}
+      onNavigateToNote={navigateToNote}
       onNoteChange={changeNoteContent}
       onCreateFolder={createFolderInSelection}
       onCreateNote={createNoteInSelection}
@@ -1132,6 +1201,19 @@ function saveThemeMode(themeMode: ThemeMode) {
   } catch {
     // localStorage may be unavailable (e.g. private browsing); the app still works, just unpersisted.
   }
+}
+
+function persistWorkspaceTreeState(
+  workspacePath: string | undefined,
+  openFolderPaths: ReadonlySet<string>,
+  treeMode: TreeMode,
+) {
+  if (!workspacePath) {
+    return;
+  }
+  void Promise.resolve()
+    .then(() => rememberWorkspaceTreeState(workspacePath, [...openFolderPaths], treeMode))
+    .catch(() => undefined);
 }
 
 function recordSyncEvent(

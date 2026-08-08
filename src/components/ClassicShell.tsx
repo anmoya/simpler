@@ -7,6 +7,7 @@ import type {
   GitHubConnectionWizardState,
   SyncEvent,
   ThemeMode,
+  TreeMode,
   UpdateNoticeState,
   WorkspaceTreeItem,
 } from "../app/appState";
@@ -29,6 +30,8 @@ interface ShellCommand {
 export interface ClassicShellProps {
   activeRoute: AppRoute;
   workspaceTree: WorkspaceTreeItem[];
+  openFolderPaths: ReadonlySet<string>;
+  treeMode: TreeMode;
   statusLabel: string;
   workspaceError: string | null;
   workspaceName: string;
@@ -47,6 +50,10 @@ export interface ClassicShellProps {
   onThemeChange: (themeMode: ThemeMode) => void;
   onSelectFolder: (folderPath: string) => void;
   onSelectNote: (notePath: string) => void;
+  onToggleFolder: (folderPath: string) => void;
+  onTreeModeChange: (treeMode: TreeMode) => void;
+  onFocusActiveNote: () => void;
+  onNavigateToNote: (notePath: string) => void;
   onNoteChange: (content: string) => void;
   onCreateFolder: () => void;
   onCreateNote: () => void;
@@ -97,6 +104,8 @@ const releasePageUrl = "https://github.com/anmoya/simpler/releases/latest";
 export function ClassicShell({
   activeRoute,
   workspaceTree,
+  openFolderPaths,
+  treeMode,
   statusLabel,
   workspaceError,
   workspaceName,
@@ -115,6 +124,10 @@ export function ClassicShell({
   onThemeChange,
   onSelectFolder,
   onSelectNote,
+  onToggleFolder,
+  onTreeModeChange,
+  onFocusActiveNote,
+  onNavigateToNote,
   onNoteChange,
   onCreateFolder,
   onCreateNote,
@@ -264,6 +277,13 @@ export function ClassicShell({
         available: true,
         run: () => setIsCommandHelpOpen(true),
       },
+      ...workspaceNotePaths(workspaceTree).map((notePath) => ({
+        id: `open-note:${notePath}`,
+        label: `Open note: ${notePath}`,
+        shortcut: "",
+        available: true,
+        run: () => onNavigateToNote(notePath),
+      })),
     ],
     [
       activeNotePath,
@@ -275,10 +295,12 @@ export function ClassicShell({
       onCreateNote,
       onMoveActiveNote,
       onOpenWorkspace,
+      onNavigateToNote,
       onRenameSelection,
       onRouteChange,
       onSyncWorkspace,
       onThemeChange,
+      workspaceTree,
     ],
   );
   const availableCommands = commands.filter((command) => command.available);
@@ -534,6 +556,27 @@ export function ClassicShell({
           />
         ) : (
           <>
+            <div className="tree-controls">
+              <label>
+                <span>Workspace Tree Mode</span>
+                <select
+                  aria-label="Workspace Tree Mode"
+                  value={treeMode}
+                  onChange={(event) => onTreeModeChange(event.target.value as TreeMode)}
+                  disabled={!canManageWorkspace}
+                >
+                  <option value="free">Free Tree Mode</option>
+                  <option value="accordion">Accordion Tree Mode</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                onClick={onFocusActiveNote}
+                disabled={activeNotePath === null}
+              >
+                Focus Active Note
+              </button>
+            </div>
             <div className="global-search" role="search" aria-label="Global Search">
               <label className="global-search__field">
                 <Icon name="search" />
@@ -570,6 +613,8 @@ export function ClassicShell({
                 items={workspaceTree}
                 activeNotePath={activeNotePath}
                 activeFolderPath={activeFolderPath}
+                openFolderPaths={openFolderPaths}
+                onToggleFolder={onToggleFolder}
                 onSelectFolder={onSelectFolder}
                 onSelectNote={onSelectNote}
                 onItemContextMenu={(event, kind, path) => {
@@ -1291,6 +1336,8 @@ function WorkspaceTree({
   items,
   activeNotePath,
   activeFolderPath,
+  openFolderPaths,
+  onToggleFolder,
   onSelectFolder,
   onSelectNote,
   onItemContextMenu,
@@ -1302,6 +1349,8 @@ function WorkspaceTree({
   items: WorkspaceTreeItem[];
   activeNotePath: string | null;
   activeFolderPath: string;
+  openFolderPaths: ReadonlySet<string>;
+  onToggleFolder: (folderPath: string) => void;
   onSelectFolder: (folderPath: string) => void;
   onSelectNote: (notePath: string) => void;
   onItemContextMenu: (event: MouseEvent, kind: "folder" | "note", path: string) => void;
@@ -1335,44 +1384,57 @@ function WorkspaceTree({
       {items.map((item) => (
         <li key={item.path}>
           {item.kind === "folder" ? (
-            <button
-              type="button"
-              className={
-                dragOverFolder === item.path ? "note-tree__folder note-tree__folder--drop-target" : "note-tree__folder"
-              }
-              title={item.path}
-              draggable
-              onClick={() => onSelectFolder(item.path)}
-              onContextMenu={(event) => onItemContextMenu(event, "folder", item.path)}
-              onDragStart={(event) => {
-                event.stopPropagation();
-                event.dataTransfer.setData("text/plain", item.path);
-                event.dataTransfer.effectAllowed = "move";
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onDragOverFolder(item.path);
-              }}
-              onDragLeave={(event) => {
-                event.stopPropagation();
-                onDragOverFolder(null);
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                const draggedPath = readDraggedPath(event);
-                onDragOverFolder(null);
-                if (draggedPath) {
-                  onMoveItem(draggedPath, item.path);
+            <div className="note-tree__folder-row">
+              <button
+                type="button"
+                className="note-tree__toggle"
+                aria-label={`${openFolderPaths.has(item.path) ? "Collapse" : "Expand"} ${item.name}`}
+                aria-expanded={openFolderPaths.has(item.path)}
+                onClick={() => onToggleFolder(item.path)}
+              >
+                <Icon name={openFolderPaths.has(item.path) ? "chevron-down" : "chevron-right"} size={12} />
+              </button>
+              <button
+                type="button"
+                className={
+                  dragOverFolder === item.path
+                    ? "note-tree__folder note-tree__folder--drop-target"
+                    : "note-tree__folder"
                 }
-              }}
-            >
-              <span className="note-tree__label">
-                <Icon name="folder" />
-                {item.name}
-              </span>
-            </button>
+                title={item.path}
+                draggable
+                onClick={() => onSelectFolder(item.path)}
+                onContextMenu={(event) => onItemContextMenu(event, "folder", item.path)}
+                onDragStart={(event) => {
+                  event.stopPropagation();
+                  event.dataTransfer.setData("text/plain", item.path);
+                  event.dataTransfer.effectAllowed = "move";
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onDragOverFolder(item.path);
+                }}
+                onDragLeave={(event) => {
+                  event.stopPropagation();
+                  onDragOverFolder(null);
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const draggedPath = readDraggedPath(event);
+                  onDragOverFolder(null);
+                  if (draggedPath) {
+                    onMoveItem(draggedPath, item.path);
+                  }
+                }}
+              >
+                <span className="note-tree__label">
+                  <Icon name="folder" />
+                  {item.name}
+                </span>
+              </button>
+            </div>
           ) : (
             <button
               type="button"
@@ -1395,11 +1457,13 @@ function WorkspaceTree({
               </span>
             </button>
           )}
-          {item.kind === "folder" && item.children.length > 0 ? (
+          {item.kind === "folder" && openFolderPaths.has(item.path) && item.children.length > 0 ? (
             <WorkspaceTree
               items={item.children}
               activeNotePath={activeNotePath}
               activeFolderPath={activeFolderPath}
+              openFolderPaths={openFolderPaths}
+              onToggleFolder={onToggleFolder}
               onSelectFolder={onSelectFolder}
               onSelectNote={onSelectNote}
               onItemContextMenu={onItemContextMenu}
@@ -1416,6 +1480,12 @@ function WorkspaceTree({
 
 function workspaceTreeHasNotes(items: WorkspaceTreeItem[]): boolean {
   return items.some((item) => item.kind === "note" || workspaceTreeHasNotes(item.children));
+}
+
+function workspaceNotePaths(items: WorkspaceTreeItem[]): string[] {
+  return items.flatMap((item) =>
+    item.kind === "note" ? [item.path] : workspaceNotePaths(item.children),
+  );
 }
 
 function findPlainTextMatches(content: string, query: string): FileSearchJump[] {

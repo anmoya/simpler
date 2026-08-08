@@ -512,8 +512,15 @@ describe("App", () => {
           data: {
             name: "notes",
             path: "/tmp/notes",
-            tree: [{ name: "today.md", path: "daily/today.md", kind: "note", children: [] }],
-            metadata: { lastNotePath: null },
+            tree: [
+              {
+                name: "daily",
+                path: "daily",
+                kind: "folder",
+                children: [{ name: "today.md", path: "daily/today.md", kind: "note", children: [] }],
+              },
+            ],
+            metadata: { lastNotePath: null, openFolderPaths: [], treeMode: "free" },
           },
           error: null,
         });
@@ -559,6 +566,10 @@ describe("App", () => {
         });
       }
 
+      if (request.domain === "workspace" && request.action === "remember-tree-state") {
+        return Promise.resolve({ ok: true, domain: "workspace", action: request.action, data: null, error: null });
+      }
+
       if (request.domain === "git" && request.action === "status") {
         return Promise.resolve({
           ok: true,
@@ -576,6 +587,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    expect(screen.queryByRole("button", { name: "today.md" })).not.toBeInTheDocument();
     await user.type(screen.getByRole("searchbox", { name: "Global Search" }), "needle");
     await user.click(screen.getByRole("button", { name: "daily/today.md line 2: needle line" }));
 
@@ -583,6 +595,7 @@ describe("App", () => {
     expect(within(breadcrumb).getByText("daily")).toBeInTheDocument();
     expect(within(breadcrumb).getByText("today.md")).toBeInTheDocument();
     expect(screen.getByTestId("markdown-editor").textContent).toContain("needle line");
+    expect(screen.getByRole("button", { name: "today.md" })).toBeInTheDocument();
   });
 
   it("remembers recent Workspaces and restores the last opened note when available", async () => {
@@ -597,8 +610,15 @@ describe("App", () => {
           data: {
             name: "notes",
             path: "/tmp/notes",
-            tree: [{ name: "today.md", path: "daily/today.md", kind: "note", children: [] }],
-            metadata: { lastNotePath: "daily/today.md" },
+            tree: [
+              {
+                name: "daily",
+                path: "daily",
+                kind: "folder",
+                children: [{ name: "today.md", path: "daily/today.md", kind: "note", children: [] }],
+              },
+            ],
+            metadata: { lastNotePath: "daily/today.md", openFolderPaths: [], treeMode: "free" },
           },
           error: null,
         });
@@ -622,6 +642,10 @@ describe("App", () => {
           data: { lastNotePath: request.payload.notePath },
           error: null,
         });
+      }
+
+      if (request.domain === "workspace" && request.action === "remember-tree-state") {
+        return Promise.resolve({ ok: true, domain: "workspace", action: request.action, data: null, error: null });
       }
 
       if (request.domain === "git" && request.action === "status") {
@@ -657,10 +681,108 @@ describe("App", () => {
       },
     });
     expect(screen.getByTestId("markdown-editor").textContent).toContain("Restored body");
+    expect(screen.getByRole("button", { name: "today.md" })).toBeInTheDocument();
     expect(screen.getByText("/tmp/notes")).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem("simpler.recentWorkspaces") ?? "[]")).toEqual([
       { name: "notes", path: "/tmp/notes" },
     ]);
+  });
+
+  it("restores and persists Tree Mode while Command Palette navigation and Focus Active Note reveal the right branch", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      if (request.domain === "workspace" && request.action === "open") {
+        return Promise.resolve({
+          ok: true,
+          domain: "workspace",
+          action: "open",
+          data: {
+            name: "notes",
+            path: "/tmp/notes",
+            tree: [
+              {
+                name: "daily",
+                path: "daily",
+                kind: "folder",
+                children: [{ name: "today.md", path: "daily/today.md", kind: "note", children: [] }],
+              },
+              {
+                name: "ideas",
+                path: "ideas",
+                kind: "folder",
+                children: [{ name: "plan.md", path: "ideas/plan.md", kind: "note", children: [] }],
+              },
+            ],
+            metadata: { lastNotePath: null, openFolderPaths: ["daily"], treeMode: "accordion" },
+          },
+          error: null,
+        });
+      }
+      if (request.domain === "filesystem" && request.action === "read-note") {
+        return Promise.resolve({
+          ok: true,
+          domain: "filesystem",
+          action: "read-note",
+          data: { content: "# Plan" },
+          error: null,
+        });
+      }
+      if (request.domain === "workspace" && ["remember-note", "remember-tree-state"].includes(request.action)) {
+        return Promise.resolve({ ok: true, domain: "workspace", action: request.action, data: null, error: null });
+      }
+      if (request.domain === "git" && request.action === "status") {
+        return Promise.resolve({
+          ok: true,
+          domain: "git",
+          action: "status",
+          data: { isRepository: true, hasRemote: true, syncStatus: "sincronizado" },
+          error: null,
+        });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+
+    expect(screen.getByRole("combobox", { name: "Workspace Tree Mode" })).toHaveValue("accordion");
+    expect(screen.getByRole("button", { name: "today.md" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "plan.md" })).not.toBeInTheDocument();
+
+    const treeWritesBeforeDirectSelection = mocks.invoke.mock.calls.filter(
+      ([, { request }]) => request.domain === "workspace" && request.action === "remember-tree-state",
+    ).length;
+    await user.click(screen.getByRole("button", { name: "today.md" }));
+    expect(
+      mocks.invoke.mock.calls.filter(
+        ([, { request }]) => request.domain === "workspace" && request.action === "remember-tree-state",
+      ),
+    ).toHaveLength(treeWritesBeforeDirectSelection);
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Workspace Tree Mode" }), "free");
+    await user.keyboard("{Control>}k{/Control}");
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Command Palette" })).getByRole("button", {
+        name: "Open note: ideas/plan.md",
+      }),
+    );
+
+    expect(await screen.findByRole("button", { name: "plan.md" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "today.md" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Focus Active Note" }));
+    expect(screen.queryByRole("button", { name: "today.md" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "plan.md" })).toBeInTheDocument();
+
+    expect(mocks.invoke).toHaveBeenCalledWith("native_command", {
+      request: {
+        domain: "workspace",
+        action: "remember-tree-state",
+        payload: { workspacePath: "/tmp/notes", openFolderPaths: ["daily"], treeMode: "free" },
+      },
+    });
   });
 
   it("shows the Sync status returned by the Git service after opening a Workspace", async () => {
