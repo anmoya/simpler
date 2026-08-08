@@ -26,6 +26,7 @@ import {
   connectGitHubRemote,
   advancedGitStatus,
   deleteItem,
+  listTrash,
   disconnectGitHub,
   downloadAndInstallUpdate,
   getInstallKind,
@@ -35,10 +36,13 @@ import {
   githubAuthStatus,
   pollGitHubDeviceFlow,
   resolveGitConflict,
+  restoreTrashItem,
   restartToApplyUpdate,
   globalSearch,
   moveItem,
   moveNote,
+  noteContentAtCommit,
+  noteHistory,
   openWorkspace,
   postponeGitHubWizard,
   readNote,
@@ -52,11 +56,30 @@ import {
   type ConflictResolution,
   type GitHubAuthStatus,
   type GitHubRemote,
+  type NoteHistoryEntry,
 } from "../native/commands";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type SyncOutcome = { ok: true } | { ok: false; kind?: "conflict"; error?: string };
+
+interface NoteHistoryPanelState {
+  isOpen: boolean;
+  entries: NoteHistoryEntry[];
+  selectedCommitId: string | null;
+  previewContent: string | null;
+  loading: boolean;
+  error: string | null;
+}
+
+const closedNoteHistoryPanel: NoteHistoryPanelState = {
+  isOpen: false,
+  entries: [],
+  selectedCommitId: null,
+  previewContent: null,
+  loading: false,
+  error: null,
+};
 
 const syncPausedForConflictMessage = "Sync is paused until an existing conflict is resolved";
 
@@ -83,6 +106,7 @@ export function App() {
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
   const [closeSyncPrompt, setCloseSyncPrompt] = useState<CloseSyncPromptState | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const [noteHistoryPanel, setNoteHistoryPanel] = useState<NoteHistoryPanelState>(closedNoteHistoryPanel);
 
   const requestPrompt = (title: string, defaultValue = "") =>
     new Promise<string | null>((resolve) => setDialog({ kind: "prompt", title, defaultValue, resolve }));
@@ -358,6 +382,18 @@ export function App() {
     if (activeRoute === "settings") {
       void refreshGitHubAuth();
     }
+    if (activeRoute === "trash" && appState.workspace) {
+      void refreshTrash(appState.workspace.path);
+    }
+  };
+
+  const refreshTrash = async (workspacePath: string) => {
+    const response = await listTrash(workspacePath);
+    setAppState((current) => ({
+      ...current,
+      trashEntries: response.ok && response.data ? response.data.entries : [],
+      workspaceError: response.ok ? null : response.error ?? "No se pudo abrir la Papelera",
+    }));
   };
 
   const updateGitHubAuth = (response: { ok: boolean; data: GitHubAuthStatus | null; error: string | null }) => {
@@ -590,6 +626,7 @@ export function App() {
   };
 
   const selectFolder = (folderPath: string) => {
+    setNoteHistoryPanel(closedNoteHistoryPanel);
     setAppState((current) => ({
       ...current,
       activeFolderPath: folderPath,
@@ -624,6 +661,7 @@ export function App() {
     revealInTree = false,
     revealState?: Pick<AppState, "workspaceTree" | "openFolderPaths" | "treeMode">,
   ) => {
+    setNoteHistoryPanel(closedNoteHistoryPanel);
     const response = await readNote(workspacePath, notePath);
     const currentRevealState = revealState ?? appStateRef.current;
     const openFolderPaths = revealInTree
@@ -734,7 +772,7 @@ export function App() {
     const activeNotePath = appState.activeNotePath;
 
     if (!workspace || !activeNotePath) {
-      return;
+      return false;
     }
 
     setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
@@ -746,7 +784,7 @@ export function App() {
         ...current,
         workspaceError: response.error ?? "No se pudo guardar la nota",
       }));
-      return;
+      return false;
     }
 
     setAppState((current) => ({
@@ -754,6 +792,64 @@ export function App() {
       syncStatus: current.syncStatus === "sincronizado" ? "cambios-locales" : current.syncStatus,
     }));
     schedulerRef.current?.localSave();
+    return true;
+  };
+
+  const closeNoteHistory = () => setNoteHistoryPanel(closedNoteHistoryPanel);
+
+  const openNoteHistory = async () => {
+    const workspace = appState.workspace;
+    const notePath = appState.activeNotePath;
+    if (!workspace || !notePath || appState.syncStatus === "sin-git") {
+      return;
+    }
+
+    setNoteHistoryPanel({ ...closedNoteHistoryPanel, isOpen: true, loading: true });
+    const response = await noteHistory(workspace.path, notePath);
+    if (appStateRef.current.workspace?.path !== workspace.path || appStateRef.current.activeNotePath !== notePath) {
+      return;
+    }
+    setNoteHistoryPanel({
+      ...closedNoteHistoryPanel,
+      isOpen: true,
+      entries: response.ok && response.data ? response.data : [],
+      error: response.ok ? null : response.error ?? "Could not load note history",
+    });
+  };
+
+  const selectNoteHistoryEntry = async (entry: NoteHistoryEntry) => {
+    const workspace = appState.workspace;
+    const notePath = appState.activeNotePath;
+    if (!workspace || !notePath) {
+      return;
+    }
+
+    setNoteHistoryPanel((current) => ({
+      ...current,
+      selectedCommitId: entry.commitId,
+      previewContent: null,
+      loading: true,
+      error: null,
+    }));
+    const response = await noteContentAtCommit(workspace.path, notePath, entry.commitId);
+    if (appStateRef.current.workspace?.path !== workspace.path || appStateRef.current.activeNotePath !== notePath) {
+      return;
+    }
+    setNoteHistoryPanel((current) => ({
+      ...current,
+      loading: false,
+      previewContent: response.ok && response.data ? response.data.content : null,
+      error: response.ok ? null : response.error ?? "Could not load this note version",
+    }));
+  };
+
+  const restoreNoteHistoryEntry = async () => {
+    if (noteHistoryPanel.previewContent === null) {
+      return;
+    }
+    if (await changeNoteContent(noteHistoryPanel.previewContent)) {
+      closeNoteHistory();
+    }
   };
 
   const createFolderInSelection = async () => {
@@ -868,6 +964,26 @@ export function App() {
       activeNotePath: null,
       noteContent: "",
       editorError: null,
+    }));
+  };
+
+  const restoreFromTrash = async (id: string) => {
+    if (!appState.workspace) {
+      return;
+    }
+    const response = await restoreTrashItem(appState.workspace.path, id);
+    if (!response.ok || !response.data) {
+      setAppState((current) => ({
+        ...current,
+        workspaceError: response.error ?? "No se pudo restaurar el elemento",
+      }));
+      return;
+    }
+    setAppState((current) => ({
+      ...current,
+      workspaceTree: response.data!.tree,
+      trashEntries: current.trashEntries.filter((entry) => entry.id !== id),
+      workspaceError: null,
     }));
   };
 
@@ -1103,6 +1219,12 @@ export function App() {
       activeNotePath={appState.activeNotePath}
       activeFolderPath={appState.activeFolderPath}
       noteContent={appState.noteContent}
+      noteHistoryOpen={noteHistoryPanel.isOpen}
+      noteHistoryEntries={noteHistoryPanel.entries}
+      selectedNoteHistoryCommitId={noteHistoryPanel.selectedCommitId}
+      noteHistoryPreview={noteHistoryPanel.previewContent}
+      noteHistoryLoading={noteHistoryPanel.loading}
+      noteHistoryError={noteHistoryPanel.error}
       themeMode={appState.themeMode}
       editorError={appState.editorError}
       canManageWorkspace={appState.workspace !== null}
@@ -1118,11 +1240,17 @@ export function App() {
       onFocusActiveNote={focusCurrentNote}
       onNavigateToNote={navigateToNote}
       onNoteChange={changeNoteContent}
+      onOpenNoteHistory={() => void openNoteHistory()}
+      onCloseNoteHistory={closeNoteHistory}
+      onSelectNoteHistoryEntry={(entry) => void selectNoteHistoryEntry(entry)}
+      onRestoreNoteHistoryEntry={() => void restoreNoteHistoryEntry()}
       onCreateFolder={createFolderInSelection}
       onCreateNote={createNoteInSelection}
       onRenameSelection={renameSelection}
       onMoveActiveNote={moveActiveNote}
       onDeleteSelection={deleteSelection}
+      trashEntries={appState.trashEntries}
+      onRestoreTrashItem={(id) => void restoreFromTrash(id)}
       onMoveItem={moveItemToFolder}
       isWindowMaximized={isWindowMaximized}
       onMinimizeWindow={minimizeWindow}

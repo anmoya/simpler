@@ -59,6 +59,12 @@ export interface GitSyncResult {
   conflictedFiles: string[];
 }
 
+export interface NoteHistoryEntry {
+  commitId: string;
+  date: string;
+  summary: string;
+}
+
 export interface GitHubRemote {
   name: string;
   url: string;
@@ -108,6 +114,18 @@ export interface NoteContent {
 export interface FilesystemOperationResult {
   tree: WorkspaceTreeItem[];
   itemPath: string;
+}
+
+export interface TrashEntry {
+  id: string;
+  originalRelativePath: string;
+  trashedRelativePath: string;
+  deletedAt: string;
+  isDirectory: boolean;
+}
+
+export interface TrashEntries {
+  entries: TrashEntry[];
 }
 
 export interface GlobalSearchResult {
@@ -202,6 +220,22 @@ export function createNote(workspacePath: string, parentPath: string, noteName: 
   });
 }
 
+export function saveAttachment(
+  workspacePath: string,
+  parentPath: string,
+  fileName: string,
+  contentBase64: string,
+) {
+  return invokeNativeCommand<
+    FilesystemOperationResult,
+    { workspacePath: string; parentPath: string; fileName: string; contentBase64: string }
+  >({
+    domain: "filesystem",
+    action: "save-attachment",
+    payload: { workspacePath, parentPath, fileName, contentBase64 },
+  });
+}
+
 export function renameItem(workspacePath: string, itemPath: string, newName: string) {
   return invokeNativeCommand<
     FilesystemOperationResult,
@@ -243,6 +277,22 @@ export function deleteItem(workspacePath: string, itemPath: string) {
   });
 }
 
+export function listTrash(workspacePath: string) {
+  return invokeNativeCommand<TrashEntries, { workspacePath: string }>({
+    domain: "filesystem",
+    action: "list-trash",
+    payload: { workspacePath },
+  });
+}
+
+export function restoreTrashItem(workspacePath: string, id: string) {
+  return invokeNativeCommand<FilesystemOperationResult, { workspacePath: string; id: string }>({
+    domain: "filesystem",
+    action: "restore-trash-item",
+    payload: { workspacePath, id },
+  });
+}
+
 export function globalSearch(workspacePath: string, query: string) {
   return invokeNativeCommand<GlobalSearchResults, { workspacePath: string; query: string }>({
     domain: "filesystem",
@@ -272,6 +322,22 @@ export function gitSync(workspacePath: string) {
     domain: "git",
     action: "sync",
     payload: { workspacePath },
+  });
+}
+
+export function noteHistory(workspacePath: string, notePath: string) {
+  return invokeNativeCommand<NoteHistoryEntry[], { workspacePath: string; notePath: string }>({
+    domain: "git",
+    action: "note-history",
+    payload: { workspacePath, notePath },
+  });
+}
+
+export function noteContentAtCommit(workspacePath: string, notePath: string, commitId: string) {
+  return invokeNativeCommand<NoteContent, { workspacePath: string; notePath: string; commitId: string }>({
+    domain: "git",
+    action: "note-content-at-commit",
+    payload: { workspacePath, notePath, commitId },
   });
 }
 

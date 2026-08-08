@@ -18,6 +18,12 @@ const defaultProps: ClassicShellProps = {
   activeNotePath: null,
   activeFolderPath: "",
   noteContent: "",
+  noteHistoryOpen: false,
+  noteHistoryEntries: [],
+  selectedNoteHistoryCommitId: null,
+  noteHistoryPreview: null,
+  noteHistoryLoading: false,
+  noteHistoryError: null,
   themeMode: "light",
   editorError: null,
   canManageWorkspace: false,
@@ -33,11 +39,17 @@ const defaultProps: ClassicShellProps = {
   onFocusActiveNote: noop,
   onNavigateToNote: noop,
   onNoteChange: noop,
+  onOpenNoteHistory: noop,
+  onCloseNoteHistory: noop,
+  onSelectNoteHistoryEntry: noop,
+  onRestoreNoteHistoryEntry: noop,
   onCreateFolder: noop,
   onCreateNote: noop,
   onRenameSelection: noop,
   onMoveActiveNote: noop,
   onDeleteSelection: noop,
+  trashEntries: [],
+  onRestoreTrashItem: noop,
   onMoveItem: noop,
   onSyncWorkspace: noop,
   githubRemote: null,
@@ -88,6 +100,25 @@ function renderShell(props: Partial<ClassicShellProps> = {}) {
 }
 
 describe("ClassicShell", () => {
+  it("shows an empty note-history state without offering history in a plain Workspace", () => {
+    const { rerender } = renderShell({
+      activeNotePath: "today.md",
+      noteHistoryOpen: true,
+      noteHistoryEntries: [],
+    });
+
+    expect(screen.getByRole("complementary", { name: "Note history" })).toHaveTextContent("No synced versions yet.");
+
+    rerender(
+      <ClassicShell
+        {...defaultProps}
+        activeNotePath="today.md"
+        isWorkspaceGitBacked={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Open note history" })).toBeDisabled();
+  });
+
   it("reserves space for the sidebar, editor, and status area", () => {
     renderShell({
       workspaceTree: [{ name: "today.md", path: "daily/today.md", kind: "note", children: [] }],
@@ -141,6 +172,28 @@ describe("ClassicShell", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Sync" }));
 
     expect(onRouteChange).toHaveBeenCalledWith("sync");
+  });
+
+  it("opens the Trash view and offers restore for each trashed item", async () => {
+    const onRouteChange = vi.fn();
+    const onRestoreTrashItem = vi.fn();
+
+    const { rerender } = renderShell({ canManageWorkspace: true, onRouteChange });
+
+    await userEvent.click(screen.getByRole("tab", { name: "Trash" }));
+    expect(onRouteChange).toHaveBeenCalledWith("trash");
+
+    rerender(<ClassicShell {...defaultProps} activeRoute="trash" canManageWorkspace trashEntries={[{
+      id: "trash-1",
+      originalRelativePath: "daily/today.md",
+      trashedRelativePath: ".simpler/local/trash/trash-1-today.md",
+      deletedAt: "2026-08-08T12:00:00Z",
+      isDirectory: false,
+    }]} onRestoreTrashItem={onRestoreTrashItem} />);
+    expect(screen.getByText("daily/today.md")).toBeInTheDocument();
+    expect(screen.getByText(/2026|8\/8\/2026/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    expect(onRestoreTrashItem).toHaveBeenCalledWith("trash-1");
   });
 
   it("toggles a sidebar panel back to the note tree when its tab is active", async () => {

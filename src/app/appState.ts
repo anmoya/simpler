@@ -1,5 +1,5 @@
 import type { AppRoute } from "./routes";
-import type { AdvancedGitStatus, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, SyncStatus as GitSyncStatus } from "../native/commands";
+import type { AdvancedGitStatus, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, SyncStatus as GitSyncStatus, TrashEntry } from "../native/commands";
 
 export type SyncStatus = GitSyncStatus | "workspace-abierto" | "sincronizando" | "desconectado" | "error";
 export type ThemeMode = "light" | "dark";
@@ -63,6 +63,7 @@ export interface AppState {
   workspaceError: string | null;
   globalSearchQuery: string;
   globalSearchResults: GlobalSearchResult[];
+  trashEntries: TrashEntry[];
   fileSearchJump: FileSearchJump | null;
   githubAuth: GitHubAuthStatus;
   githubRemote: GitHubRemote | null;
@@ -102,6 +103,7 @@ export const initialAppState: AppState = {
   workspaceError: null,
   globalSearchQuery: "",
   globalSearchResults: [],
+  trashEntries: [],
   fileSearchJump: null,
   githubAuth: { state: "disconnected", message: null },
   githubRemote: null,

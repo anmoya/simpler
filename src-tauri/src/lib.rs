@@ -3,6 +3,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +95,15 @@ struct CreateNotePayload {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SaveAttachmentPayload {
+    workspace_path: String,
+    parent_path: String,
+    file_name: String,
+    content_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RenameItemPayload {
     workspace_path: String,
     item_path: String,
@@ -113,6 +123,35 @@ struct MoveNotePayload {
 struct DeleteItemPayload {
     workspace_path: String,
     item_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrashWorkspacePayload {
+    workspace_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RestoreTrashItemPayload {
+    workspace_path: String,
+    id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TrashEntry {
+    id: String,
+    original_relative_path: String,
+    trashed_relative_path: String,
+    deleted_at: String,
+    is_directory: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrashEntries {
+    entries: Vec<TrashEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +179,21 @@ struct GitStatusPayload {
 #[serde(rename_all = "camelCase")]
 struct GitSyncPayload {
     workspace_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteHistoryPayload {
+    workspace_path: String,
+    note_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteContentAtCommitPayload {
+    workspace_path: String,
+    note_path: String,
+    commit_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -275,6 +329,14 @@ struct GitCommit {
     id: String,
     subject: String,
     timestamp: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteHistoryEntry {
+    commit_id: String,
+    date: String,
+    summary: String,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -420,10 +482,15 @@ impl GitHubCredentialStore for SystemCredentialStore {
             return Ok(None);
         }
         if !output.status.success() {
-            return Err("failed to read the GitHub credential from the system keychain".to_string());
+            return Err(
+                "failed to read the GitHub credential from the system keychain".to_string(),
+            );
         }
 
-        Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()).filter(|token| !token.is_empty()))
+        Ok(
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|token| !token.is_empty()),
+        )
     }
 
     fn store_access_token(&self, token: &str) -> Result<(), String> {
@@ -442,12 +509,16 @@ impl GitHubCredentialStore for SystemCredentialStore {
         child
             .stdin
             .take()
-            .ok_or_else(|| "failed to write the GitHub credential to the system keychain".to_string())?
+            .ok_or_else(|| {
+                "failed to write the GitHub credential to the system keychain".to_string()
+            })?
             .write_all(token.as_bytes())
-            .map_err(|error| format!("failed to write the GitHub credential to the system keychain: {error}"))?;
-        let status = child
-            .wait()
-            .map_err(|error| format!("failed to store the GitHub credential in the system keychain: {error}"))?;
+            .map_err(|error| {
+                format!("failed to write the GitHub credential to the system keychain: {error}")
+            })?;
+        let status = child.wait().map_err(|error| {
+            format!("failed to store the GitHub credential in the system keychain: {error}")
+        })?;
         if status.success() {
             Ok(())
         } else {
@@ -512,7 +583,10 @@ impl GitHubDeviceFlowClient for SystemGitHubDeviceFlowClient {
             user_code: required_json_string(&value, "user_code")?,
             verification_uri: required_json_string(&value, "verification_uri")?,
             expires_in: required_json_u64(&value, "expires_in")?,
-            interval: value.get("interval").and_then(serde_json::Value::as_u64).unwrap_or(5),
+            interval: value
+                .get("interval")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(5),
         })
     }
 
@@ -523,19 +597,28 @@ impl GitHubDeviceFlowClient for SystemGitHubDeviceFlowClient {
         };
         let value = match github_device_flow_request(
             "https://github.com/login/oauth/access_token",
-            &[format!("client_id={client_id}"), format!("device_code={device_code}"), "grant_type=urn:ietf:params:oauth:grant-type:device_code".to_string()],
+            &[
+                format!("client_id={client_id}"),
+                format!("device_code={device_code}"),
+                "grant_type=urn:ietf:params:oauth:grant-type:device_code".to_string(),
+            ],
         ) {
             Ok(value) => value,
             Err(error) => return DeviceFlowPoll::Failed(error),
         };
-        if let Some(token) = value.get("access_token").and_then(serde_json::Value::as_str) {
+        if let Some(token) = value
+            .get("access_token")
+            .and_then(serde_json::Value::as_str)
+        {
             return DeviceFlowPoll::Connected(token.to_string());
         }
         match value.get("error").and_then(serde_json::Value::as_str) {
             Some("authorization_pending") | Some("slow_down") => DeviceFlowPoll::Pending,
             Some("expired_token") => DeviceFlowPoll::Expired,
             Some(error) => DeviceFlowPoll::Failed(error.to_string()),
-            None => DeviceFlowPoll::Failed("GitHub returned an invalid device-flow response".to_string()),
+            None => DeviceFlowPoll::Failed(
+                "GitHub returned an invalid device-flow response".to_string(),
+            ),
         }
     }
 }
@@ -549,7 +632,15 @@ fn github_oauth_client_id() -> Result<String, String> {
 
 fn github_device_flow_request(url: &str, fields: &[String]) -> Result<serde_json::Value, String> {
     let mut child = Command::new("curl")
-        .args(["--fail-with-body", "--silent", "--show-error", "--request", "POST", "--header", "Accept: application/json"])
+        .args([
+            "--fail-with-body",
+            "--silent",
+            "--show-error",
+            "--request",
+            "POST",
+            "--header",
+            "Accept: application/json",
+        ])
         .args(["--data", "@-"])
         .arg(url)
         .stdin(std::process::Stdio::piped())
@@ -568,16 +659,22 @@ fn github_device_flow_request(url: &str, fields: &[String]) -> Result<serde_json
     if !output.status.success() {
         return Err("GitHub device flow request failed".to_string());
     }
-    serde_json::from_slice(&output.stdout).map_err(|_| "GitHub returned an invalid device-flow response".to_string())
+    serde_json::from_slice(&output.stdout)
+        .map_err(|_| "GitHub returned an invalid device-flow response".to_string())
 }
 
 fn required_json_string(value: &serde_json::Value, field: &str) -> Result<String, String> {
-    value.get(field).and_then(serde_json::Value::as_str).map(ToString::to_string)
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string)
         .ok_or_else(|| "GitHub returned an invalid device-flow response".to_string())
 }
 
 fn required_json_u64(value: &serde_json::Value, field: &str) -> Result<u64, String> {
-    value.get(field).and_then(serde_json::Value::as_u64)
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| "GitHub returned an invalid device-flow response".to_string())
 }
 
@@ -606,16 +703,28 @@ fn finish_github_device_flow(
     device_code: &str,
 ) -> GitHubAuthStatus {
     match device_flow.poll(device_code) {
-        DeviceFlowPoll::Pending => GitHubAuthStatus { state: GitHubAuthState::Pending, message: None },
+        DeviceFlowPoll::Pending => GitHubAuthStatus {
+            state: GitHubAuthState::Pending,
+            message: None,
+        },
         DeviceFlowPoll::Connected(token) => match keychain.store_access_token(&token) {
-            Ok(()) => GitHubAuthStatus { state: GitHubAuthState::Connected, message: None },
-            Err(error) => GitHubAuthStatus { state: GitHubAuthState::Failed, message: Some(error) },
+            Ok(()) => GitHubAuthStatus {
+                state: GitHubAuthState::Connected,
+                message: None,
+            },
+            Err(error) => GitHubAuthStatus {
+                state: GitHubAuthState::Failed,
+                message: Some(error),
+            },
         },
         DeviceFlowPoll::Expired => GitHubAuthStatus {
             state: GitHubAuthState::Expired,
             message: Some("GitHub device-flow code expired".to_string()),
         },
-        DeviceFlowPoll::Failed(error) => GitHubAuthStatus { state: GitHubAuthState::Failed, message: Some(error) },
+        DeviceFlowPoll::Failed(error) => GitHubAuthStatus {
+            state: GitHubAuthState::Failed,
+            message: Some(error),
+        },
     }
 }
 
@@ -697,6 +806,10 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
         return native_response(request, create_note_payload);
     }
 
+    if request.domain == NativeDomain::Filesystem && request.action == "save-attachment" {
+        return native_response(request, save_attachment_payload);
+    }
+
     if request.domain == NativeDomain::Filesystem && request.action == "rename-item" {
         return native_response(request, rename_item_payload);
     }
@@ -707,6 +820,14 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
 
     if request.domain == NativeDomain::Filesystem && request.action == "delete-item" {
         return native_response(request, delete_item_payload);
+    }
+
+    if request.domain == NativeDomain::Filesystem && request.action == "list-trash" {
+        return native_response(request, list_trash_payload);
+    }
+
+    if request.domain == NativeDomain::Filesystem && request.action == "restore-trash-item" {
+        return native_response(request, restore_trash_item_payload);
     }
 
     if request.domain == NativeDomain::Filesystem && request.action == "move-item" {
@@ -727,6 +848,14 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
 
     if request.domain == NativeDomain::Git && request.action == "sync" {
         return native_response(request, git_sync_payload);
+    }
+
+    if request.domain == NativeDomain::Git && request.action == "note-history" {
+        return native_response(request, note_history_payload);
+    }
+
+    if request.domain == NativeDomain::Git && request.action == "note-content-at-commit" {
+        return native_response(request, note_content_at_commit_payload);
     }
 
     if request.domain == NativeDomain::Git && request.action == "github-remote" {
@@ -803,36 +932,58 @@ fn start_github_device_flow_payload(_: serde_json::Value) -> Result<serde_json::
         interval: flow.interval,
     };
     let session = DEVICE_FLOW.get_or_init(|| Mutex::new(None));
-    *session.lock().map_err(|_| "GitHub device flow is unavailable".to_string())? = Some(flow);
-    serde_json::to_value(instructions).map_err(|_| "failed to serialize GitHub device flow".to_string())
+    *session
+        .lock()
+        .map_err(|_| "GitHub device flow is unavailable".to_string())? = Some(flow);
+    serde_json::to_value(instructions)
+        .map_err(|_| "failed to serialize GitHub device flow".to_string())
 }
 
 fn poll_github_device_flow_payload(_: serde_json::Value) -> Result<serde_json::Value, String> {
     let session = DEVICE_FLOW.get_or_init(|| Mutex::new(None));
-    let mut session = session.lock().map_err(|_| "GitHub device flow is unavailable".to_string())?;
-    let flow = session.as_ref().ok_or_else(|| "GitHub device flow has not been started".to_string())?;
-    let status = finish_github_device_flow(&SystemGitHubDeviceFlowClient, &SystemCredentialStore, &flow.device_code);
-    if matches!(status.state, GitHubAuthState::Connected | GitHubAuthState::Expired) {
+    let mut session = session
+        .lock()
+        .map_err(|_| "GitHub device flow is unavailable".to_string())?;
+    let flow = session
+        .as_ref()
+        .ok_or_else(|| "GitHub device flow has not been started".to_string())?;
+    let status = finish_github_device_flow(
+        &SystemGitHubDeviceFlowClient,
+        &SystemCredentialStore,
+        &flow.device_code,
+    );
+    if matches!(
+        status.state,
+        GitHubAuthState::Connected | GitHubAuthState::Expired
+    ) {
         *session = None;
     }
     serde_json::to_value(status).map_err(|_| "failed to serialize GitHub auth status".to_string())
 }
 
-fn store_personal_access_token_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
-    let payload: StorePersonalAccessTokenPayload = serde_json::from_value(payload)
-        .map_err(|_| "token is required".to_string())?;
+fn store_personal_access_token_payload(
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let payload: StorePersonalAccessTokenPayload =
+        serde_json::from_value(payload).map_err(|_| "token is required".to_string())?;
     if payload.token.trim().is_empty() {
         return Err("token is required".to_string());
     }
     SystemCredentialStore.store_access_token(payload.token.trim())?;
-    serde_json::to_value(GitHubAuthStatus { state: GitHubAuthState::Connected, message: None })
-        .map_err(|_| "failed to serialize GitHub auth status".to_string())
+    serde_json::to_value(GitHubAuthStatus {
+        state: GitHubAuthState::Connected,
+        message: None,
+    })
+    .map_err(|_| "failed to serialize GitHub auth status".to_string())
 }
 
 fn disconnect_github_payload(_: serde_json::Value) -> Result<serde_json::Value, String> {
     SystemCredentialStore.clear_access_token()?;
-    serde_json::to_value(GitHubAuthStatus { state: GitHubAuthState::Disconnected, message: None })
-        .map_err(|_| "failed to serialize GitHub auth status".to_string())
+    serde_json::to_value(GitHubAuthStatus {
+        state: GitHubAuthState::Disconnected,
+        message: None,
+    })
+    .map_err(|_| "failed to serialize GitHub auth status".to_string())
 }
 
 fn native_response(
@@ -916,6 +1067,61 @@ fn create_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
     workspace_operation_result(&workspace_path, &note_path)
 }
 
+fn save_attachment_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: SaveAttachmentPayload = serde_json::from_value(payload).map_err(|_| {
+        "workspacePath, parentPath, fileName, and contentBase64 are required".to_string()
+    })?;
+    let workspace_path = PathBuf::from(&payload.workspace_path);
+    ensure_workspace_folder(&workspace_path)?;
+    let parent_path = resolve_workspace_folder(&workspace_path, &payload.parent_path)?;
+    let file_name = sanitize_child_name(&payload.file_name)?;
+    let assets_path = parent_path.join("assets");
+    fs::create_dir_all(&assets_path)
+        .map_err(|error| format!("failed to create assets folder: {error}"))?;
+
+    let attachment_path = unique_attachment_path(&assets_path, &file_name);
+    let bytes = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        &payload.content_base64,
+    )
+    .map_err(|_| "attachment content must be valid base64".to_string())?;
+    fs::write(&attachment_path, &bytes)
+        .map_err(|error| format!("failed to save attachment: {error}"))?;
+
+    serde_json::to_value(FilesystemOperationResult {
+        tree: read_workspace_tree(&workspace_path, &workspace_path)?,
+        item_path: relative_workspace_path(&workspace_path, &attachment_path),
+    })
+    .map_err(|_| "failed to serialize filesystem response".to_string())
+}
+
+fn unique_attachment_path(assets_path: &Path, file_name: &str) -> PathBuf {
+    let candidate = assets_path.join(file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let path = Path::new(file_name);
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(file_name);
+    let extension = path.extension().and_then(|extension| extension.to_str());
+
+    for suffix in 1..1000 {
+        let disambiguated_name = match extension {
+            Some(extension) => format!("{stem}-{suffix}.{extension}"),
+            None => format!("{stem}-{suffix}"),
+        };
+        let disambiguated_path = assets_path.join(&disambiguated_name);
+        if !disambiguated_path.exists() {
+            return disambiguated_path;
+        }
+    }
+
+    candidate
+}
+
 fn rename_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
     let payload: RenameItemPayload = serde_json::from_value(payload)
         .map_err(|_| "workspacePath, itemPath, and newName are required".to_string())?;
@@ -987,15 +1193,168 @@ fn delete_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
         .ok_or_else(|| "cannot delete the workspace root".to_string())?
         .to_path_buf();
 
-    if metadata.is_file() {
-        fs::remove_file(&item_path).map_err(|error| format!("failed to delete note: {error}"))?;
-    } else if metadata.is_dir() {
-        fs::remove_dir_all(&item_path).map_err(|error| format!("failed to delete folder: {error}"))?;
-    } else {
+    if !metadata.is_file() && !metadata.is_dir() {
         return Err("item must be a note or folder".to_string());
     }
 
+    ensure_trash_folder(&workspace_path)?;
+    let mut entries = read_trash_index(&workspace_path)?;
+    let id = next_trash_id();
+    let item_name = item_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "item path must include a valid name".to_string())?;
+    let trashed_relative_path = format!(".simpler/local/trash/{id}-{item_name}");
+    let trashed_path = workspace_path.join(&trashed_relative_path);
+    fs::rename(&item_path, &trashed_path)
+        .map_err(|error| format!("failed to move item to trash: {error}"))?;
+
+    entries.push(TrashEntry {
+        id,
+        original_relative_path: payload.item_path,
+        trashed_relative_path,
+        deleted_at: chrono::Utc::now().to_rfc3339(),
+        is_directory: metadata.is_dir(),
+    });
+    if let Err(error) = write_trash_index(&workspace_path, &entries) {
+        let _ = fs::rename(&trashed_path, &item_path);
+        return Err(error);
+    }
+
     workspace_operation_result(&workspace_path, &parent_path)
+}
+
+static TRASH_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn next_trash_id() -> String {
+    let sequence = TRASH_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "{}-{sequence}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    )
+}
+
+fn trash_folder(workspace_path: &Path) -> PathBuf {
+    workspace_path.join(".simpler").join("local").join("trash")
+}
+
+fn ensure_trash_folder(workspace_path: &Path) -> Result<PathBuf, String> {
+    ensure_workspace_metadata(workspace_path)?;
+    let path = trash_folder(workspace_path);
+    fs::create_dir_all(&path).map_err(|error| format!("failed to create trash: {error}"))?;
+    Ok(path)
+}
+
+fn read_trash_index(workspace_path: &Path) -> Result<Vec<TrashEntry>, String> {
+    let index_path = trash_folder(workspace_path).join("index.json");
+    if !index_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = fs::read_to_string(index_path)
+        .map_err(|error| format!("failed to read trash index: {error}"))?;
+    serde_json::from_str(&content).map_err(|error| format!("failed to parse trash index: {error}"))
+}
+
+fn write_trash_index(workspace_path: &Path, entries: &[TrashEntry]) -> Result<(), String> {
+    let trash_path = ensure_trash_folder(workspace_path)?;
+    write_json_file(&trash_path.join("index.json"), &entries)
+        .map_err(|error| format!("failed to write trash index: {error}"))
+}
+
+fn list_trash_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: TrashWorkspacePayload =
+        serde_json::from_value(payload).map_err(|_| "workspacePath is required".to_string())?;
+    let workspace_path = PathBuf::from(payload.workspace_path);
+    ensure_workspace_folder(&workspace_path)?;
+    serde_json::to_value(TrashEntries {
+        entries: read_trash_index(&workspace_path)?,
+    })
+    .map_err(|_| "failed to serialize trash entries".to_string())
+}
+
+fn restore_trash_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: RestoreTrashItemPayload = serde_json::from_value(payload)
+        .map_err(|_| "workspacePath and id are required".to_string())?;
+    let workspace_path = PathBuf::from(payload.workspace_path);
+    ensure_workspace_folder(&workspace_path)?;
+    let mut entries = read_trash_index(&workspace_path)?;
+    let entry_index = entries
+        .iter()
+        .position(|entry| entry.id == payload.id)
+        .ok_or_else(|| "trash item was not found".to_string())?;
+    let entry = entries[entry_index].clone();
+    let original_path = resolve_workspace_path(&workspace_path, &entry.original_relative_path)?;
+    if original_path.exists() {
+        return Err("original path is already occupied".to_string());
+    }
+    let trashed_path = resolve_trash_entry_path(&workspace_path, &entry.trashed_relative_path)?;
+    if !trashed_path.exists() {
+        return Err("trashed item is missing".to_string());
+    }
+    if let Some(parent) = original_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to recreate original folder: {error}"))?;
+    }
+    fs::rename(&trashed_path, &original_path)
+        .map_err(|error| format!("failed to restore trash item: {error}"))?;
+    entries.remove(entry_index);
+    if let Err(error) = write_trash_index(&workspace_path, &entries) {
+        let _ = fs::rename(&original_path, &trashed_path);
+        return Err(error);
+    }
+    workspace_operation_result(&workspace_path, &original_path)
+}
+
+fn resolve_trash_entry_path(workspace_path: &Path, relative_path: &str) -> Result<PathBuf, String> {
+    let relative_path = Path::new(relative_path);
+    let trash_relative = Path::new(".simpler/local/trash");
+    if relative_path.is_absolute()
+        || !relative_path.starts_with(trash_relative)
+        || relative_path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::Prefix(_)
+                    | std::path::Component::RootDir
+            )
+        })
+    {
+        return Err("trash index contains an invalid item path".to_string());
+    }
+    Ok(workspace_path.join(relative_path))
+}
+
+fn purge_expired_trash(
+    workspace_path: &Path,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(), String> {
+    let entries = read_trash_index(workspace_path)?;
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let cutoff = now - chrono::Duration::days(30);
+    let mut retained = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let deleted_at = chrono::DateTime::parse_from_rfc3339(&entry.deleted_at)
+            .map_err(|_| "trash index contains an invalid deletion date".to_string())?
+            .with_timezone(&chrono::Utc);
+        if deleted_at >= cutoff {
+            retained.push(entry);
+            continue;
+        }
+        let item_path = resolve_trash_entry_path(workspace_path, &entry.trashed_relative_path)?;
+        if item_path.is_dir() {
+            fs::remove_dir_all(&item_path)
+                .map_err(|error| format!("failed to purge trashed folder: {error}"))?;
+        } else if item_path.exists() {
+            fs::remove_file(&item_path)
+                .map_err(|error| format!("failed to purge trashed note: {error}"))?;
+        }
+    }
+    if retained.len() > 0 || trash_folder(workspace_path).join("index.json").exists() {
+        write_trash_index(workspace_path, &retained)?;
+    }
+    Ok(())
 }
 
 fn move_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1061,8 +1420,8 @@ fn git_status_payload(payload: serde_json::Value) -> Result<serde_json::Value, S
 }
 
 fn advanced_git_status_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
-    let payload: AdvancedGitStatusPayload = serde_json::from_value(payload)
-        .map_err(|_| "workspacePath is required".to_string())?;
+    let payload: AdvancedGitStatusPayload =
+        serde_json::from_value(payload).map_err(|_| "workspacePath is required".to_string())?;
     let workspace_path = PathBuf::from(payload.workspace_path);
     ensure_workspace_folder(&workspace_path)?;
     let status = read_advanced_git_status(&workspace_path, &SystemGitCommandRunner)?;
@@ -1080,6 +1439,34 @@ fn git_sync_payload(payload: serde_json::Value) -> Result<serde_json::Value, Str
     serde_json::to_value(result).map_err(|_| "failed to serialize git sync result".to_string())
 }
 
+fn note_history_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: NoteHistoryPayload = serde_json::from_value(payload)
+        .map_err(|_| "workspacePath and notePath are required".to_string())?;
+    let workspace_path = PathBuf::from(&payload.workspace_path);
+    ensure_workspace_folder(&workspace_path)?;
+    resolve_note_path(&payload.workspace_path, &payload.note_path)?;
+    let entries = read_note_history(&workspace_path, &payload.note_path, &SystemGitCommandRunner)?;
+
+    serde_json::to_value(entries).map_err(|_| "failed to serialize note history".to_string())
+}
+
+fn note_content_at_commit_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: NoteContentAtCommitPayload = serde_json::from_value(payload)
+        .map_err(|_| "workspacePath, notePath, and commitId are required".to_string())?;
+    let workspace_path = PathBuf::from(&payload.workspace_path);
+    ensure_workspace_folder(&workspace_path)?;
+    resolve_note_path(&payload.workspace_path, &payload.note_path)?;
+    let content = read_note_content_at_commit(
+        &workspace_path,
+        &payload.note_path,
+        &payload.commit_id,
+        &SystemGitCommandRunner,
+    )?;
+
+    serde_json::to_value(NoteContent { content })
+        .map_err(|_| "failed to serialize historical note content".to_string())
+}
+
 fn github_remote_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
     let payload: GitHubRemotePayload =
         serde_json::from_value(payload).map_err(|_| "workspacePath is required".to_string())?;
@@ -1095,16 +1482,26 @@ fn connect_github_remote_payload(payload: serde_json::Value) -> Result<serde_jso
         .map_err(|_| "workspacePath and remoteUrl are required".to_string())?;
     let workspace_path = PathBuf::from(payload.workspace_path);
     ensure_workspace_folder(&workspace_path)?;
-    let remote = connect_github_remote(&workspace_path, &payload.remote_url, &SystemGitCommandRunner)?;
+    let remote = connect_github_remote(
+        &workspace_path,
+        &payload.remote_url,
+        &SystemGitCommandRunner,
+    )?;
 
     serde_json::to_value(remote).map_err(|_| "failed to serialize GitHub remote".to_string())
 }
 
-fn clone_github_repository_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+fn clone_github_repository_payload(
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
     let payload: CloneGitHubRepositoryPayload = serde_json::from_value(payload)
         .map_err(|_| "repositoryUrl and destinationPath are required".to_string())?;
     let destination_path = PathBuf::from(payload.destination_path);
-    let result = clone_github_repository(&payload.repository_url, &destination_path, &SystemGitCommandRunner)?;
+    let result = clone_github_repository(
+        &payload.repository_url,
+        &destination_path,
+        &SystemGitCommandRunner,
+    )?;
 
     serde_json::to_value(result).map_err(|_| "failed to serialize GitHub clone result".to_string())
 }
@@ -1187,6 +1584,81 @@ fn read_git_workspace_status(
     })
 }
 
+fn read_note_history(
+    workspace_path: &Path,
+    note_path: &str,
+    git: &impl GitCommandRunner,
+) -> Result<Vec<NoteHistoryEntry>, String> {
+    let repo_probe = git.run(workspace_path, &["rev-parse", "--is-inside-work-tree"])?;
+    if !git_command_succeeded(&repo_probe) {
+        if git_command_reports_non_repository(&repo_probe) {
+            return Ok(Vec::new());
+        }
+        return Err(git_failure("failed to detect git repository", &repo_probe));
+    }
+    if repo_probe.stdout.trim() != "true" {
+        return Ok(Vec::new());
+    }
+
+    let output = git.run(
+        workspace_path,
+        &[
+            "log",
+            "--follow",
+            "--format=%H%x1f%cI%x1f%s%x1e",
+            "--",
+            note_path,
+        ],
+    )?;
+    if !git_command_succeeded(&output) {
+        return Err(git_failure("failed to read note history", &output));
+    }
+
+    output
+        .stdout
+        .split('\x1e')
+        .filter_map(|record| {
+            let record = record.trim();
+            (!record.is_empty()).then_some(record)
+        })
+        .map(|record| {
+            let mut fields = record.splitn(3, '\x1f');
+            let commit_id = fields.next().unwrap_or_default();
+            let date = fields.next().unwrap_or_default();
+            let summary = fields.next().unwrap_or_default();
+            if commit_id.is_empty() || date.is_empty() {
+                return Err("git returned invalid note history".to_string());
+            }
+            Ok(NoteHistoryEntry {
+                commit_id: commit_id.to_string(),
+                date: date.to_string(),
+                summary: summary.to_string(),
+            })
+        })
+        .collect()
+}
+
+fn read_note_content_at_commit(
+    workspace_path: &Path,
+    note_path: &str,
+    commit_id: &str,
+    git: &impl GitCommandRunner,
+) -> Result<String, String> {
+    if commit_id.is_empty()
+        || commit_id.len() > 64
+        || !commit_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("commitId must be a Git commit id".to_string());
+    }
+
+    let object = format!("{commit_id}:{note_path}");
+    let output = git.run(workspace_path, &["show", &object])?;
+    if !git_command_succeeded(&output) {
+        return Err(git_failure("failed to read note version", &output));
+    }
+    Ok(output.stdout)
+}
+
 fn read_advanced_git_status(
     workspace_path: &Path,
     git: &impl GitCommandRunner,
@@ -1207,7 +1679,10 @@ fn read_advanced_git_status(
 
     let branch_output = git.run(workspace_path, &["branch", "--show-current"])?;
     if !git_command_succeeded(&branch_output) {
-        return Err(git_failure("failed to detect current branch", &branch_output));
+        return Err(git_failure(
+            "failed to detect current branch",
+            &branch_output,
+        ));
     }
     let remote_output = git.run(workspace_path, &["remote", "get-url", "origin"])?;
     let repository = if git_command_succeeded(&remote_output) {
@@ -1218,13 +1693,18 @@ fn read_advanced_git_status(
     };
     let commit_output = git.run(workspace_path, &["log", "-1", "--format=%h%x1f%s%x1f%cI"])?;
     let latest_commit = if git_command_succeeded(&commit_output) {
-        commit_output.stdout.trim().split_once('\u{1f}').and_then(|(id, rest)| {
-            rest.split_once('\u{1f}').map(|(subject, timestamp)| GitCommit {
-                id: id.to_string(),
-                subject: subject.to_string(),
-                timestamp: timestamp.to_string(),
+        commit_output
+            .stdout
+            .trim()
+            .split_once('\u{1f}')
+            .and_then(|(id, rest)| {
+                rest.split_once('\u{1f}')
+                    .map(|(subject, timestamp)| GitCommit {
+                        id: id.to_string(),
+                        subject: subject.to_string(),
+                        timestamp: timestamp.to_string(),
+                    })
             })
-        })
     } else {
         None
     };
@@ -1236,7 +1716,8 @@ fn read_advanced_git_status(
     Ok(AdvancedGitStatus {
         is_repository: true,
         repository,
-        branch: (!branch_output.stdout.trim().is_empty()).then(|| branch_output.stdout.trim().to_string()),
+        branch: (!branch_output.stdout.trim().is_empty())
+            .then(|| branch_output.stdout.trim().to_string()),
         latest_commit,
         pending_changes: pending_output
             .stdout
@@ -1260,7 +1741,12 @@ fn github_remote_status(
         return Err(git_failure("failed to detect Git remotes", &remote_output));
     }
 
-    for remote_name in remote_output.stdout.lines().map(str::trim).filter(|name| !name.is_empty()) {
+    for remote_name in remote_output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
         let url_output = git.run(workspace_path, &["remote", "get-url", remote_name])?;
         if !git_command_succeeded(&url_output) {
             return Err(git_failure("failed to read Git remote URL", &url_output));
@@ -1422,7 +1908,8 @@ fn sync_git_workspace(
         )?;
     }
 
-    let remote_branch_output = git.run(workspace_path, &["ls-remote", "--heads", remote, branch])?;
+    let remote_branch_output =
+        git.run(workspace_path, &["ls-remote", "--heads", remote, branch])?;
     if !git_command_succeeded(&remote_branch_output) {
         return Err(network_git_failure(
             "failed to check remote branch before Sync",
@@ -1451,7 +1938,12 @@ fn sync_git_workspace(
     } else {
         &["push", "-u", remote, &push_target]
     };
-    run_network_git_step(git, workspace_path, push_args, "failed to push Sync checkpoint")?;
+    run_network_git_step(
+        git,
+        workspace_path,
+        push_args,
+        "failed to push Sync checkpoint",
+    )?;
 
     Ok(GitSyncResult {
         status: SyncResultStatus::Synced,
@@ -1650,7 +2142,7 @@ fn remember_note_payload(payload: serde_json::Value) -> Result<serde_json::Value
     local_metadata.last_note_path = Some(payload.note_path);
     write_local_workspace_metadata(&workspace_path, &local_metadata)?;
     serde_json::to_value(read_workspace_metadata(&workspace_path)?)
-    .map_err(|_| "failed to serialize workspace metadata".to_string())
+        .map_err(|_| "failed to serialize workspace metadata".to_string())
 }
 
 fn remember_tree_state_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1681,12 +2173,13 @@ fn postpone_github_wizard_payload(payload: serde_json::Value) -> Result<serde_js
     write_local_workspace_metadata(&workspace_path, &local_metadata)?;
 
     serde_json::to_value(read_workspace_metadata(&workspace_path)?)
-    .map_err(|_| "failed to serialize workspace metadata".to_string())
+        .map_err(|_| "failed to serialize workspace metadata".to_string())
 }
 
 fn open_workspace(workspace_path: &Path) -> Result<OpenedWorkspace, String> {
     ensure_workspace_folder(workspace_path)?;
     ensure_workspace_metadata(workspace_path)?;
+    purge_expired_trash(workspace_path, chrono::Utc::now())?;
 
     let name = workspace_path
         .file_name()
@@ -2050,10 +2543,16 @@ fn folder_rank(item: &WorkspaceTreeItem) -> u8 {
 
 #[cfg(not(test))]
 mod commands {
-    use super::{dispatch_native_command, handle_update_command, NativeCommandRequest, NativeCommandResponse, NativeDomain};
+    use super::{
+        dispatch_native_command, handle_update_command, NativeCommandRequest,
+        NativeCommandResponse, NativeDomain,
+    };
 
     #[tauri::command]
-    pub async fn native_command(app: tauri::AppHandle, request: NativeCommandRequest) -> NativeCommandResponse {
+    pub async fn native_command(
+        app: tauri::AppHandle,
+        request: NativeCommandRequest,
+    ) -> NativeCommandResponse {
         if request.domain == NativeDomain::Update
             && (request.action == "check-for-update"
                 || request.action == "download-and-install-update"
@@ -2069,7 +2568,10 @@ mod commands {
 /// therefore async, unlike the rest of `dispatch_native_command`) because
 /// `tauri-plugin-updater`'s check/download API requires one.
 #[cfg(not(test))]
-async fn handle_update_command(app: tauri::AppHandle, request: NativeCommandRequest) -> NativeCommandResponse {
+async fn handle_update_command(
+    app: tauri::AppHandle,
+    request: NativeCommandRequest,
+) -> NativeCommandResponse {
     use tauri_plugin_updater::UpdaterExt;
 
     let result: Result<serde_json::Value, String> = async {
@@ -2083,16 +2585,24 @@ async fn handle_update_command(app: tauri::AppHandle, request: NativeCommandRequ
         let updater = app.updater().map_err(|error| error.to_string())?;
         match request.action.as_str() {
             "check-for-update" => {
-                let update = updater.check().await.map_err(|error| format!("failed to check for update: {error}"))?;
+                let update = updater
+                    .check()
+                    .await
+                    .map_err(|error| format!("failed to check for update: {error}"))?;
                 let response = match update {
                     Some(update) => UpdateCheckResponse {
                         update_available: true,
                         version: Some(update.version.clone()),
                         notes: update.body.clone(),
                     },
-                    None => UpdateCheckResponse { update_available: false, version: None, notes: None },
+                    None => UpdateCheckResponse {
+                        update_available: false,
+                        version: None,
+                        notes: None,
+                    },
                 };
-                serde_json::to_value(response).map_err(|_| "failed to serialize update check result".to_string())
+                serde_json::to_value(response)
+                    .map_err(|_| "failed to serialize update check result".to_string())
             }
             "download-and-install-update" => {
                 let update = updater
@@ -2112,8 +2622,20 @@ async fn handle_update_command(app: tauri::AppHandle, request: NativeCommandRequ
     .await;
 
     match result {
-        Ok(data) => NativeCommandResponse { ok: true, domain: request.domain, action: request.action, data: Some(data), error: None },
-        Err(error) => NativeCommandResponse { ok: false, domain: request.domain, action: request.action, data: None, error: Some(error) },
+        Ok(data) => NativeCommandResponse {
+            ok: true,
+            domain: request.domain,
+            action: request.action,
+            data: Some(data),
+            error: None,
+        },
+        Err(error) => NativeCommandResponse {
+            ok: false,
+            domain: request.domain,
+            action: request.action,
+            data: None,
+            error: Some(error),
+        },
     }
 }
 
@@ -2234,7 +2756,9 @@ mod tests {
 
     impl GitHubCredentialStore for StubCredentialStore {
         fn access_token(&self) -> Result<Option<String>, String> {
-            self.error.clone().map_or_else(|| Ok(self.token.clone()), Err)
+            self.error
+                .clone()
+                .map_or_else(|| Ok(self.token.clone()), Err)
         }
 
         fn store_access_token(&self, _token: &str) -> Result<(), String> {
@@ -2287,9 +2811,18 @@ mod tests {
             error: Some("keychain is locked".to_string()),
         };
 
-        assert_eq!(github_auth_status(&connected).state, GitHubAuthState::Connected);
-        assert_eq!(github_auth_status(&unavailable).state, GitHubAuthState::Failed);
-        assert_eq!(github_auth_status(&unavailable).message.as_deref(), Some("keychain is locked"));
+        assert_eq!(
+            github_auth_status(&connected).state,
+            GitHubAuthState::Connected
+        );
+        assert_eq!(
+            github_auth_status(&unavailable).state,
+            GitHubAuthState::Failed
+        );
+        assert_eq!(
+            github_auth_status(&unavailable).message.as_deref(),
+            Some("keychain is locked")
+        );
     }
 
     #[test]
@@ -2297,11 +2830,21 @@ mod tests {
         let keychain = StubCredentialStore::default();
 
         assert_eq!(
-            finish_github_device_flow(&StubDeviceFlowClient(DeviceFlowPoll::Pending), &keychain, "device-code").state,
+            finish_github_device_flow(
+                &StubDeviceFlowClient(DeviceFlowPoll::Pending),
+                &keychain,
+                "device-code"
+            )
+            .state,
             GitHubAuthState::Pending
         );
         assert_eq!(
-            finish_github_device_flow(&StubDeviceFlowClient(DeviceFlowPoll::Expired), &keychain, "device-code").state,
+            finish_github_device_flow(
+                &StubDeviceFlowClient(DeviceFlowPoll::Expired),
+                &keychain,
+                "device-code"
+            )
+            .state,
             GitHubAuthState::Expired
         );
         assert_eq!(
@@ -2352,6 +2895,96 @@ mod tests {
             assert_eq!(response.domain, domain);
             assert_eq!(response.action, "probe");
         }
+    }
+
+    #[test]
+    fn note_history_lists_commits_newest_first_for_a_tracked_note() {
+        let workspace = test_workspace("note_history_multiple");
+        let runner = StubGitRunner::new(vec![
+            Ok(git_output(Some(0), "true\n", "")),
+            Ok(git_output(
+                Some(0),
+                "new123\x1f2026-08-08T12:00:00Z\x1fSync checkpoint\x1eold456\x1f2026-08-07T09:30:00Z\x1fInitial note\x1e",
+                "",
+            )),
+        ]);
+
+        let history = read_note_history(&workspace, "daily/today.md", &runner).unwrap();
+
+        assert_eq!(
+            history,
+            vec![
+                NoteHistoryEntry {
+                    commit_id: "new123".to_string(),
+                    date: "2026-08-08T12:00:00Z".to_string(),
+                    summary: "Sync checkpoint".to_string(),
+                },
+                NoteHistoryEntry {
+                    commit_id: "old456".to_string(),
+                    date: "2026-08-07T09:30:00Z".to_string(),
+                    summary: "Initial note".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            runner.commands(),
+            vec![
+                vec!["rev-parse", "--is-inside-work-tree"],
+                vec![
+                    "log",
+                    "--follow",
+                    "--format=%H%x1f%cI%x1f%s%x1e",
+                    "--",
+                    "daily/today.md"
+                ],
+            ]
+        );
+    }
+
+    #[test]
+    fn note_history_returns_empty_for_untracked_notes_and_non_git_workspaces() {
+        let workspace = test_workspace("note_history_empty");
+        let untracked = StubGitRunner::new(vec![
+            Ok(git_output(Some(0), "true\n", "")),
+            Ok(git_output(Some(0), "", "")),
+        ]);
+        let non_git = StubGitRunner::new(vec![Ok(git_output(
+            Some(128),
+            "",
+            "fatal: not a git repository",
+        ))]);
+
+        assert_eq!(
+            read_note_history(&workspace, "draft.md", &untracked).unwrap(),
+            vec![]
+        );
+        assert_eq!(
+            read_note_history(&workspace, "draft.md", &non_git).unwrap(),
+            vec![]
+        );
+        assert_eq!(
+            non_git.commands(),
+            vec![vec!["rev-parse", "--is-inside-work-tree"]]
+        );
+    }
+
+    #[test]
+    fn note_content_at_commit_returns_read_only_historical_markdown() {
+        let workspace = test_workspace("note_content_at_commit");
+        let runner = StubGitRunner::new(vec![Ok(git_output(
+            Some(0),
+            "# Earlier\n\nPast words.\n",
+            "",
+        ))]);
+
+        let content =
+            read_note_content_at_commit(&workspace, "daily/today.md", "abc123", &runner).unwrap();
+
+        assert_eq!(content, "# Earlier\n\nPast words.\n");
+        assert_eq!(
+            runner.commands(),
+            vec![vec!["show", "abc123:daily/today.md"]]
+        );
     }
 
     #[test]
@@ -2439,8 +3072,16 @@ mod tests {
             &StubGitRunner::new(vec![
                 Ok(git_output(Some(0), "true\n", "")),
                 Ok(git_output(Some(0), "main\n", "")),
-                Ok(git_output(Some(0), "https://github.com/simpler/notes.git\n", "")),
-                Ok(git_output(Some(0), "abc1234\u{1f}Write today\u{1f}2026-08-05T12:00:00Z\n", "")),
+                Ok(git_output(
+                    Some(0),
+                    "https://github.com/simpler/notes.git\n",
+                    "",
+                )),
+                Ok(git_output(
+                    Some(0),
+                    "abc1234\u{1f}Write today\u{1f}2026-08-05T12:00:00Z\n",
+                    "",
+                )),
                 Ok(git_output(Some(0), " M today.md\n?? ideas.md\n", "")),
             ]),
         )
@@ -2492,8 +3133,16 @@ mod tests {
         let workspace = test_workspace("github_remote_detection");
         let runner = StubGitRunner::new(vec![
             Ok(git_output(Some(0), "origin\nbackup\n", "")),
-            Ok(git_output(Some(0), "https://gitlab.com/simpler/notes.git\n", "")),
-            Ok(git_output(Some(0), "git@github.com:simpler/notes.git\n", "")),
+            Ok(git_output(
+                Some(0),
+                "https://gitlab.com/simpler/notes.git\n",
+                "",
+            )),
+            Ok(git_output(
+                Some(0),
+                "git@github.com:simpler/notes.git\n",
+                "",
+            )),
         ]);
 
         let status = github_remote_status(&workspace, &runner).unwrap();
@@ -2525,7 +3174,9 @@ mod tests {
             Ok(git_output(Some(0), "", "")),
         ]);
 
-        let remote = connect_github_remote(&workspace, "https://github.com/simpler/notes.git", &runner).unwrap();
+        let remote =
+            connect_github_remote(&workspace, "https://github.com/simpler/notes.git", &runner)
+                .unwrap();
 
         assert_eq!(remote.name, "origin");
         assert_eq!(remote.url, "https://github.com/simpler/notes.git");
@@ -2533,7 +3184,12 @@ mod tests {
             runner.commands(),
             vec![
                 vec!["rev-parse", "--is-inside-work-tree"],
-                vec!["remote", "add", "origin", "https://github.com/simpler/notes.git"],
+                vec![
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/simpler/notes.git"
+                ],
             ]
         );
         assert_eq!(
@@ -2556,7 +3212,9 @@ mod tests {
             Ok(git_output(Some(0), "", "")),
         ]);
 
-        let remote = connect_github_remote(&workspace, "https://github.com/simpler/notes.git", &runner).unwrap();
+        let remote =
+            connect_github_remote(&workspace, "https://github.com/simpler/notes.git", &runner)
+                .unwrap();
 
         assert_eq!(remote.name, "origin");
         assert_eq!(remote.url, "https://github.com/simpler/notes.git");
@@ -2565,7 +3223,12 @@ mod tests {
             vec![
                 vec!["rev-parse", "--is-inside-work-tree"],
                 vec!["init", "--initial-branch=main"],
-                vec!["remote", "add", "origin", "https://github.com/simpler/notes.git"],
+                vec![
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/simpler/notes.git"
+                ],
             ]
         );
     }
@@ -2582,8 +3245,9 @@ mod tests {
             )),
         ]);
 
-        let error = connect_github_remote(&workspace, "https://github.com/simpler/notes.git", &runner)
-            .unwrap_err();
+        let error =
+            connect_github_remote(&workspace, "https://github.com/simpler/notes.git", &runner)
+                .unwrap_err();
 
         assert!(error.contains("Git credentials problem"));
     }
@@ -2659,6 +3323,36 @@ mod tests {
     }
 
     #[test]
+    fn restored_note_content_syncs_as_a_new_commit_on_top_of_history() {
+        let (workspace, remote) = test_git_workspace_with_remote("note_history_restore_sync");
+        let note_path = workspace.join("today.md");
+        fs::write(&note_path, "# First version\n").unwrap();
+        git_ok(&workspace, &["add", "today.md"]);
+        git_ok(&workspace, &["commit", "-m", "First note version"]);
+        git_ok(&workspace, &["push", "origin", "main"]);
+        fs::write(&note_path, "# Second version\n").unwrap();
+        git_ok(&workspace, &["add", "today.md"]);
+        git_ok(&workspace, &["commit", "-m", "Second note version"]);
+        git_ok(&workspace, &["push", "origin", "main"]);
+        let commits_before_restore = git_stdout(&workspace, &["rev-list", "--count", "HEAD"]);
+
+        fs::write(&note_path, "# First version\n").unwrap();
+        let result = sync_git_workspace(&workspace, &SystemGitCommandRunner).unwrap();
+
+        assert_eq!(result.status, SyncResultStatus::Synced);
+        assert_eq!(
+            git_stdout(&workspace, &["rev-list", "--count", "HEAD"])
+                .parse::<u32>()
+                .unwrap(),
+            commits_before_restore.parse::<u32>().unwrap() + 1
+        );
+        assert_eq!(
+            git_stdout(&remote, &["show", "main:today.md"]),
+            "# First version"
+        );
+    }
+
+    #[test]
     fn git_sync_noops_clean_workspaces_without_creating_a_checkpoint() {
         let (workspace, _remote) = test_git_workspace_with_remote("git_sync_noop");
         let before = git_stdout(&workspace, &["rev-list", "--count", "HEAD"]);
@@ -2723,11 +3417,7 @@ mod tests {
             Ok(git_output(Some(0), "origin\n", "")),
             Ok(git_output(Some(0), "", "")),
             Ok(git_output(Some(0), "[main abc123] Sync checkpoint\n", "")),
-            Ok(git_output(
-                Some(0),
-                "abc123\trefs/heads/main\n",
-                "",
-            )),
+            Ok(git_output(Some(0), "abc123\trefs/heads/main\n", "")),
             Ok(git_output(Some(0), "", "")),
             Ok(git_output(Some(0), "", "")),
         ]);
@@ -2795,7 +3485,9 @@ mod tests {
                 vec!["push", "-u", "origin", "HEAD:main"],
             ]
         );
-        assert!(!commands.iter().any(|command| command.first().map(String::as_str) == Some("pull")));
+        assert!(!commands
+            .iter()
+            .any(|command| command.first().map(String::as_str) == Some("pull")));
     }
 
     #[test]
@@ -3070,7 +3762,10 @@ mod tests {
             payload: serde_json::json!({ "workspacePath": workspace }),
         });
         let metadata = &reopened_response.data.unwrap()["metadata"];
-        assert_eq!(metadata["openFolderPaths"], serde_json::json!(["daily", "daily/archive"]));
+        assert_eq!(
+            metadata["openFolderPaths"],
+            serde_json::json!(["daily", "daily/archive"])
+        );
         assert_eq!(metadata["treeMode"], serde_json::json!("accordion"));
     }
 
@@ -3116,7 +3811,10 @@ mod tests {
         });
 
         assert!(!remember_response.ok);
-        assert_eq!(remember_response.error.as_deref(), Some("path must stay inside the workspace"));
+        assert_eq!(
+            remember_response.error.as_deref(),
+            Some("path must stay inside the workspace")
+        );
     }
 
     #[test]
@@ -3263,6 +3961,71 @@ mod tests {
         assert!(response.ok);
         let saved = fs::read_to_string(workspace.join("daily").join("today.md")).unwrap();
         assert_eq!(saved, "# Today\n\nUpdated body");
+    }
+
+    #[test]
+    fn saves_attachment_into_assets_folder_under_note_parent() {
+        let workspace = test_workspace("save_attachment");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+
+        let content_base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            b"fake-png-bytes",
+        );
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "save-attachment".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "parentPath": "daily",
+                "fileName": "2026-08-08-143022.png",
+                "contentBase64": content_base64,
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert_eq!(
+            data["itemPath"],
+            serde_json::json!("daily/assets/2026-08-08-143022.png")
+        );
+        let saved = fs::read(workspace.join("daily/assets/2026-08-08-143022.png")).unwrap();
+        assert_eq!(saved, b"fake-png-bytes");
+    }
+
+    #[test]
+    fn disambiguates_attachment_name_collision_instead_of_overwriting() {
+        let workspace = test_workspace("save_attachment_collision");
+        fs::create_dir_all(workspace.join("daily/assets")).unwrap();
+        fs::write(
+            workspace.join("daily/assets/2026-08-08-143022.png"),
+            b"first-image",
+        )
+        .unwrap();
+
+        let content_base64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"second-image");
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "save-attachment".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "parentPath": "daily",
+                "fileName": "2026-08-08-143022.png",
+                "contentBase64": content_base64,
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert_ne!(
+            data["itemPath"],
+            serde_json::json!("daily/assets/2026-08-08-143022.png")
+        );
+        let original = fs::read(workspace.join("daily/assets/2026-08-08-143022.png")).unwrap();
+        assert_eq!(original, b"first-image");
     }
 
     #[test]
@@ -3473,6 +4236,279 @@ mod tests {
         assert_eq!(
             fs::read_to_string(workspace.join("archive").join("today.md")).unwrap(),
             "# A different title\n\nBody"
+        );
+    }
+
+    #[test]
+    fn deleting_a_note_moves_it_to_local_trash_and_indexes_it() {
+        let workspace = test_workspace("trash_note");
+        fs::write(workspace.join("today.md"), "# Today").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "delete-item".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "itemPath": "today.md",
+            }),
+        });
+
+        assert!(response.ok, "{:?}", response.error);
+        assert!(!workspace.join("today.md").exists());
+        let entries: Vec<TrashEntry> = serde_json::from_str(
+            &fs::read_to_string(workspace.join(".simpler/local/trash/index.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].original_relative_path, "today.md");
+        assert!(!entries[0].is_directory);
+        assert_eq!(
+            fs::read_to_string(workspace.join(&entries[0].trashed_relative_path)).unwrap(),
+            "# Today"
+        );
+    }
+
+    #[test]
+    fn deleting_a_folder_moves_its_contents_to_local_trash_and_indexes_it() {
+        let workspace = test_workspace("trash_folder");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::write(workspace.join("daily/today.md"), "# Today").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "delete-item".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "itemPath": "daily",
+            }),
+        });
+
+        assert!(response.ok, "{:?}", response.error);
+        let entries: Vec<TrashEntry> = serde_json::from_str(
+            &fs::read_to_string(workspace.join(".simpler/local/trash/index.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(entries[0].is_directory);
+        assert_eq!(
+            fs::read_to_string(
+                workspace
+                    .join(&entries[0].trashed_relative_path)
+                    .join("today.md")
+            )
+            .unwrap(),
+            "# Today"
+        );
+    }
+
+    #[test]
+    fn repeated_deletes_of_the_same_note_name_do_not_collide() {
+        let workspace = test_workspace("trash_collision");
+        for content in ["first", "second"] {
+            fs::write(workspace.join("today.md"), content).unwrap();
+            let response = dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Filesystem,
+                action: "delete-item".to_string(),
+                payload: serde_json::json!({
+                    "workspacePath": workspace,
+                    "itemPath": "today.md",
+                }),
+            });
+            assert!(response.ok, "{:?}", response.error);
+        }
+
+        let entries: Vec<TrashEntry> = serde_json::from_str(
+            &fs::read_to_string(workspace.join(".simpler/local/trash/index.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_ne!(
+            entries[0].trashed_relative_path,
+            entries[1].trashed_relative_path
+        );
+        assert!(entries
+            .iter()
+            .all(|entry| workspace.join(&entry.trashed_relative_path).exists()));
+    }
+
+    #[test]
+    fn lists_and_restores_trashed_items() {
+        let workspace = test_workspace("list_restore_trash");
+        fs::write(workspace.join("today.md"), "# Today").unwrap();
+        let deleted = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "delete-item".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "itemPath": "today.md" }),
+        });
+        assert!(deleted.ok);
+
+        let listed = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "list-trash".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert!(listed.ok, "{:?}", listed.error);
+        let entries = listed.data.unwrap()["entries"].as_array().unwrap().clone();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["originalRelativePath"], "today.md");
+        assert!(entries[0]["deletedAt"].as_str().unwrap().contains('T'));
+
+        let restored = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "restore-trash-item".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "id": entries[0]["id"],
+            }),
+        });
+        assert!(restored.ok, "{:?}", restored.error);
+        assert_eq!(
+            fs::read_to_string(workspace.join("today.md")).unwrap(),
+            "# Today"
+        );
+        let remaining: Vec<TrashEntry> = read_trash_index(&workspace).unwrap();
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn restore_refuses_to_overwrite_an_occupied_original_path() {
+        let workspace = test_workspace("restore_occupied");
+        fs::write(workspace.join("today.md"), "trashed").unwrap();
+        assert!(
+            dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Filesystem,
+                action: "delete-item".to_string(),
+                payload: serde_json::json!({ "workspacePath": workspace, "itemPath": "today.md" }),
+            })
+            .ok
+        );
+        fs::write(workspace.join("today.md"), "current").unwrap();
+        let entry = read_trash_index(&workspace).unwrap().remove(0);
+
+        let restored = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "restore-trash-item".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "id": entry.id }),
+        });
+
+        assert!(!restored.ok);
+        assert_eq!(
+            restored.error.as_deref(),
+            Some("original path is already occupied")
+        );
+        assert_eq!(
+            fs::read_to_string(workspace.join("today.md")).unwrap(),
+            "current"
+        );
+        assert!(workspace.join(entry.trashed_relative_path).exists());
+        assert_eq!(read_trash_index(&workspace).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn opening_a_workspace_purges_trash_older_than_thirty_days() {
+        let workspace = test_workspace("purge_old_trash");
+        let trashed_relative_path = ".simpler/local/trash/old-today.md";
+        ensure_trash_folder(&workspace).unwrap();
+        fs::write(workspace.join(trashed_relative_path), "old").unwrap();
+        write_trash_index(
+            &workspace,
+            &[TrashEntry {
+                id: "old".to_string(),
+                original_relative_path: "today.md".to_string(),
+                trashed_relative_path: trashed_relative_path.to_string(),
+                deleted_at: "2020-01-01T00:00:00Z".to_string(),
+                is_directory: false,
+            }],
+        )
+        .unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+
+        assert!(response.ok, "{:?}", response.error);
+        assert!(!workspace.join(trashed_relative_path).exists());
+        assert!(read_trash_index(&workspace).unwrap().is_empty());
+    }
+
+    #[test]
+    fn opening_a_workspace_keeps_recent_trash() {
+        let workspace = test_workspace("keep_recent_trash");
+        let trashed_relative_path = ".simpler/local/trash/recent-today.md";
+        ensure_trash_folder(&workspace).unwrap();
+        fs::write(workspace.join(trashed_relative_path), "recent").unwrap();
+        write_trash_index(
+            &workspace,
+            &[TrashEntry {
+                id: "recent".to_string(),
+                original_relative_path: "today.md".to_string(),
+                trashed_relative_path: trashed_relative_path.to_string(),
+                deleted_at: (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339(),
+                is_directory: false,
+            }],
+        )
+        .unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+
+        assert!(response.ok, "{:?}", response.error);
+        assert!(workspace.join(trashed_relative_path).exists());
+        assert_eq!(read_trash_index(&workspace).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn opening_a_workspace_only_purges_expired_entries_from_a_mixed_trash() {
+        let workspace = test_workspace("purge_mixed_trash");
+        ensure_trash_folder(&workspace).unwrap();
+        fs::create_dir_all(workspace.join(".simpler/local/trash/old-daily")).unwrap();
+        fs::write(
+            workspace.join(".simpler/local/trash/old-daily/today.md"),
+            "old",
+        )
+        .unwrap();
+        fs::write(workspace.join(".simpler/local/trash/recent.md"), "recent").unwrap();
+        write_trash_index(
+            &workspace,
+            &[
+                TrashEntry {
+                    id: "old".to_string(),
+                    original_relative_path: "daily".to_string(),
+                    trashed_relative_path: ".simpler/local/trash/old-daily".to_string(),
+                    deleted_at: "2020-01-01T00:00:00Z".to_string(),
+                    is_directory: true,
+                },
+                TrashEntry {
+                    id: "recent".to_string(),
+                    original_relative_path: "recent.md".to_string(),
+                    trashed_relative_path: ".simpler/local/trash/recent.md".to_string(),
+                    deleted_at: (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339(),
+                    is_directory: false,
+                },
+            ],
+        )
+        .unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+
+        assert!(response.ok, "{:?}", response.error);
+        assert!(!workspace.join(".simpler/local/trash/old-daily").exists());
+        assert!(workspace.join(".simpler/local/trash/recent.md").exists());
+        let entries = read_trash_index(&workspace).unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["recent"]
         );
     }
 

@@ -11,7 +11,7 @@ import type {
   UpdateNoticeState,
   WorkspaceTreeItem,
 } from "../app/appState";
-import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult } from "../native/commands";
+import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { Icon } from "./icons";
@@ -40,6 +40,12 @@ export interface ClassicShellProps {
   activeNotePath: string | null;
   activeFolderPath: string;
   noteContent: string;
+  noteHistoryOpen: boolean;
+  noteHistoryEntries: NoteHistoryEntry[];
+  selectedNoteHistoryCommitId: string | null;
+  noteHistoryPreview: string | null;
+  noteHistoryLoading: boolean;
+  noteHistoryError: string | null;
   themeMode: ThemeMode;
   editorError: EditorError | null;
   canManageWorkspace: boolean;
@@ -55,11 +61,17 @@ export interface ClassicShellProps {
   onFocusActiveNote: () => void;
   onNavigateToNote: (notePath: string) => void;
   onNoteChange: (content: string) => void;
+  onOpenNoteHistory: () => void;
+  onCloseNoteHistory: () => void;
+  onSelectNoteHistoryEntry: (entry: NoteHistoryEntry) => void;
+  onRestoreNoteHistoryEntry: () => void;
   onCreateFolder: () => void;
   onCreateNote: () => void;
   onRenameSelection: () => void;
   onMoveActiveNote: () => void;
   onDeleteSelection: () => void;
+  trashEntries: TrashEntry[];
+  onRestoreTrashItem: (id: string) => void;
   onMoveItem: (itemPath: string, targetFolderPath: string) => void;
   onSyncWorkspace: () => void;
   githubRemote: GitHubRemote | null;
@@ -114,6 +126,12 @@ export function ClassicShell({
   activeNotePath,
   activeFolderPath,
   noteContent,
+  noteHistoryOpen,
+  noteHistoryEntries,
+  selectedNoteHistoryCommitId,
+  noteHistoryPreview,
+  noteHistoryLoading,
+  noteHistoryError,
   themeMode,
   editorError,
   canManageWorkspace,
@@ -129,11 +147,17 @@ export function ClassicShell({
   onFocusActiveNote,
   onNavigateToNote,
   onNoteChange,
+  onOpenNoteHistory,
+  onCloseNoteHistory,
+  onSelectNoteHistoryEntry,
+  onRestoreNoteHistoryEntry,
   onCreateFolder,
   onCreateNote,
   onRenameSelection,
   onMoveActiveNote,
   onDeleteSelection,
+  trashEntries,
+  onRestoreTrashItem,
   onMoveItem,
   onSyncWorkspace,
   githubRemote,
@@ -503,6 +527,18 @@ export function ClassicShell({
               <button
                 type="button"
                 role="tab"
+                aria-selected={activeRoute === "trash"}
+                aria-label="Trash"
+                title="Trash"
+                className={activeRoute === "trash" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
+                onClick={() => onRouteChange(activeRoute === "trash" ? "workspace" : "trash")}
+                disabled={!canManageWorkspace}
+              >
+                <Icon name="trash" />
+              </button>
+              <button
+                type="button"
+                role="tab"
                 aria-selected={activeRoute === "sync"}
                 aria-label="Sync"
                 title="Sync"
@@ -528,7 +564,24 @@ export function ClassicShell({
 
         {workspaceError ? <p className="workspace-error">{workspaceError}</p> : null}
 
-        {activeRoute === "sync" ? (
+        {activeRoute === "trash" ? (
+          <section className="sidebar-panel trash-panel" aria-label="Trash items">
+            <h2>Trash</h2>
+            {trashEntries.length === 0 ? <p>Trash is empty.</p> : (
+              <ol>
+                {trashEntries.map((entry) => (
+                  <li key={entry.id}>
+                    <span>{entry.originalRelativePath}</span>
+                    <small>{new Date(entry.deletedAt).toLocaleString()}</small>
+                    <button type="button" onClick={() => onRestoreTrashItem(entry.id)}>
+                      Restore
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        ) : activeRoute === "sync" ? (
           <section className="sidebar-panel" aria-label="Sync workspace">
             <SyncWorkspacePanel
               canManageWorkspace={canManageWorkspace}
@@ -720,6 +773,16 @@ export function ClassicShell({
           <div className="editor-toolbar__actions">
             <button
               type="button"
+              title="Note history"
+              aria-label="Open note history"
+              aria-expanded={noteHistoryOpen}
+              onClick={noteHistoryOpen ? onCloseNoteHistory : onOpenNoteHistory}
+              disabled={!activeNotePath || !isWorkspaceGitBacked}
+            >
+              <Icon name="history" />
+            </button>
+            <button
+              type="button"
               title={`Switch to ${nextTheme} theme`}
               aria-label={`Switch to ${nextTheme} theme`}
               onClick={() => onThemeChange(nextTheme)}
@@ -737,12 +800,14 @@ export function ClassicShell({
           </div>
         </div>
 
+        <div className={noteHistoryOpen ? "editor-body editor-body--history" : "editor-body"}>
         <section className="editor-surface" aria-label="Raw Markdown editor">
           {editorError ? (
             <EditorErrorState error={editorError} notePath={activeNotePath} />
           ) : activeNotePath ? (
             <MarkdownEditor
               notePath={activeNotePath}
+              workspacePath={workspacePath}
               value={noteContent}
               onChange={onNoteChange}
               searchJump={currentFileSearchJump}
@@ -753,6 +818,50 @@ export function ClassicShell({
             <p className="empty-editor">Select a Markdown note to start writing.</p>
           )}
         </section>
+          {noteHistoryOpen ? (
+            <aside className="note-history" aria-label="Note history">
+              <header className="note-history__header">
+                <h2>Note history</h2>
+                <button type="button" aria-label="Close note history" onClick={onCloseNoteHistory}>
+                  <Icon name="close" />
+                </button>
+              </header>
+              {noteHistoryError ? <p role="alert">{noteHistoryError}</p> : null}
+              {noteHistoryLoading && noteHistoryEntries.length === 0 ? <p>Loading history…</p> : null}
+              {!noteHistoryLoading && !noteHistoryError && noteHistoryEntries.length === 0 ? <p>No synced versions yet.</p> : null}
+              {noteHistoryEntries.length > 0 ? (
+                <ol className="note-history__entries">
+                  {noteHistoryEntries.map((entry) => (
+                    <li key={entry.commitId}>
+                      <button
+                        type="button"
+                        className={entry.commitId === selectedNoteHistoryCommitId ? "note-history__entry note-history__entry--selected" : "note-history__entry"}
+                        aria-pressed={entry.commitId === selectedNoteHistoryCommitId}
+                        onClick={() => onSelectNoteHistoryEntry(entry)}
+                      >
+                        <strong>{entry.summary || "Sync version"}</strong>
+                        <time dateTime={entry.date}>{new Date(entry.date).toLocaleString()}</time>
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              {selectedNoteHistoryCommitId ? (
+                <section className="note-history__preview" aria-label="Historical note preview">
+                  {noteHistoryLoading ? <p>Loading version…</p> : null}
+                  {noteHistoryPreview !== null ? (
+                    <>
+                      <pre>{noteHistoryPreview}</pre>
+                      <button type="button" className="note-history__restore" onClick={onRestoreNoteHistoryEntry}>
+                        Restore this version
+                      </button>
+                    </>
+                  ) : null}
+                </section>
+              ) : null}
+            </aside>
+          ) : null}
+        </div>
       </main>
 
       <footer className="status-bar" aria-label="Workspace status">

@@ -1,9 +1,159 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { EditorView } from "codemirror";
 import { MarkdownEditor } from "./MarkdownEditor";
+import { saveAttachment } from "../native/commands";
+
+vi.mock("../native/commands", () => ({
+  saveAttachment: vi.fn(),
+}));
+
+function makeImageFile(name = "screenshot.png", type = "image/png") {
+  return new File(["fake-image-bytes"], name, { type });
+}
 
 describe("MarkdownEditor", () => {
+  beforeEach(() => {
+    vi.mocked(saveAttachment).mockReset();
+  });
+
+  describe("pasting an image", () => {
+    it("saves the image and inserts a Markdown image reference at the cursor", async () => {
+      vi.mocked(saveAttachment).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "save-attachment",
+        error: null,
+        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+      });
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      const file = makeImageFile();
+      fireEvent.paste(editable, {
+        clipboardData: { files: [file], items: [], types: ["Files"] },
+      });
+
+      await waitFor(() => {
+        expect(saveAttachment).toHaveBeenCalledWith(
+          "/workspace",
+          "daily",
+          expect.stringMatching(/^\d{4}-\d{2}-\d{2}-\d{6}\.png$/),
+          expect.any(String),
+        );
+      });
+
+      await waitFor(() => {
+        expect(editable.textContent).toContain("![](assets/2026-08-08-143022.png)");
+      });
+    });
+
+    it("leaves plain text pasting unaffected", async () => {
+      const onChange = vi.fn();
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value=""
+          onChange={onChange}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.paste(editable, {
+        clipboardData: { files: [], items: [], types: ["text/plain"], getData: () => "pasted text" },
+      });
+
+      expect(saveAttachment).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("dropping an image", () => {
+    it("saves the image and inserts the Markdown reference at the drop position", async () => {
+      vi.mocked(saveAttachment).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "save-attachment",
+        error: null,
+        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+      });
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value={"# Today\n\nSome body text far from the drop point"}
+          onChange={() => undefined}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+
+      const posAtCoordsSpy = vi.spyOn(EditorView.prototype, "posAtCoords").mockReturnValue(9);
+
+      const file = makeImageFile();
+      fireEvent.drop(editable, {
+        dataTransfer: { files: [file], items: [], types: ["Files"] },
+        clientX: 42,
+        clientY: 7,
+      });
+
+      await waitFor(() => {
+        expect(saveAttachment).toHaveBeenCalledWith(
+          "/workspace",
+          "daily",
+          expect.stringMatching(/^\d{4}-\d{2}-\d{2}-\d{6}\.png$/),
+          expect.any(String),
+        );
+      });
+
+      await waitFor(() => {
+        expect(editable.textContent).toContain("![](assets/2026-08-08-143022.png)");
+      });
+
+      posAtCoordsSpy.mockRestore();
+    });
+
+    it("does not intercept drops of non-image files", () => {
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value=""
+          onChange={() => undefined}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+
+      const file = new File(["not an image"], "notes.txt", { type: "text/plain" });
+      fireEvent.drop(editable, {
+        dataTransfer: { files: [file], items: [], types: ["Files"] },
+        clientX: 42,
+        clientY: 7,
+      });
+
+      expect(saveAttachment).not.toHaveBeenCalled();
+    });
+  });
+
   it("renders the note's raw Markdown content with line numbers", () => {
     render(<MarkdownEditor notePath="daily/today.md" value={"# Today\n\nBody"} onChange={() => undefined} />);
 
