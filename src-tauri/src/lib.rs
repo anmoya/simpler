@@ -1653,10 +1653,57 @@ fn read_note_content_at_commit(
 
     let object = format!("{commit_id}:{note_path}");
     let output = git.run(workspace_path, &["show", &object])?;
-    if !git_command_succeeded(&output) {
-        return Err(git_failure("failed to read note version", &output));
+    if git_command_succeeded(&output) {
+        return Ok(output.stdout);
     }
-    Ok(output.stdout)
+
+    let original_error = git_failure("failed to read note version", &output);
+    let history = git.run(
+        workspace_path,
+        &[
+            "log",
+            "--follow",
+            "--format=%H",
+            "--name-only",
+            "--",
+            note_path,
+        ],
+    )?;
+    if !git_command_succeeded(&history) {
+        return Err(original_error);
+    }
+    let Some(historical_path) = note_path_at_commit(&history.stdout, commit_id) else {
+        return Err(original_error);
+    };
+    if historical_path == note_path {
+        return Err(original_error);
+    }
+
+    let historical_object = format!("{commit_id}:{historical_path}");
+    let historical_output = git.run(workspace_path, &["show", &historical_object])?;
+    if !git_command_succeeded(&historical_output) {
+        return Err(git_failure(
+            "failed to read note version",
+            &historical_output,
+        ));
+    }
+    Ok(historical_output.stdout)
+}
+
+fn note_path_at_commit(history: &str, target_commit_id: &str) -> Option<String> {
+    let mut current_commit_id = None;
+    for line in history
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if matches!(line.len(), 40 | 64) && line.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            current_commit_id = Some(line);
+        } else if current_commit_id == Some(target_commit_id) {
+            return Some(line.to_string());
+        }
+    }
+    None
 }
 
 fn read_advanced_git_status(
@@ -3007,13 +3054,8 @@ mod tests {
             Ok(git_output(Some(0), "# Before rename\n", "")),
         ]);
 
-        let content = read_note_content_at_commit(
-            &workspace,
-            "daily/today.md",
-            old_commit,
-            &runner,
-        )
-        .unwrap();
+        let content =
+            read_note_content_at_commit(&workspace, "daily/today.md", old_commit, &runner).unwrap();
 
         assert_eq!(content, "# Before rename\n");
         assert_eq!(
@@ -3031,6 +3073,36 @@ mod tests {
                 vec!["show", &format!("{old_commit}:archive/today.md")],
             ]
         );
+    }
+
+    #[test]
+    fn system_git_reads_a_pre_rename_note_version_from_followed_history() {
+        let workspace = test_workspace("note_content_real_rename");
+        git_ok(&workspace, &["init", "--initial-branch=main"]);
+        configure_git_identity(&workspace);
+        fs::create_dir_all(workspace.join("archive")).unwrap();
+        fs::write(workspace.join("archive/today.md"), "# Before rename\n").unwrap();
+        git_ok(&workspace, &["add", "archive/today.md"]);
+        git_ok(&workspace, &["commit", "-m", "Create archived note"]);
+        let old_commit = git_stdout(&workspace, &["rev-parse", "HEAD"]);
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::rename(
+            workspace.join("archive/today.md"),
+            workspace.join("daily/today.md"),
+        )
+        .unwrap();
+        git_ok(&workspace, &["add", "-A"]);
+        git_ok(&workspace, &["commit", "-m", "Move note into daily"]);
+
+        let content = read_note_content_at_commit(
+            &workspace,
+            "daily/today.md",
+            &old_commit,
+            &SystemGitCommandRunner,
+        )
+        .unwrap();
+
+        assert_eq!(content, "# Before rename\n");
     }
 
     #[test]
@@ -3382,7 +3454,13 @@ mod tests {
         git_ok(&workspace, &["push", "origin", "main"]);
         let commits_before_restore = git_stdout(&workspace, &["rev-list", "--count", "HEAD"]);
 
-        fs::write(&note_path, "# First version\n").unwrap();
+        let restored = write_note_payload(serde_json::json!({
+            "workspacePath": workspace.to_string_lossy(),
+            "notePath": "today.md",
+            "content": "# First version\n",
+        }))
+        .unwrap();
+        assert_eq!(restored["content"], "# First version\n");
         let result = sync_git_workspace(&workspace, &SystemGitCommandRunner).unwrap();
 
         assert_eq!(result.status, SyncResultStatus::Synced);
