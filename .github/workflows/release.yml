@@ -27,13 +27,53 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build bundles (unsigned)
+        run: npm run tauri build -- --bundles deb,rpm,appimage
+
+      - name: Install appimagetool
+        run: |
+          curl -sL -o /usr/local/bin/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /usr/local/bin/appimagetool
+
+      - name: Patch AppImage with Wayland/EGL launch-fix hook
+        run: |
+          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage')
+          ./scripts/patch-appimage-wayland-fix.sh "$APPIMAGE"
+
+      - name: Sign AppImage and write update manifest
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Simpler ${{ github.ref_name }}"
-          releaseDraft: false
-          prerelease: false
+        run: |
+          APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage')
+          npm run tauri signer sign -- "$APPIMAGE"
+          VERSION="${GITHUB_REF_NAME#v}"
+          SIGNATURE=$(cat "$APPIMAGE.sig")
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cat > latest.json <<EOF
+          {
+            "version": "$VERSION",
+            "notes": "",
+            "pub_date": "$PUB_DATE",
+            "platforms": {
+              "linux-x86_64": {
+                "signature": "$SIGNATURE",
+                "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$(basename "$APPIMAGE")"
+              }
+            }
+          }
+          EOF
+
+      - name: Publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "Simpler ${{ github.ref_name }}" \
+            --notes "" \
+            src-tauri/target/release/bundle/deb/*.deb \
+            src-tauri/target/release/bundle/rpm/*.rpm \
+            src-tauri/target/release/bundle/appimage/*.AppImage \
+            src-tauri/target/release/bundle/appimage/*.AppImage.sig \
+            latest.json
