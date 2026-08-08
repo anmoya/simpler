@@ -4,6 +4,7 @@ import { EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
 import type { FileSearchJump } from "../app/appState";
 import { markdownEditorTheme } from "./markdownEditorTheme";
+import { listContinuationKeymap } from "./listContinuation";
 
 export interface MarkdownEditorProps {
   notePath: string;
@@ -28,6 +29,7 @@ export function MarkdownEditor({ notePath, value, onChange, searchJump = null }:
         doc: value,
         extensions: [
           basicSetup,
+          listContinuationKeymap(),
           markdown(),
           EditorView.lineWrapping,
           markdownEditorTheme(),

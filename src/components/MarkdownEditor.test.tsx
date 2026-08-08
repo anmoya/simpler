@@ -61,4 +61,71 @@ describe("MarkdownEditor", () => {
 
     expect(activeLine?.textContent).toBe("needle line");
   });
+
+  describe("list continuation on Enter", () => {
+    it.each([
+      ["- foo", "- foo\n- "],
+      ["* foo", "* foo\n* "],
+      ["+ foo", "+ foo\n+ "],
+      ["1. foo", "1. foo\n2. "],
+      ["9. foo", "9. foo\n10. "],
+    ])("continues %s onto a new marker line", async (initial, expected) => {
+      const onChange = vi.fn();
+      render(<MarkdownEditor notePath="daily/today.md" value={initial} onChange={onChange} />);
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      await userEvent.type(editable, "{End}{Enter}");
+
+      expect(onChange).toHaveBeenCalledWith(expected);
+    });
+
+    it("keeps default Enter behavior in the middle of a non-list line", async () => {
+      const onChange = vi.fn();
+      render(<MarkdownEditor notePath="daily/today.md" value="plain text" onChange={onChange} />);
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      await userEvent.type(editable, "{Home}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{Enter}");
+
+      expect(onChange).toHaveBeenCalledWith("plain\ntext");
+    });
+
+    it.each([
+      ["- [ ] foo", "- [ ] foo\n- [ ] "],
+      ["- [x] foo", "- [x] foo\n- [ ] "],
+    ])("continues checklist item %s as unchecked", async (initial, expected) => {
+      const onChange = vi.fn();
+      render(<MarkdownEditor notePath="daily/today.md" value={initial} onChange={onChange} />);
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      await userEvent.type(editable, "{End}{Enter}");
+
+      expect(onChange).toHaveBeenCalledWith(expected);
+    });
+
+    it.each([
+      ["- ", ""],
+      ["1. ", ""],
+      ["- [ ] ", ""],
+    ])("exits the list when Enter is pressed on an empty %s item", async (initial, expected) => {
+      const onChange = vi.fn();
+      render(<MarkdownEditor notePath="daily/today.md" value={initial} onChange={onChange} />);
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      await userEvent.type(editable, "{End}{Enter}");
+
+      expect(onChange).toHaveBeenCalledWith(expected);
+    });
+  });
 });
