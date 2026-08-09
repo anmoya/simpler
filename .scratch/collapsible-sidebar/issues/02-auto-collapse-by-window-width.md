@@ -1,6 +1,6 @@
 # Auto-collapse sidebar by window width
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

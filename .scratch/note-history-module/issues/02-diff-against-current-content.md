@@ -1,6 +1,6 @@
 # Diff historical version against current note content
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

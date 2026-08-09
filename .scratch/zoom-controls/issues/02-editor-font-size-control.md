@@ -1,6 +1,6 @@
 # Editor font size control
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

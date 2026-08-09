@@ -1,6 +1,6 @@
 # Global search: hide by default, Ctrl+Shift+F to open, Esc to close
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
