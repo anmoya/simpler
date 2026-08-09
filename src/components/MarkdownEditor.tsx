@@ -83,9 +83,9 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-// Runs an attachment task, reporting both a rejected promise and an `ok: false`
-// response through the same visible channel — the second is where failures
-// actually surfaced before, since the native commands resolve rather than throw.
+// The single place an attachment failure becomes visible. Native commands
+// resolve with `ok: false` rather than throwing, so the inner steps turn that
+// into a rejection and everything lands here.
 function runAttachmentTask(
   failureMessage: string,
   reportError: AttachmentErrorReporter,
@@ -102,13 +102,10 @@ function insertAttachmentReference(
   notePath: string,
   insertAt: { from: number; to: number },
   response: NativeCommandResponse<FilesystemOperationResult>,
-  failureMessage: string,
   reportError: AttachmentErrorReporter,
 ) {
   if (!response.ok || !response.data) {
-    console.error(failureMessage, response.error);
-    reportError(failureMessage);
-    return;
+    throw new Error(response.error ?? "the native command reported no data");
   }
 
   reportError(null);
@@ -129,7 +126,6 @@ async function saveAndInsertAttachment(
   insertAt: { from: number; to: number },
   contentBase64: string,
   mimeType: string,
-  failureMessage: string,
   reportError: AttachmentErrorReporter,
 ) {
   const fileName = attachmentFileName(mimeType);
@@ -139,7 +135,7 @@ async function saveAndInsertAttachment(
     fileName,
     contentBase64,
   );
-  insertAttachmentReference(view, notePath, insertAt, response, failureMessage, reportError);
+  insertAttachmentReference(view, notePath, insertAt, response, reportError);
 }
 
 async function insertAttachment(
@@ -148,7 +144,6 @@ async function insertAttachment(
   workspacePath: string,
   notePath: string,
   insertAt: { from: number; to: number },
-  failureMessage: string,
   reportError: AttachmentErrorReporter,
 ) {
   const contentBase64 = await fileToBase64(file);
@@ -159,18 +154,8 @@ async function insertAttachment(
     insertAt,
     contentBase64,
     file.type,
-    failureMessage,
     reportError,
   );
-}
-
-// WebKitGTK's `drop` DOM event delivers files dragged from a file manager as
-// a `text/uri-list` (a `file://` URI), not as a `File` object with readable
-// bytes, so the local path is recognised and imported through a native command
-// instead of reading bytes in the browser. All the parsing lives in the pure
-// module; this only pulls the raw string off the event.
-function droppedImagePathFrom(dataTransfer: DataTransfer | null | undefined) {
-  return findDroppedImagePath(dataTransfer?.getData?.("text/uri-list"));
 }
 
 async function importAndInsertAttachment(
@@ -179,11 +164,10 @@ async function importAndInsertAttachment(
   notePath: string,
   insertAt: { from: number; to: number },
   sourcePath: string,
-  failureMessage: string,
   reportError: AttachmentErrorReporter,
 ) {
   const response = await importAttachment(workspacePath, parentFolderPath(notePath), sourcePath);
-  insertAttachmentReference(view, notePath, insertAt, response, failureMessage, reportError);
+  insertAttachmentReference(view, notePath, insertAt, response, reportError);
 }
 
 // WebKitGTK's `paste` DOM event does not expose image bytes on Linux
@@ -210,7 +194,6 @@ async function pasteFromSystemClipboard(
       insertAt,
       imageResponse.data.contentBase64,
       imageResponse.data.mimeType,
-      pastedImageFailureMessage,
       reportError,
     );
     return;
@@ -310,7 +293,6 @@ export function MarkdownEditor({
                   currentWorkspacePath,
                   notePathRef.current,
                   { from: selection.from, to: selection.to },
-                  pastedImageFailureMessage,
                   reportError,
                 ),
               );
@@ -349,14 +331,18 @@ export function MarkdownEditor({
                     currentWorkspacePath,
                     notePathRef.current,
                     { from: dropPosition, to: dropPosition },
-                    droppedImageFailureMessage,
                     reportError,
                   ),
                 );
                 return true;
               }
 
-              const droppedImagePath = droppedImagePathFrom(event.dataTransfer);
+              // WebKitGTK delivers a file-manager drag as a `text/uri-list`
+              // (a `file://` URI), not as a `File` with readable bytes, so the
+              // path is imported through a native command instead.
+              const droppedImagePath = findDroppedImagePath(
+                event.dataTransfer?.getData?.("text/uri-list"),
+              );
               if (droppedImagePath && currentWorkspacePath) {
                 event.preventDefault();
                 const dropPosition =
@@ -370,7 +356,6 @@ export function MarkdownEditor({
                     notePathRef.current,
                     { from: dropPosition, to: dropPosition },
                     droppedImagePath,
-                    droppedImageFailureMessage,
                     reportError,
                   ),
                 );

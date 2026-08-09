@@ -7,7 +7,10 @@
 // can arrive in: a raw `text/uri-list` string (DOM channel) or a list of
 // absolute paths (native channel).
 
-const importableImageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
+// Must stay in step with `IMPORTABLE_IMAGE_EXTENSIONS` in `src-tauri/src/lib.rs`:
+// recognising an extension the backend then rejects turns a drop that should be
+// a silent no-op into a visible import failure.
+const importableImageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
 
 // Hosts a local drop may legitimately carry. Anything else names another
 // machine, which is not a path we can read.

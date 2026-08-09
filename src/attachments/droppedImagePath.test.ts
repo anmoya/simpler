@@ -47,6 +47,9 @@ describe("findDroppedImagePath", () => {
     it.each([
       ["a path without extension", "file:///home/user/README"],
       ["a non-image extension", "file:///home/user/notes.pdf"],
+      // Rejected by the native importer, so recognising it here would surface a
+      // visible error for a drop that should be a no-op.
+      ["an svg, which the native importer does not accept", "file:///home/user/logo.svg"],
       ["a dotted folder but extensionless file", "file:///home/us.er/foto"],
       ["a non-file scheme", "https://example.com/foto.png"],
       ["an empty string", ""],
