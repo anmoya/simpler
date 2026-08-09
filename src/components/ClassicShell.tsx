@@ -14,6 +14,7 @@ import type {
 import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { MarkdownEditor } from "./MarkdownEditor";
+import { NoteHistoryPanel } from "./NoteHistoryPanel";
 import { Icon } from "./icons";
 import { GitHubConnectionWizard } from "./GitHubConnectionWizard";
 
@@ -863,49 +864,17 @@ export function ClassicShell({
             <p className="empty-editor">Select a Markdown note to start writing.</p>
           )}
         </section>
-          {noteHistoryOpen ? (
-            <aside className="note-history" aria-label="Note history">
-              <header className="note-history__header">
-                <h2>Note history</h2>
-                <button type="button" aria-label="Close note history" onClick={onCloseNoteHistory}>
-                  <Icon name="close" />
-                </button>
-              </header>
-              {noteHistoryError ? <p role="alert">{noteHistoryError}</p> : null}
-              {noteHistoryLoading && noteHistoryEntries.length === 0 ? <p>Loading history…</p> : null}
-              {!noteHistoryLoading && !noteHistoryError && noteHistoryEntries.length === 0 ? <p>No synced versions yet.</p> : null}
-              {noteHistoryEntries.length > 0 ? (
-                <ol className="note-history__entries">
-                  {noteHistoryEntries.map((entry) => (
-                    <li key={entry.commitId}>
-                      <button
-                        type="button"
-                        className={entry.commitId === selectedNoteHistoryCommitId ? "note-history__entry note-history__entry--selected" : "note-history__entry"}
-                        aria-pressed={entry.commitId === selectedNoteHistoryCommitId}
-                        onClick={() => onSelectNoteHistoryEntry(entry)}
-                      >
-                        <strong>{entry.summary || "Sync version"}</strong>
-                        <time dateTime={entry.date}>{new Date(entry.date).toLocaleString()}</time>
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
-              {selectedNoteHistoryCommitId ? (
-                <section className="note-history__preview" aria-label="Historical note preview">
-                  {noteHistoryLoading ? <p>Loading version…</p> : null}
-                  {noteHistoryPreview !== null ? (
-                    <>
-                      <pre>{noteHistoryPreview}</pre>
-                      <button type="button" className="note-history__restore" onClick={onRestoreNoteHistoryEntry}>
-                        Restore this version
-                      </button>
-                    </>
-                  ) : null}
-                </section>
-              ) : null}
-            </aside>
-          ) : null}
+          <NoteHistoryPanel
+            noteHistoryOpen={noteHistoryOpen}
+            noteHistoryEntries={noteHistoryEntries}
+            selectedNoteHistoryCommitId={selectedNoteHistoryCommitId}
+            noteHistoryPreview={noteHistoryPreview}
+            noteHistoryLoading={noteHistoryLoading}
+            noteHistoryError={noteHistoryError}
+            onSelectNoteHistoryEntry={onSelectNoteHistoryEntry}
+            onCloseNoteHistory={onCloseNoteHistory}
+            onRestoreNoteHistoryEntry={onRestoreNoteHistoryEntry}
+          />
         </div>
       </main>
 
