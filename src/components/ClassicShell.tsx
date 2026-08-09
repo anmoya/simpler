@@ -23,6 +23,14 @@ import { GitHubConnectionWizard } from "./GitHubConnectionWizard";
 
 type CommandAction = () => void;
 
+// Below this width the sidebar auto-collapses to the icon rail. It sits
+// under the 720px breakpoint in styles.css (which already switches to a
+// stacked layout) and above a bare-minimum rail width — 520px is roughly
+// where a full sidebar next to an editor starts feeling cramped but a
+// tiling-WM column or narrowed window still has enough room for the rail
+// plus a usable editor pane.
+const narrowViewportThreshold = 520;
+
 interface ShellCommand {
   id: string;
   label: string;
@@ -231,6 +239,52 @@ export function ClassicShell({
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const [focusSearchOnExpand, setFocusSearchOnExpand] = useState(false);
   const globalSearchInputRef = useRef<HTMLInputElement>(null);
+  // Auto-collapse tracks the window narrowing below `narrowViewportThreshold`
+  // separately from the manual `sidebarCollapsed` preference (issue 01), so
+  // width-driven collapsing never overwrites the user's persisted choice.
+  // `narrowOverride` remembers that the user manually re-expanded the
+  // sidebar during the current narrow session; it resets the moment the
+  // viewport crosses back into "narrow" from "wide" so the next narrow
+  // crossing auto-collapses again.
+  const [isNarrowViewport, setIsNarrowViewport] = useState(
+    () => typeof window !== "undefined" && window.innerWidth < narrowViewportThreshold,
+  );
+  const [narrowOverride, setNarrowOverride] = useState(false);
+  const wasNarrowViewportRef = useRef(isNarrowViewport);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handleResize = () => {
+      const nowNarrow = window.innerWidth < narrowViewportThreshold;
+      if (nowNarrow && !wasNarrowViewportRef.current) {
+        setNarrowOverride(false);
+      }
+      wasNarrowViewportRef.current = nowNarrow;
+      setIsNarrowViewport(nowNarrow);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+  const effectiveSidebarCollapsed = sidebarCollapsed || (isNarrowViewport && !narrowOverride);
+  const handleToggleSidebarCollapse = () => {
+    if (effectiveSidebarCollapsed) {
+      // Expanding: keep it expanded for the rest of this narrow session.
+      if (isNarrowViewport) {
+        setNarrowOverride(true);
+      }
+      if (sidebarCollapsed) {
+        onToggleSidebarCollapse();
+      }
+    } else {
+      // Collapsing: start a fresh (non-overridden) session and flip the
+      // manual preference only if it wasn't already the reason we're expanded.
+      setNarrowOverride(false);
+      if (!sidebarCollapsed) {
+        onToggleSidebarCollapse();
+      }
+    }
+  };
   const hasSelection = activeNotePath !== null || activeFolderPath !== "";
   const hasOpenWorkspace = canManageWorkspace;
   const hasNotes = workspaceTreeHasNotes(workspaceTree);
@@ -378,10 +432,10 @@ export function ClassicShell({
       },
       {
         id: "toggle-sidebar",
-        label: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
+        label: effectiveSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
         shortcut: "Ctrl/Cmd+B",
         available: true,
-        run: onToggleSidebarCollapse,
+        run: handleToggleSidebarCollapse,
       },
       ...workspaceNotePaths(workspaceTree).map((notePath) => ({
         id: `open-note:${notePath}`,
@@ -414,6 +468,8 @@ export function ClassicShell({
       onEditorFontSizeChange,
       uiZoom,
       editorFontSize,
+      handleToggleSidebarCollapse,
+      effectiveSidebarCollapsed,
       onToggleSidebarCollapse,
       sidebarCollapsed,
       workspaceTree,
@@ -426,11 +482,11 @@ export function ClassicShell({
   }, [activeNotePath, fileSearchQuery]);
 
   useEffect(() => {
-    if (!sidebarCollapsed && focusSearchOnExpand) {
+    if (!effectiveSidebarCollapsed && focusSearchOnExpand) {
       globalSearchInputRef.current?.focus();
       setFocusSearchOnExpand(false);
     }
-  }, [sidebarCollapsed, focusSearchOnExpand]);
+  }, [effectiveSidebarCollapsed, focusSearchOnExpand]);
 
   useEffect(() => {
     if (isFileSearchOpen) {
@@ -686,7 +742,7 @@ export function ClassicShell({
       className="app-shell"
       data-theme="warm"
       data-mode={themeMode}
-      data-sidebar={sidebarCollapsed ? "collapsed" : "expanded"}
+      data-sidebar={effectiveSidebarCollapsed ? "collapsed" : "expanded"}
       style={{ "--ui-zoom": uiZoom / 100 } as CSSProperties}
     >
       <TitleBar
@@ -696,10 +752,10 @@ export function ClassicShell({
         onClose={onCloseWindow}
       />
       <aside
-        className={sidebarCollapsed ? "sidebar sidebar--collapsed" : "sidebar"}
+        className={effectiveSidebarCollapsed ? "sidebar sidebar--collapsed" : "sidebar"}
         aria-label="Workspace tree"
       >
-        {sidebarCollapsed ? (
+        {effectiveSidebarCollapsed ? (
           <div className="sidebar-rail" aria-label="Collapsed sidebar">
             <button type="button" title="Open Workspace" aria-label="Open Workspace" onClick={onOpenWorkspace}>
               <Icon name="folder" size={18} />
@@ -711,7 +767,7 @@ export function ClassicShell({
               onClick={() => {
                 setFocusSearchOnExpand(true);
                 setIsGlobalSearchOpen(true);
-                onToggleSidebarCollapse();
+                handleToggleSidebarCollapse();
               }}
             >
               <Icon name="search" size={18} />
@@ -730,7 +786,7 @@ export function ClassicShell({
               title="Expand sidebar"
               aria-label="Expand sidebar"
               className="sidebar-rail__expand"
-              onClick={onToggleSidebarCollapse}
+              onClick={handleToggleSidebarCollapse}
             >
               <Icon name="chevron-right" size={18} />
             </button>
@@ -811,7 +867,7 @@ export function ClassicShell({
                     type="button"
                     title="Collapse sidebar"
                     aria-label="Collapse sidebar"
-                    onClick={onToggleSidebarCollapse}
+                    onClick={handleToggleSidebarCollapse}
                   >
                     <Icon name="chevron-left" size={16} />
                   </button>
