@@ -1848,4 +1848,35 @@ describe("App", () => {
 
     expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("0.7");
   });
+
+  it("changes editor font size via Ctrl/Cmd+Shift shortcuts, independently of UI zoom, and persists it across restarts", async () => {
+    const { unmount } = render(<App />);
+
+    const appShell = () => document.querySelector(".app-shell") as HTMLElement;
+    expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("1");
+    expect(localStorage.getItem("simpler.editorFontSize")).toBeNull();
+
+    fireEvent.keyDown(window, { key: "=", ctrlKey: true, shiftKey: true });
+    expect(localStorage.getItem("simpler.editorFontSize")).toBe("14.5");
+    // Editor font size shortcuts must not touch the independent UI zoom state.
+    expect(localStorage.getItem("simpler.uiZoom")).toBeNull();
+    expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("1");
+
+    fireEvent.keyDown(window, { key: "0", ctrlKey: true, shiftKey: true });
+    expect(localStorage.getItem("simpler.editorFontSize")).toBe("13.5");
+
+    for (let i = 0; i < 8; i += 1) {
+      fireEvent.keyDown(window, { key: "-", ctrlKey: true, shiftKey: true });
+    }
+    expect(localStorage.getItem("simpler.editorFontSize")).toBe("11");
+
+    // Below the floor, another decrease is a no-op (the command becomes unavailable).
+    fireEvent.keyDown(window, { key: "-", ctrlKey: true, shiftKey: true });
+    expect(localStorage.getItem("simpler.editorFontSize")).toBe("11");
+
+    unmount();
+    render(<App />);
+
+    expect(localStorage.getItem("simpler.editorFontSize")).toBe("11");
+  });
 });

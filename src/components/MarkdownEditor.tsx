@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
-import type { FileSearchJump } from "../app/appState";
+import type { EditorFontSize, FileSearchJump } from "../app/appState";
+import { defaultEditorFontSize } from "../app/appState";
 import { markdownEditorTheme } from "./markdownEditorTheme";
 import { listContinuationKeymap } from "./listContinuation";
 import { findDroppedImagePath } from "../attachments/droppedImagePath";
@@ -17,6 +18,10 @@ export interface MarkdownEditorProps {
   onChange: (content: string) => void;
   searchJump?: FileSearchJump | null;
   onAttachmentError?: (message: string | null) => void;
+  // Editor-only font size, independent of the whole-app-shell UI zoom.
+  // Applied as a CSS variable read by `markdownEditorTheme()`, never by
+  // rebuilding the CodeMirror view or touching `basicSetup`.
+  fontSize?: EditorFontSize;
 }
 
 // Attachment failures used to vanish into a discarded promise, which from the
@@ -219,6 +224,7 @@ export function MarkdownEditor({
   onChange,
   searchJump = null,
   onAttachmentError,
+  fontSize = defaultEditorFontSize,
 }: MarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -416,5 +422,16 @@ export function MarkdownEditor({
     });
   }, [notePath, searchJump]);
 
-  return <div className="markdown-editor" data-testid="markdown-editor" ref={containerRef} />;
+  useEffect(() => {
+    containerRef.current?.style.setProperty("--editor-font-size", `${fontSize}px`);
+  }, [fontSize]);
+
+  return (
+    <div
+      className="markdown-editor"
+      data-testid="markdown-editor"
+      ref={containerRef}
+      style={{ "--editor-font-size": `${fontSize}px` } as CSSProperties}
+    />
+  );
 }

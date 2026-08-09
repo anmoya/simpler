@@ -36,7 +36,14 @@ const markdownHighlightStyle = HighlightStyle.define([
 ]);
 
 const markdownEditorChrome = EditorView.theme({
-  "&": { backgroundColor: "var(--color-editor)", color: "var(--color-text)" },
+  "&": {
+    backgroundColor: "var(--color-editor)",
+    color: "var(--color-text)",
+    // Editor-only font size, independent of the whole-app-shell `--ui-zoom`.
+    // Set inline by MarkdownEditor from persisted `simpler.editorFontSize`;
+    // falls back to the default `--font-size-body` value when unset.
+    fontSize: "var(--editor-font-size, 13.5px)",
+  },
   ".cm-content": { caretColor: "var(--color-accent)" },
   ".cm-line": { lineHeight: "1.8" },
   ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--color-accent)" },
