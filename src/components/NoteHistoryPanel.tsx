@@ -1,5 +1,6 @@
 import type { NoteHistoryEntry } from "../native/commands";
 import { Icon } from "./icons";
+import { diffLines } from "./lineDiff";
 
 export interface NoteHistoryPanelProps {
   noteHistoryOpen: boolean;
@@ -8,6 +9,7 @@ export interface NoteHistoryPanelProps {
   noteHistoryPreview: string | null;
   noteHistoryLoading: boolean;
   noteHistoryError: string | null;
+  currentContent: string;
   onSelectNoteHistoryEntry: (entry: NoteHistoryEntry) => void;
   onCloseNoteHistory: () => void;
   onRestoreNoteHistoryEntry: () => void;
@@ -20,6 +22,7 @@ export function NoteHistoryPanel({
   noteHistoryPreview,
   noteHistoryLoading,
   noteHistoryError,
+  currentContent,
   onSelectNoteHistoryEntry,
   onCloseNoteHistory,
   onRestoreNoteHistoryEntry,
@@ -61,7 +64,25 @@ export function NoteHistoryPanel({
           {noteHistoryLoading ? <p>Loading version…</p> : null}
           {noteHistoryPreview !== null ? (
             <>
-              <pre>{noteHistoryPreview}</pre>
+              <pre className="note-history__diff">
+                {diffLines(currentContent, noteHistoryPreview).map((line, index) => (
+                  <div
+                    key={index}
+                    className={
+                      line.type === "added"
+                        ? "note-history__diff-line note-history__diff-line--added"
+                        : line.type === "removed"
+                          ? "note-history__diff-line note-history__diff-line--removed"
+                          : "note-history__diff-line"
+                    }
+                  >
+                    <span className="note-history__diff-marker">
+                      {line.type === "added" ? "+" : line.type === "removed" ? "-" : " "}
+                    </span>
+                    <span className="note-history__diff-text">{line.value}</span>
+                  </div>
+                ))}
+              </pre>
               <button type="button" className="note-history__restore" onClick={onRestoreNoteHistoryEntry}>
                 Restore this version
               </button>

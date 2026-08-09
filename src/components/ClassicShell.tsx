@@ -1012,6 +1012,7 @@ export function ClassicShell({
             noteHistoryPreview={noteHistoryPreview}
             noteHistoryLoading={noteHistoryLoading}
             noteHistoryError={noteHistoryError}
+            currentContent={noteContent}
             onSelectNoteHistoryEntry={onSelectNoteHistoryEntry}
             onCloseNoteHistory={onCloseNoteHistory}
             onRestoreNoteHistoryEntry={onRestoreNoteHistoryEntry}
