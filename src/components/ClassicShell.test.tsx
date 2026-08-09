@@ -1,6 +1,6 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClassicShell } from "./ClassicShell";
 import type { ClassicShellProps } from "./ClassicShell";
 
@@ -104,6 +104,24 @@ const defaultProps: ClassicShellProps = {
 function renderShell(props: Partial<ClassicShellProps> = {}) {
   return render(<ClassicShell {...defaultProps} {...props} />);
 }
+
+// jsdom lets `window.innerWidth` be assigned directly; ClassicShell listens
+// for the native "resize" event, so tests simulate a narrower/wider window
+// by setting the value and dispatching that event, same as a real resize.
+const defaultWindowWidth = window.innerWidth;
+
+function setWindowWidth(width: number) {
+  act(() => {
+    Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: width });
+    window.dispatchEvent(new Event("resize"));
+  });
+}
+
+// The narrow-viewport tests mutate window.innerWidth; restore it afterward so
+// it never leaks a narrow width into unrelated tests (including on failure).
+afterEach(() => {
+  setWindowWidth(defaultWindowWidth);
+});
 
 describe("ClassicShell", () => {
   it("disables the note history toggle in a plain (non-Git-backed) Workspace", () => {
@@ -816,6 +834,41 @@ describe("ClassicShell", () => {
 
     expect(screen.getByRole("button", { name: "notes" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
+  });
+
+  it("auto-collapses the sidebar when the window narrows below the threshold, and expands it back when it widens", () => {
+    setWindowWidth(1024);
+
+    renderShell({ canManageWorkspace: true, workspaceName: "notes" });
+    expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
+
+    setWindowWidth(400);
+    expect(screen.getByLabelText("Collapsed sidebar")).toBeInTheDocument();
+
+    setWindowWidth(1024);
+    expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
+  });
+
+  it("keeps the sidebar expanded after a manual expand while still narrow, until the next threshold crossing", async () => {
+    const user = userEvent.setup();
+
+    setWindowWidth(400);
+    renderShell({ canManageWorkspace: true, workspaceName: "notes" });
+
+    const rail = screen.getByLabelText("Collapsed sidebar");
+    await user.click(within(rail).getByRole("button", { name: "Expand sidebar" }));
+
+    expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
+
+    // Still narrow: a resize event that doesn't cross the threshold should not re-collapse it.
+    setWindowWidth(410);
+    expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
+
+    // Widen past the threshold, then narrow again: this is a fresh narrow session,
+    // so it should auto-collapse again.
+    setWindowWidth(1024);
+    setWindowWidth(400);
+    expect(screen.getByLabelText("Collapsed sidebar")).toBeInTheDocument();
   });
 
   it("hides the current-note search by default and opens/focuses it with Ctrl/Cmd+F", async () => {
