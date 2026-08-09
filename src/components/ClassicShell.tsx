@@ -1338,6 +1338,20 @@ function TitleBar({
   );
 }
 
+function activeNoteAncestorFolderPaths(activeNotePath: string | null): ReadonlySet<string> {
+  if (!activeNotePath) {
+    return new Set();
+  }
+  const segments = activeNotePath.split("/").slice(0, -1);
+  const paths = new Set<string>();
+  let cumulative = "";
+  for (const segment of segments) {
+    cumulative = cumulative ? `${cumulative}/${segment}` : segment;
+    paths.add(cumulative);
+  }
+  return paths;
+}
+
 function WorkspaceTree({
   items,
   activeNotePath,
@@ -1366,6 +1380,7 @@ function WorkspaceTree({
   isRoot?: boolean;
 }) {
   const readDraggedPath = (event: DragEvent) => event.dataTransfer.getData("text/plain");
+  const activePathFolders = activeNoteAncestorFolderPaths(activeNotePath);
 
   const rootDropProps = isRoot
     ? {
@@ -1390,7 +1405,13 @@ function WorkspaceTree({
       {items.map((item) => (
         <li key={item.path}>
           {item.kind === "folder" ? (
-            <div className="note-tree__folder-row">
+            <div
+              className={
+                activePathFolders.has(item.path)
+                  ? "note-tree__folder-row note-tree__folder-row--active-path"
+                  : "note-tree__folder-row"
+              }
+            >
               <button
                 type="button"
                 className="note-tree__toggle"
