@@ -53,6 +53,10 @@ button {
   font-family: var(--font-family-body);
 }
 
+.app-shell[data-sidebar="collapsed"] {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
 /*
  * Theme tokens are keyed by two independent attributes: data-theme (the
  * named Theme — colors, typography, shape) and data-mode (the Appearance
@@ -170,9 +174,60 @@ button {
   grid-row: 2 / 4;
   display: flex;
   min-width: 0;
+  /* Grid items default to min-height: auto, which lets their intrinsic
+     content height (header + controls + search + tree + tree-actions)
+     ignore the row's actual available height and spill past it instead of
+     shrinking — that's what made .tree-actions visually overlap whatever
+     rendered below the sidebar at narrow/short viewports. min-height: 0
+     lets this flex column actually shrink to its grid track, so the
+     internal .note-tree (flex: 1; min-height: 0; overflow: auto) scrolls
+     instead of the whole sidebar overflowing its box. */
+  min-height: 0;
   flex-direction: column;
   border-right: 1px solid var(--color-border-subtle);
   background: var(--color-sidebar);
+}
+
+.sidebar--collapsed {
+  width: 56px;
+}
+
+.sidebar-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px;
+}
+
+.sidebar-rail button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.sidebar-rail button:hover:not(:disabled) {
+  border-color: var(--color-border);
+  background: var(--color-control);
+  color: var(--color-text);
+}
+
+.sidebar-rail button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sidebar-rail__expand {
+  margin-top: auto;
 }
 
 .sidebar__header {
@@ -1195,6 +1250,20 @@ button {
     max-height: 42vh;
     border-right: 0;
     border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  .sidebar--collapsed {
+    max-height: none;
+  }
+
+  .sidebar-rail {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .sidebar-rail__expand {
+    margin-top: 0;
+    margin-left: auto;
   }
 
   .editor-toolbar {

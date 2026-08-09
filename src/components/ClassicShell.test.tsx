@@ -25,6 +25,8 @@ const defaultProps: ClassicShellProps = {
   noteHistoryLoading: false,
   noteHistoryError: null,
   themeMode: "light",
+  sidebarCollapsed: false,
+  onToggleSidebarCollapse: noop,
   editorError: null,
   attachmentError: null,
   onAttachmentError: noop,
@@ -755,6 +757,63 @@ describe("ClassicShell", () => {
     await user.click(screen.getByRole("button", { name: "Previous current-note match" }));
 
     expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
+  it("collapses the sidebar to an icon rail and expands it back", async () => {
+    const user = userEvent.setup();
+    let sidebarCollapsed = false;
+    const onToggleSidebarCollapse = vi.fn(() => {
+      sidebarCollapsed = !sidebarCollapsed;
+    });
+
+    const { rerender } = renderShell({
+      canManageWorkspace: true,
+      workspaceName: "notes",
+      onToggleSidebarCollapse,
+    });
+
+    expect(screen.getByRole("button", { name: "notes" })).toBeInTheDocument();
+    expect(screen.getByRole("search", { name: "Global Search" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Workspace actions")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(onToggleSidebarCollapse).toHaveBeenCalledOnce();
+
+    rerender(
+      <ClassicShell
+        {...defaultProps}
+        canManageWorkspace
+        workspaceName="notes"
+        sidebarCollapsed
+        onToggleSidebarCollapse={onToggleSidebarCollapse}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "notes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("search", { name: "Global Search" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Workspace actions")).not.toBeInTheDocument();
+    const rail = screen.getByLabelText("Collapsed sidebar");
+    expect(rail).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: "Open Workspace" })).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: "Focus Global Search" })).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: "Sync now" })).toBeInTheDocument();
+
+    await user.click(within(rail).getByRole("button", { name: "Expand sidebar" }));
+    expect(onToggleSidebarCollapse).toHaveBeenCalledTimes(2);
+
+    rerender(
+      <ClassicShell
+        {...defaultProps}
+        canManageWorkspace
+        workspaceName="notes"
+        sidebarCollapsed={false}
+        onToggleSidebarCollapse={onToggleSidebarCollapse}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "notes" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
   });
 
   it("hides the current-note search by default and opens/focuses it with Ctrl/Cmd+F", async () => {

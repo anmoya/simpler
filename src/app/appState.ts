@@ -57,6 +57,11 @@ export interface AppState {
   activeFolderPath: string;
   noteContent: string;
   themeMode: ThemeMode;
+  // Whether the sidebar is showing its narrow icon rail instead of full content.
+  // Currently only ever set by the manual toggle; a later ticket (auto-collapse
+  // by window width) can OR an automatic signal into this same boolean without
+  // needing a reshape, since "collapsed" is the only thing the UI reads.
+  sidebarCollapsed: boolean;
   editorError: EditorError | null;
   // Attachment (paste/drop) failures: shown alongside the editor rather than
   // replacing it, so an import failure never costs the in-progress note.
@@ -100,6 +105,7 @@ export const initialAppState: AppState = {
   activeFolderPath: "",
   noteContent: "",
   themeMode: "light",
+  sidebarCollapsed: false,
   editorError: null,
   attachmentError: null,
   syncStatus: "desconectado",

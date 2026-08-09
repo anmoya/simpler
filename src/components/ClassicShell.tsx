@@ -48,6 +48,8 @@ export interface ClassicShellProps {
   noteHistoryLoading: boolean;
   noteHistoryError: string | null;
   themeMode: ThemeMode;
+  sidebarCollapsed: boolean;
+  onToggleSidebarCollapse: () => void;
   editorError: EditorError | null;
   attachmentError: string | null;
   onAttachmentError: (message: string | null) => void;
@@ -136,6 +138,8 @@ export function ClassicShell({
   noteHistoryLoading,
   noteHistoryError,
   themeMode,
+  sidebarCollapsed,
+  onToggleSidebarCollapse,
   editorError,
   attachmentError,
   onAttachmentError,
@@ -213,6 +217,8 @@ export function ClassicShell({
     null,
   );
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [focusSearchOnExpand, setFocusSearchOnExpand] = useState(false);
+  const globalSearchInputRef = useRef<HTMLInputElement>(null);
   const hasSelection = activeNotePath !== null || activeFolderPath !== "";
   const hasOpenWorkspace = canManageWorkspace;
   const hasNotes = workspaceTreeHasNotes(workspaceTree);
@@ -309,6 +315,13 @@ export function ClassicShell({
         available: true,
         run: () => setIsCommandHelpOpen(true),
       },
+      {
+        id: "toggle-sidebar",
+        label: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
+        shortcut: "Ctrl/Cmd+B",
+        available: true,
+        run: onToggleSidebarCollapse,
+      },
       ...workspaceNotePaths(workspaceTree).map((notePath) => ({
         id: `open-note:${notePath}`,
         label: `Open note: ${notePath}`,
@@ -332,6 +345,8 @@ export function ClassicShell({
       onRouteChange,
       onSyncWorkspace,
       onThemeChange,
+      onToggleSidebarCollapse,
+      sidebarCollapsed,
       workspaceTree,
     ],
   );
@@ -340,6 +355,13 @@ export function ClassicShell({
   useEffect(() => {
     setActiveFileMatchIndex(0);
   }, [activeNotePath, fileSearchQuery]);
+
+  useEffect(() => {
+    if (!sidebarCollapsed && focusSearchOnExpand) {
+      globalSearchInputRef.current?.focus();
+      setFocusSearchOnExpand(false);
+    }
+  }, [sidebarCollapsed, focusSearchOnExpand]);
 
   useEffect(() => {
     if (isFileSearchOpen) {
@@ -439,6 +461,13 @@ export function ClassicShell({
         return;
       }
 
+      if (hasCommandModifier && event.key.toLowerCase() === "b") {
+        if (runAvailableCommand("toggle-sidebar")) {
+          event.preventDefault();
+        }
+        return;
+      }
+
       if (hasCommandModifier && event.shiftKey && event.key.toLowerCase() === "t") {
         if (runAvailableCommand("theme")) {
           event.preventDefault();
@@ -515,257 +544,313 @@ export function ClassicShell({
   };
 
   return (
-    <div className="app-shell" data-theme="warm" data-mode={themeMode}>
+    <div
+      className="app-shell"
+      data-theme="warm"
+      data-mode={themeMode}
+      data-sidebar={sidebarCollapsed ? "collapsed" : "expanded"}
+    >
       <TitleBar
         isMaximized={isWindowMaximized}
         onMinimize={onMinimizeWindow}
         onToggleMaximize={onToggleMaximizeWindow}
         onClose={onCloseWindow}
       />
-      <aside className="sidebar" aria-label="Workspace tree">
-        <header className="sidebar__header">
-          <div className="workspace-summary">
+      <aside
+        className={sidebarCollapsed ? "sidebar sidebar--collapsed" : "sidebar"}
+        aria-label="Workspace tree"
+      >
+        {sidebarCollapsed ? (
+          <div className="sidebar-rail" aria-label="Collapsed sidebar">
+            <button type="button" title="Open Workspace" aria-label="Open Workspace" onClick={onOpenWorkspace}>
+              <Icon name="folder" size={18} />
+            </button>
             <button
               type="button"
-              className="workspace-trigger"
-              aria-haspopup="menu"
-              aria-expanded={isWorkspaceMenuOpen}
-              onClick={() => setIsWorkspaceMenuOpen((current) => !current)}
+              title="Global Search"
+              aria-label="Focus Global Search"
+              onClick={() => {
+                setFocusSearchOnExpand(true);
+                onToggleSidebarCollapse();
+              }}
             >
-              <span className="workspace-trigger__text">
-                <strong>{workspaceName}</strong>
-                {workspacePath ? <small>{workspacePath}</small> : null}
-              </span>
-              <Icon name="chevron-down" />
+              <Icon name="search" size={18} />
             </button>
-            {isWorkspaceMenuOpen ? (
-              <WorkspaceMenu
-                recentWorkspaces={recentWorkspaces}
-                onSelectRecent={(workspacePath) => {
-                  onOpenRecentWorkspace(workspacePath);
-                  setIsWorkspaceMenuOpen(false);
-                }}
-                onOpenWorkspace={() => {
-                  onOpenWorkspace();
-                  setIsWorkspaceMenuOpen(false);
-                }}
-                onClose={() => setIsWorkspaceMenuOpen(false)}
-              />
-            ) : null}
-          </div>
-          <div className="sidebar__header-actions">
-            <button type="button" className="workspace-clone-link" onClick={onCloneGitHubRepository}>
-              <Icon name="git-branch" />
-              Clonar desde GitHub
+            <button
+              type="button"
+              title="Sync now"
+              aria-label="Sync now"
+              onClick={onSyncWorkspace}
+              disabled={!canManageWorkspace}
+            >
+              <Icon name="sync" size={18} />
             </button>
-            <div className="sidebar-tabs" role="tablist" aria-label="Sidebar panels">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeRoute === "trash"}
-                aria-label="Trash"
-                title="Trash"
-                className={activeRoute === "trash" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
-                onClick={() => onRouteChange(activeRoute === "trash" ? "workspace" : "trash")}
-                disabled={!canManageWorkspace}
-              >
-                <Icon name="trash" />
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeRoute === "sync"}
-                aria-label="Sync"
-                title="Sync"
-                className={activeRoute === "sync" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
-                onClick={() => onRouteChange(activeRoute === "sync" ? "workspace" : "sync")}
-              >
-                <Icon name="sync" />
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeRoute === "settings"}
-                aria-label="Settings"
-                title="Settings"
-                className={activeRoute === "settings" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
-                onClick={() => onRouteChange(activeRoute === "settings" ? "workspace" : "settings")}
-              >
-                <Icon name="settings" />
-              </button>
-            </div>
+            <button
+              type="button"
+              title="Expand sidebar"
+              aria-label="Expand sidebar"
+              className="sidebar-rail__expand"
+              onClick={onToggleSidebarCollapse}
+            >
+              <Icon name="chevron-right" size={18} />
+            </button>
           </div>
-        </header>
-
-        {workspaceError ? <p className="workspace-error">{workspaceError}</p> : null}
-
-        {activeRoute === "trash" ? (
-          <section className="sidebar-panel trash-panel" aria-label="Trash items">
-            <h2>Trash</h2>
-            {trashEntries.length === 0 ? <p>Trash is empty.</p> : (
-              <ol>
-                {trashEntries.map((entry) => (
-                  <li key={entry.id}>
-                    <span>{entry.originalRelativePath}</span>
-                    <small>{new Date(entry.deletedAt).toLocaleString()}</small>
-                    <button type="button" onClick={() => onRestoreTrashItem(entry.id)}>
-                      Restore
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </section>
-        ) : activeRoute === "sync" ? (
-          <section className="sidebar-panel" aria-label="Sync workspace">
-            <SyncWorkspacePanel
-              canManageWorkspace={canManageWorkspace}
-              statusLabel={statusLabel}
-              workspaceName={workspaceName}
-              onSyncWorkspace={onSyncWorkspace}
-              githubRemote={githubRemote}
-              advancedGit={advancedGit}
-              syncEvents={syncEvents}
-              githubAuth={githubAuth}
-              onRefreshAdvancedGit={onRefreshAdvancedGit}
-              onConnectGitHubRemote={onConnectGitHubRemote}
-              conflictedFiles={conflictedFiles}
-              onResolveConflict={onResolveConflict}
-              onEditConflictManually={onEditConflictManually}
-            />
-          </section>
-        ) : activeRoute === "settings" ? (
-          <GitHubAuthenticationPanel
-            githubAuth={githubAuth}
-            onBeginDeviceFlow={onBeginGitHubDeviceFlow}
-            onCheckDeviceFlow={onCheckGitHubDeviceFlow}
-            onStorePersonalAccessToken={onStoreGitHubPersonalAccessToken}
-            onDisconnect={onDisconnectGitHub}
-          />
         ) : (
           <>
-            <div className="tree-controls">
-              <button
-                type="button"
-                className="tree-controls__icon-button"
-                aria-label="Workspace Tree Mode"
-                aria-pressed={treeMode === "accordion"}
-                title={
-                  treeMode === "accordion"
-                    ? "Tree mode: Accordion (opening a folder collapses its siblings). Click for Free mode."
-                    : "Tree mode: Free (opening a folder never collapses others). Click for Accordion mode."
-                }
-                onClick={() => onTreeModeChange(treeMode === "accordion" ? "free" : "accordion")}
-                disabled={!canManageWorkspace}
-              >
-                <Icon name="tree-mode" size={16} />
-              </button>
-              <button
-                type="button"
-                className="tree-controls__icon-button"
-                aria-label="Focus Active Note"
-                title="Focus Active Note: collapse everything except the path to the note you're editing."
-                onClick={onFocusActiveNote}
-                disabled={activeNotePath === null}
-              >
-                <Icon name="target" size={16} />
-              </button>
-            </div>
-            <div className="global-search" role="search" aria-label="Global Search">
-              <label className="global-search__field">
-                <Icon name="search" />
-                <input
-                  type="search"
-                  aria-label="Global Search"
-                  placeholder="Buscar en todos los archivos..."
-                  value={globalSearchQuery}
-                  onChange={(event) => onGlobalSearchChange(event.target.value)}
-                  disabled={!canManageWorkspace}
+            <header className="sidebar__header">
+              <div className="workspace-summary">
+                <button
+                  type="button"
+                  className="workspace-trigger"
+                  aria-haspopup="menu"
+                  aria-expanded={isWorkspaceMenuOpen}
+                  onClick={() => setIsWorkspaceMenuOpen((current) => !current)}
+                >
+                  <span className="workspace-trigger__text">
+                    <strong>{workspaceName}</strong>
+                    {workspacePath ? <small>{workspacePath}</small> : null}
+                  </span>
+                  <Icon name="chevron-down" />
+                </button>
+                {isWorkspaceMenuOpen ? (
+                  <WorkspaceMenu
+                    recentWorkspaces={recentWorkspaces}
+                    onSelectRecent={(workspacePath) => {
+                      onOpenRecentWorkspace(workspacePath);
+                      setIsWorkspaceMenuOpen(false);
+                    }}
+                    onOpenWorkspace={() => {
+                      onOpenWorkspace();
+                      setIsWorkspaceMenuOpen(false);
+                    }}
+                    onClose={() => setIsWorkspaceMenuOpen(false)}
+                  />
+                ) : null}
+              </div>
+              <div className="sidebar__header-actions">
+                <button type="button" className="workspace-clone-link" onClick={onCloneGitHubRepository}>
+                  <Icon name="git-branch" />
+                  Clonar desde GitHub
+                </button>
+                <div className="sidebar-tabs" role="tablist" aria-label="Sidebar panels">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeRoute === "trash"}
+                    aria-label="Trash"
+                    title="Trash"
+                    className={activeRoute === "trash" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
+                    onClick={() => onRouteChange(activeRoute === "trash" ? "workspace" : "trash")}
+                    disabled={!canManageWorkspace}
+                  >
+                    <Icon name="trash" />
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeRoute === "sync"}
+                    aria-label="Sync"
+                    title="Sync"
+                    className={activeRoute === "sync" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
+                    onClick={() => onRouteChange(activeRoute === "sync" ? "workspace" : "sync")}
+                  >
+                    <Icon name="sync" />
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeRoute === "settings"}
+                    aria-label="Settings"
+                    title="Settings"
+                    className={activeRoute === "settings" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
+                    onClick={() => onRouteChange(activeRoute === "settings" ? "workspace" : "settings")}
+                  >
+                    <Icon name="settings" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Collapse sidebar"
+                    aria-label="Collapse sidebar"
+                    onClick={onToggleSidebarCollapse}
+                  >
+                    <Icon name="chevron-left" size={16} />
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            {workspaceError ? <p className="workspace-error">{workspaceError}</p> : null}
+
+            {activeRoute === "trash" ? (
+              <section className="sidebar-panel trash-panel" aria-label="Trash items">
+                <h2>Trash</h2>
+                {trashEntries.length === 0 ? <p>Trash is empty.</p> : (
+                  <ol>
+                    {trashEntries.map((entry) => (
+                      <li key={entry.id}>
+                        <span>{entry.originalRelativePath}</span>
+                        <small>{new Date(entry.deletedAt).toLocaleString()}</small>
+                        <button type="button" onClick={() => onRestoreTrashItem(entry.id)}>
+                          Restore
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+            ) : activeRoute === "sync" ? (
+              <section className="sidebar-panel" aria-label="Sync workspace">
+                <SyncWorkspacePanel
+                  canManageWorkspace={canManageWorkspace}
+                  statusLabel={statusLabel}
+                  workspaceName={workspaceName}
+                  onSyncWorkspace={onSyncWorkspace}
+                  githubRemote={githubRemote}
+                  advancedGit={advancedGit}
+                  syncEvents={syncEvents}
+                  githubAuth={githubAuth}
+                  onRefreshAdvancedGit={onRefreshAdvancedGit}
+                  onConnectGitHubRemote={onConnectGitHubRemote}
+                  conflictedFiles={conflictedFiles}
+                  onResolveConflict={onResolveConflict}
+                  onEditConflictManually={onEditConflictManually}
                 />
-              </label>
-              {globalSearchResults.length > 0 ? (
-                <ol className="global-search__results" aria-label="Global Search results">
-                  {globalSearchResults.map((result) => (
-                    <li key={`${result.notePath}:${result.lineNumber}:${result.matchStart}`}>
-                      <button
-                        type="button"
-                        aria-label={`${result.notePath} line ${result.lineNumber}: ${result.lineText}`}
-                        onClick={() => onSelectGlobalSearchResult(result)}
-                      >
-                        <span>{result.notePath}</span>
-                        <small>
-                          Line {result.lineNumber}: {result.lineText}
-                        </small>
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
-            </div>
-            {workspaceTree.length > 0 ? (
-              <WorkspaceTree
-                items={workspaceTree}
-                activeNotePath={activeNotePath}
-                activeFolderPath={activeFolderPath}
-                openFolderPaths={openFolderPaths}
-                onToggleFolder={onToggleFolder}
-                onSelectFolder={onSelectFolder}
-                onSelectNote={onSelectNote}
-                onItemContextMenu={(event, kind, path) => {
-                  event.preventDefault();
-                  if (kind === "folder") {
-                    onSelectFolder(path);
-                  } else {
-                    onSelectNote(path);
-                  }
-                  setTreeContextMenu({ x: event.clientX, y: event.clientY, kind });
-                }}
-                onMoveItem={onMoveItem}
-                dragOverFolder={dragOverFolder}
-                onDragOverFolder={setDragOverFolder}
-                isRoot
+              </section>
+            ) : activeRoute === "settings" ? (
+              <GitHubAuthenticationPanel
+                githubAuth={githubAuth}
+                onBeginDeviceFlow={onBeginGitHubDeviceFlow}
+                onCheckDeviceFlow={onCheckGitHubDeviceFlow}
+                onStorePersonalAccessToken={onStoreGitHubPersonalAccessToken}
+                onDisconnect={onDisconnectGitHub}
               />
             ) : (
-              <p className="empty-tree">
-                {hasOpenWorkspace ? "This Workspace has no Markdown notes yet." : "Open a Workspace to show Markdown notes."}
-              </p>
-            )}
+              <>
+                <div className="tree-controls">
+                  <button
+                    type="button"
+                    className="tree-controls__icon-button"
+                    aria-label="Workspace Tree Mode"
+                    aria-pressed={treeMode === "accordion"}
+                    title={
+                      treeMode === "accordion"
+                        ? "Tree mode: Accordion (opening a folder collapses its siblings). Click for Free mode."
+                        : "Tree mode: Free (opening a folder never collapses others). Click for Accordion mode."
+                    }
+                    onClick={() => onTreeModeChange(treeMode === "accordion" ? "free" : "accordion")}
+                    disabled={!canManageWorkspace}
+                  >
+                    <Icon name="tree-mode" size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="tree-controls__icon-button"
+                    aria-label="Focus Active Note"
+                    title="Focus Active Note: collapse everything except the path to the note you're editing."
+                    onClick={onFocusActiveNote}
+                    disabled={activeNotePath === null}
+                  >
+                    <Icon name="target" size={16} />
+                  </button>
+                </div>
+                <div className="global-search" role="search" aria-label="Global Search">
+                  <label className="global-search__field">
+                    <Icon name="search" />
+                    <input
+                      ref={globalSearchInputRef}
+                      type="search"
+                      aria-label="Global Search"
+                      placeholder="Buscar en todos los archivos..."
+                      value={globalSearchQuery}
+                      onChange={(event) => onGlobalSearchChange(event.target.value)}
+                      disabled={!canManageWorkspace}
+                    />
+                  </label>
+                  {globalSearchResults.length > 0 ? (
+                    <ol className="global-search__results" aria-label="Global Search results">
+                      {globalSearchResults.map((result) => (
+                        <li key={`${result.notePath}:${result.lineNumber}:${result.matchStart}`}>
+                          <button
+                            type="button"
+                            aria-label={`${result.notePath} line ${result.lineNumber}: ${result.lineText}`}
+                            onClick={() => onSelectGlobalSearchResult(result)}
+                          >
+                            <span>{result.notePath}</span>
+                            <small>
+                              Line {result.lineNumber}: {result.lineText}
+                            </small>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : null}
+                </div>
+                {workspaceTree.length > 0 ? (
+                  <WorkspaceTree
+                    items={workspaceTree}
+                    activeNotePath={activeNotePath}
+                    activeFolderPath={activeFolderPath}
+                    openFolderPaths={openFolderPaths}
+                    onToggleFolder={onToggleFolder}
+                    onSelectFolder={onSelectFolder}
+                    onSelectNote={onSelectNote}
+                    onItemContextMenu={(event, kind, path) => {
+                      event.preventDefault();
+                      if (kind === "folder") {
+                        onSelectFolder(path);
+                      } else {
+                        onSelectNote(path);
+                      }
+                      setTreeContextMenu({ x: event.clientX, y: event.clientY, kind });
+                    }}
+                    onMoveItem={onMoveItem}
+                    dragOverFolder={dragOverFolder}
+                    onDragOverFolder={setDragOverFolder}
+                    isRoot
+                  />
+                ) : (
+                  <p className="empty-tree">
+                    {hasOpenWorkspace ? "This Workspace has no Markdown notes yet." : "Open a Workspace to show Markdown notes."}
+                  </p>
+                )}
 
-            <div className="tree-actions" aria-label="Workspace actions">
-              <button type="button" title="New folder" aria-label="New folder" onClick={onCreateFolder} disabled={!canManageWorkspace}>
-                <Icon name="folder-plus" />
-              </button>
-              <button type="button" title="New note" aria-label="New note" onClick={onCreateNote} disabled={!canManageWorkspace}>
-                <Icon name="note-plus" />
-              </button>
-              <button
-                type="button"
-                title="Rename"
-                aria-label="Rename"
-                onClick={onRenameSelection}
-                disabled={!canManageWorkspace || !hasSelection}
-              >
-                <Icon name="rename" />
-              </button>
-              <button
-                type="button"
-                title="Move"
-                aria-label="Move"
-                onClick={onMoveActiveNote}
-                disabled={!canManageWorkspace || activeNotePath === null}
-              >
-                <Icon name="move" />
-              </button>
-              <button
-                type="button"
-                title="Delete"
-                aria-label="Delete"
-                onClick={onDeleteSelection}
-                disabled={!canManageWorkspace || !hasSelection}
-              >
-                <Icon name="trash" />
-              </button>
-            </div>
+                <div className="tree-actions" aria-label="Workspace actions">
+                  <button type="button" title="New folder" aria-label="New folder" onClick={onCreateFolder} disabled={!canManageWorkspace}>
+                    <Icon name="folder-plus" />
+                  </button>
+                  <button type="button" title="New note" aria-label="New note" onClick={onCreateNote} disabled={!canManageWorkspace}>
+                    <Icon name="note-plus" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Rename"
+                    aria-label="Rename"
+                    onClick={onRenameSelection}
+                    disabled={!canManageWorkspace || !hasSelection}
+                  >
+                    <Icon name="rename" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Move"
+                    aria-label="Move"
+                    onClick={onMoveActiveNote}
+                    disabled={!canManageWorkspace || activeNotePath === null}
+                  >
+                    <Icon name="move" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Delete"
+                    aria-label="Delete"
+                    onClick={onDeleteSelection}
+                    disabled={!canManageWorkspace || !hasSelection}
+                  >
+                    <Icon name="trash" />
+                  </button>
+                </div>
+              </>
+            )}
           </>
         )}
       </aside>
