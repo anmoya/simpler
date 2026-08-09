@@ -699,6 +699,8 @@ describe("ClassicShell", () => {
       canManageWorkspace: true,
     });
 
+    await user.keyboard("{Control>}f{/Control}");
+
     await user.type(screen.getByRole("searchbox", { name: "Search current note" }), "needle");
 
     expect(screen.getByText("1 of 2")).toBeInTheDocument();
@@ -710,6 +712,78 @@ describe("ClassicShell", () => {
     await user.click(screen.getByRole("button", { name: "Previous current-note match" }));
 
     expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
+  it("hides the current-note search by default and opens/focuses it with Ctrl/Cmd+F", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      activeNotePath: "daily/today.md",
+      activeFolderPath: "daily",
+      noteContent: "alpha\nneedle one",
+      canManageWorkspace: true,
+    });
+
+    expect(screen.queryByRole("search", { name: "Current note search" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Control>}f{/Control}");
+
+    const searchInput = screen.getByRole("searchbox", { name: "Search current note" });
+    expect(searchInput).toBeInTheDocument();
+    expect(searchInput).toHaveFocus();
+  });
+
+  it("closes the current-note search on Esc and returns focus to the editor", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      activeNotePath: "daily/today.md",
+      activeFolderPath: "daily",
+      noteContent: "alpha\nneedle one",
+      canManageWorkspace: true,
+    });
+
+    await user.keyboard("{Control>}f{/Control}");
+    expect(screen.getByRole("searchbox", { name: "Search current note" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("search", { name: "Current note search" })).not.toBeInTheDocument();
+  });
+
+  it("preserves the current-note search query across hide and reopen", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      activeNotePath: "daily/today.md",
+      activeFolderPath: "daily",
+      noteContent: "alpha\nneedle one\nbeta\nneedle two",
+      canManageWorkspace: true,
+    });
+
+    await user.keyboard("{Control>}f{/Control}");
+    await user.type(screen.getByRole("searchbox", { name: "Search current note" }), "needle");
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("search", { name: "Current note search" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Control>}f{/Control}");
+    expect(screen.getByRole("searchbox", { name: "Search current note" })).toHaveValue("needle");
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
+  it("does nothing on Ctrl/Cmd+F when no note is open", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      activeNotePath: null,
+      canManageWorkspace: true,
+    });
+
+    await user.keyboard("{Control>}f{/Control}");
+
+    expect(screen.queryByRole("search", { name: "Current note search" })).not.toBeInTheDocument();
   });
 
   it("shows Global Search results with file and line references", async () => {
