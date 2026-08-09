@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import type { AppRoute } from "../app/routes";
 import type {
   CloseSyncPromptState,
@@ -205,6 +205,9 @@ export function ClassicShell({
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [fileSearchQuery, setFileSearchQuery] = useState("");
   const [activeFileMatchIndex, setActiveFileMatchIndex] = useState(0);
+  const [isFileSearchOpen, setIsFileSearchOpen] = useState(false);
+  const fileSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const editorContainerRef = useRef<HTMLElement | null>(null);
   const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; kind: "folder" | "note" } | null>(
     null,
   );
@@ -338,6 +341,20 @@ export function ClassicShell({
   }, [activeNotePath, fileSearchQuery]);
 
   useEffect(() => {
+    if (isFileSearchOpen) {
+      const input = fileSearchInputRef.current;
+      input?.focus();
+      input?.select();
+    }
+  }, [isFileSearchOpen]);
+
+  useEffect(() => {
+    if (!activeNotePath) {
+      setIsFileSearchOpen(false);
+    }
+  }, [activeNotePath]);
+
+  useEffect(() => {
     if (!treeContextMenu) {
       return;
     }
@@ -406,6 +423,14 @@ export function ClassicShell({
         return;
       }
 
+      if (hasCommandModifier && event.key.toLowerCase() === "f") {
+        if (activeNotePath) {
+          event.preventDefault();
+          setIsFileSearchOpen(true);
+        }
+        return;
+      }
+
       if (hasCommandModifier && event.key.toLowerCase() === "m") {
         if (runAvailableCommand("move-note")) {
           event.preventDefault();
@@ -459,12 +484,17 @@ export function ClassicShell({
         setIsCommandPaletteOpen(false);
         setIsCommandHelpOpen(false);
         setIsWorkspaceMenuOpen(false);
+        if (isFileSearchOpen) {
+          setIsFileSearchOpen(false);
+          const editorElement = editorContainerRef.current?.querySelector<HTMLElement>(".cm-content");
+          editorElement?.focus();
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [availableCommands]);
+  }, [availableCommands, isFileSearchOpen]);
 
   const runCommand = (command: ShellCommand) => {
     command.run();
@@ -742,8 +772,10 @@ export function ClassicShell({
       <main className="editor-pane" aria-label="Markdown editor area">
         <div className="editor-toolbar">
           <Breadcrumb folderPath={activeFolderPath} notePath={activeNotePath} />
+          {isFileSearchOpen ? (
           <div className="file-search" role="search" aria-label="Current note search">
             <input
+              ref={fileSearchInputRef}
               type="search"
               aria-label="Search current note"
               value={fileSearchQuery}
@@ -774,6 +806,7 @@ export function ClassicShell({
               <Icon name="chevron-down" />
             </button>
           </div>
+          ) : null}
           <div className="editor-toolbar__actions">
             <button
               type="button"
@@ -805,7 +838,7 @@ export function ClassicShell({
         </div>
 
         <div className={noteHistoryOpen ? "editor-body editor-body--history" : "editor-body"}>
-        <section className="editor-surface" aria-label="Raw Markdown editor">
+        <section className="editor-surface" aria-label="Raw Markdown editor" ref={editorContainerRef}>
           {editorError ? (
             <EditorErrorState error={editorError} notePath={activeNotePath} />
           ) : activeNotePath ? (
