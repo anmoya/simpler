@@ -64,6 +64,10 @@ button {
   zoom: var(--ui-zoom, 1);
 }
 
+.app-shell[data-sidebar="collapsed"] {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
 /*
  * Theme tokens are keyed by two independent attributes: data-theme (the
  * named Theme — colors, typography, shape) and data-mode (the Appearance
@@ -181,9 +185,60 @@ button {
   grid-row: 2 / 4;
   display: flex;
   min-width: 0;
+  /* Grid items default to min-height: auto, which lets their intrinsic
+     content height (header + controls + search + tree + tree-actions)
+     ignore the row's actual available height and spill past it instead of
+     shrinking — that's what made .tree-actions visually overlap whatever
+     rendered below the sidebar at narrow/short viewports. min-height: 0
+     lets this flex column actually shrink to its grid track, so the
+     internal .note-tree (flex: 1; min-height: 0; overflow: auto) scrolls
+     instead of the whole sidebar overflowing its box. */
+  min-height: 0;
   flex-direction: column;
   border-right: 1px solid var(--color-border-subtle);
   background: var(--color-sidebar);
+}
+
+.sidebar--collapsed {
+  width: 56px;
+}
+
+.sidebar-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px;
+}
+
+.sidebar-rail button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-muted);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.sidebar-rail button:hover:not(:disabled) {
+  border-color: var(--color-border);
+  background: var(--color-control);
+  color: var(--color-text);
+}
+
+.sidebar-rail button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.sidebar-rail__expand {
+  margin-top: auto;
 }
 
 .sidebar__header {
@@ -414,6 +469,37 @@ button {
   padding: 16px;
 }
 
+.trash-panel {
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.trash-panel h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.trash-panel ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trash-panel li {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.trash-panel small {
+  color: var(--color-muted);
+}
+
 .tree-actions {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -537,6 +623,14 @@ button {
   align-items: center;
 }
 
+.note-tree__folder-row--active-path > .note-tree__folder {
+  color: var(--color-accent);
+}
+
+.note-tree__folder-row--active-path > .note-tree__folder .note-tree__label .icon {
+  color: var(--color-accent);
+}
+
 .note-tree__toggle {
   display: grid;
   flex: 0 0 24px;
@@ -629,6 +723,13 @@ button {
   color: var(--color-error);
 }
 
+.attachment-error {
+  margin: 0;
+  padding: 8px 16px;
+  color: var(--color-error);
+  font-size: var(--font-size-body);
+}
+
 .editor-pane {
   display: grid;
   min-width: 0;
@@ -713,6 +814,101 @@ button {
   padding: 24px 32px;
   font-family: var(--font-family-mono);
   line-height: 1.6;
+}
+
+.editor-body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.editor-body--history {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 36%);
+}
+
+.note-history {
+  min-width: 0;
+  overflow: auto;
+  padding: 18px;
+  border-left: 1px solid var(--color-border-subtle);
+  background: var(--color-sidebar);
+}
+
+.note-history__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.note-history__header h2 {
+  margin: 0;
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-body);
+}
+
+.note-history__header button,
+.note-history__entry,
+.note-history__restore {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-control);
+  color: var(--color-text);
+}
+
+.note-history__header button {
+  display: grid;
+  place-items: center;
+  padding: 6px;
+}
+
+.note-history__entries {
+  display: grid;
+  gap: 6px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.note-history__entry {
+  display: grid;
+  width: 100%;
+  gap: 3px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.note-history__entry time {
+  color: var(--color-muted);
+  font-size: var(--font-size-meta);
+}
+
+.note-history__entry--selected {
+  border-color: var(--color-accent);
+  background: var(--color-active);
+}
+
+.note-history__preview {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.note-history__preview pre {
+  max-height: 45vh;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-editor);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.note-history__restore {
+  justify-self: start;
+  padding: 8px 12px;
 }
 
 .markdown-editor {
@@ -1065,6 +1261,20 @@ button {
     max-height: 42vh;
     border-right: 0;
     border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  .sidebar--collapsed {
+    max-height: none;
+  }
+
+  .sidebar-rail {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .sidebar-rail__expand {
+    margin-top: 0;
+    margin-left: auto;
   }
 
   .editor-toolbar {

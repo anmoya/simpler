@@ -52,6 +52,10 @@ _Avoid_: Documentation page, tutorial
 Plain-text search across Markdown files in the active workspace, returning matching files and line references.
 _Avoid_: Semantic search, fuzzy finder
 
+**Attachment**:
+An image file brought into the Workspace by pasting or dropping it into a note, stored as a real file in an `assets/` folder beside that note and referenced from the note as Standard Markdown. The note keeps a plain relative reference; nothing is embedded in the Markdown itself.
+_Avoid_: Embed, upload, media library
+
 **Local Save**:
 Persisting note changes to files inside the workspace without requiring network access or Git operations.
 _Avoid_: Sync, publish, backup

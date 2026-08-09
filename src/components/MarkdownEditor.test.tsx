@@ -1,9 +1,306 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { MarkdownEditor } from "./MarkdownEditor";
+import { readClipboardImage, saveAttachment } from "../native/commands";
+
+vi.mock("../native/commands", () => ({
+  saveAttachment: vi.fn(),
+  readClipboardImage: vi.fn(),
+  importAttachment: vi.fn(),
+}));
+
+
+function makeImageFile(name = "screenshot.png", type = "image/png") {
+  return new File(["fake-image-bytes"], name, { type });
+}
 
 describe("MarkdownEditor", () => {
+  beforeEach(() => {
+    vi.mocked(saveAttachment).mockReset();
+    vi.mocked(readClipboardImage).mockReset();
+  });
+
+  describe("pasting an image via Ctrl+V (system clipboard)", () => {
+    it("reads the clipboard image natively and inserts a Markdown image reference", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: null,
+        data: { contentBase64: "ZmFrZS1pbWFnZS1ieXRlcw==", mimeType: "image/png" },
+      });
+      vi.mocked(saveAttachment).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "save-attachment",
+        error: null,
+        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+      });
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(readClipboardImage).toHaveBeenCalled();
+        expect(saveAttachment).toHaveBeenCalledWith(
+          "/workspace",
+          "daily",
+          expect.stringMatching(/^\d{4}-\d{2}-\d{2}-\d{6}\.png$/),
+          "ZmFrZS1pbWFnZS1ieXRlcw==",
+        );
+      });
+
+      await waitFor(() => {
+        expect(editable.textContent).toContain("![](assets/2026-08-08-143022.png)");
+      });
+    });
+
+    it("falls back to clipboard text when there is no clipboard image", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: false,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: "clipboard does not contain an image",
+        data: null,
+      });
+      const readText = vi.fn().mockResolvedValue("pasted text");
+      Object.defineProperty(navigator, "clipboard", {
+        value: { readText },
+        configurable: true,
+      });
+
+      const onChange = vi.fn();
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value=""
+          onChange={onChange}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(saveAttachment).not.toHaveBeenCalled();
+        expect(onChange).toHaveBeenCalledWith("pasted text");
+      });
+    });
+
+    it("reports a failed clipboard-image save through onAttachmentError", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: null,
+        data: { contentBase64: "ZmFrZQ==", mimeType: "image/png" },
+      });
+      vi.mocked(saveAttachment).mockRejectedValue(new Error("disk full"));
+      const onAttachmentError = vi.fn();
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+          onAttachmentError={onAttachmentError}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(onAttachmentError).toHaveBeenCalledWith(
+          expect.stringContaining("Could not save the pasted image"),
+        );
+      });
+    });
+
+    // The native commands resolve with `ok: false` rather than throwing, so
+    // this — not the rejected promise above — is where failures used to vanish.
+    it("reports a save the native command refused, not just a rejected promise", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: null,
+        data: { contentBase64: "ZmFrZQ==", mimeType: "image/png" },
+      });
+      vi.mocked(saveAttachment).mockResolvedValue({
+        ok: false,
+        domain: "filesystem",
+        action: "save-attachment",
+        error: "permission denied",
+        data: null,
+      });
+      const onAttachmentError = vi.fn();
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+          onAttachmentError={onAttachmentError}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(onAttachmentError).toHaveBeenCalledWith(
+          expect.stringContaining("Could not save the pasted image"),
+        );
+      });
+      expect(editable.textContent).not.toContain("![](");
+    });
+
+    it("clears a previous attachment failure once a save succeeds", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: null,
+        data: { contentBase64: "ZmFrZQ==", mimeType: "image/png" },
+      });
+      vi.mocked(saveAttachment)
+        .mockResolvedValueOnce({
+          ok: false,
+          domain: "filesystem",
+          action: "save-attachment",
+          error: "permission denied",
+          data: null,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          domain: "filesystem",
+          action: "save-attachment",
+          error: null,
+          data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+        });
+      const onAttachmentError = vi.fn();
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+          onAttachmentError={onAttachmentError}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+      await waitFor(() => expect(onAttachmentError).toHaveBeenCalledWith(expect.any(String)));
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+      await waitFor(() => expect(onAttachmentError).toHaveBeenLastCalledWith(null));
+    });
+  });
+
+  describe("pasting an image", () => {
+    it("saves the image and inserts a Markdown image reference at the cursor", async () => {
+      vi.mocked(saveAttachment).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "save-attachment",
+        error: null,
+        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+      });
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      const file = makeImageFile();
+      fireEvent.paste(editable, {
+        clipboardData: { files: [file], items: [], types: ["Files"] },
+      });
+
+      await waitFor(() => {
+        expect(saveAttachment).toHaveBeenCalledWith(
+          "/workspace",
+          "daily",
+          expect.stringMatching(/^\d{4}-\d{2}-\d{2}-\d{6}\.png$/),
+          expect.any(String),
+        );
+      });
+
+      await waitFor(() => {
+        expect(editable.textContent).toContain("![](assets/2026-08-08-143022.png)");
+      });
+    });
+
+    it("leaves plain text pasting unaffected", async () => {
+      const onChange = vi.fn();
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value=""
+          onChange={onChange}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.paste(editable, {
+        clipboardData: { files: [], items: [], types: ["text/plain"], getData: () => "pasted text" },
+      });
+
+      expect(saveAttachment).not.toHaveBeenCalled();
+    });
+  });
+
+  // There is no test here for the file-manager drop. It arrives on Tauri's
+  // window-level channel, which jsdom cannot produce: a synthetic event would
+  // only re-assert our own logic and would pass with the feature inoperative,
+  // which is exactly how this feature was closed twice while broken. The
+  // parsing is covered in `attachments/droppedImagePath.test.ts`, the
+  // coordinate translation in `attachments/nativeDropChannel.test.ts`, and the
+  // channel itself by a real drag (see the drag-and-drop spec).
+
   it("renders the note's raw Markdown content with line numbers", () => {
     render(<MarkdownEditor notePath="daily/today.md" value={"# Today\n\nBody"} onChange={() => undefined} />);
 
@@ -60,5 +357,72 @@ describe("MarkdownEditor", () => {
     const activeLine = editor.querySelector(".cm-activeLine");
 
     expect(activeLine?.textContent).toBe("needle line");
+  });
+
+  describe("list continuation on Enter", () => {
+    it.each([
+      ["- foo", "- foo\n- "],
+      ["* foo", "* foo\n* "],
+      ["+ foo", "+ foo\n+ "],
+      ["1. foo", "1. foo\n2. "],
+      ["9. foo", "9. foo\n10. "],
+    ])("continues %s onto a new marker line", async (initial, expected) => {
+      const onChange = vi.fn();
+      render(<MarkdownEditor notePath="daily/today.md" value={initial} onChange={onChange} />);
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      await userEvent.type(editable, "{End}{Enter}");
+
+      expect(onChange).toHaveBeenCalledWith(expected);
+    });
+
+    it("keeps default Enter behavior in the middle of a non-list line", async () => {
+      const onChange = vi.fn();
+      render(<MarkdownEditor notePath="daily/today.md" value="plain text" onChange={onChange} />);
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      await userEvent.type(editable, "{Home}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}{Enter}");
+
+      expect(onChange).toHaveBeenCalledWith("plain\ntext");
+    });
+
+    it.each([
+      ["- [ ] foo", "- [ ] foo\n- [ ] "],
+      ["- [x] foo", "- [x] foo\n- [ ] "],
+    ])("continues checklist item %s as unchecked", async (initial, expected) => {
+      const onChange = vi.fn();
+      render(<MarkdownEditor notePath="daily/today.md" value={initial} onChange={onChange} />);
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      await userEvent.type(editable, "{End}{Enter}");
+
+      expect(onChange).toHaveBeenCalledWith(expected);
+    });
+
+    it.each([
+      ["- ", ""],
+      ["1. ", ""],
+      ["- [ ] ", ""],
+    ])("exits the list when Enter is pressed on an empty %s item", async (initial, expected) => {
+      const onChange = vi.fn();
+      render(<MarkdownEditor notePath="daily/today.md" value={initial} onChange={onChange} />);
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      await userEvent.type(editable, "{End}{Enter}");
+
+      expect(onChange).toHaveBeenCalledWith(expected);
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from "react";
 import type { AppRoute } from "../app/routes";
 import type {
   CloseSyncPromptState,
@@ -13,9 +13,10 @@ import type {
   WorkspaceTreeItem,
 } from "../app/appState";
 import { uiZoomSteps, defaultUiZoom } from "../app/appState";
-import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult } from "../native/commands";
+import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { MarkdownEditor } from "./MarkdownEditor";
+import { NoteHistoryPanel } from "./NoteHistoryPanel";
 import { Icon } from "./icons";
 import { GitHubConnectionWizard } from "./GitHubConnectionWizard";
 
@@ -42,9 +43,19 @@ export interface ClassicShellProps {
   activeNotePath: string | null;
   activeFolderPath: string;
   noteContent: string;
+  noteHistoryOpen: boolean;
+  noteHistoryEntries: NoteHistoryEntry[];
+  selectedNoteHistoryCommitId: string | null;
+  noteHistoryPreview: string | null;
+  noteHistoryLoading: boolean;
+  noteHistoryError: string | null;
   themeMode: ThemeMode;
   uiZoom: UiZoom;
+  sidebarCollapsed: boolean;
+  onToggleSidebarCollapse: () => void;
   editorError: EditorError | null;
+  attachmentError: string | null;
+  onAttachmentError: (message: string | null) => void;
   canManageWorkspace: boolean;
   onOpenWorkspace: () => void;
   onCloneGitHubRepository: () => void;
@@ -59,11 +70,17 @@ export interface ClassicShellProps {
   onFocusActiveNote: () => void;
   onNavigateToNote: (notePath: string) => void;
   onNoteChange: (content: string) => void;
+  onOpenNoteHistory: () => void;
+  onCloseNoteHistory: () => void;
+  onSelectNoteHistoryEntry: (entry: NoteHistoryEntry) => void;
+  onRestoreNoteHistoryEntry: () => void;
   onCreateFolder: () => void;
   onCreateNote: () => void;
   onRenameSelection: () => void;
   onMoveActiveNote: () => void;
   onDeleteSelection: () => void;
+  trashEntries: TrashEntry[];
+  onRestoreTrashItem: (id: string) => void;
   onMoveItem: (itemPath: string, targetFolderPath: string) => void;
   onSyncWorkspace: () => void;
   githubRemote: GitHubRemote | null;
@@ -118,9 +135,19 @@ export function ClassicShell({
   activeNotePath,
   activeFolderPath,
   noteContent,
+  noteHistoryOpen,
+  noteHistoryEntries,
+  selectedNoteHistoryCommitId,
+  noteHistoryPreview,
+  noteHistoryLoading,
+  noteHistoryError,
   themeMode,
   uiZoom,
+  sidebarCollapsed,
+  onToggleSidebarCollapse,
   editorError,
+  attachmentError,
+  onAttachmentError,
   canManageWorkspace,
   onOpenWorkspace,
   onCloneGitHubRepository,
@@ -135,11 +162,17 @@ export function ClassicShell({
   onFocusActiveNote,
   onNavigateToNote,
   onNoteChange,
+  onOpenNoteHistory,
+  onCloseNoteHistory,
+  onSelectNoteHistoryEntry,
+  onRestoreNoteHistoryEntry,
   onCreateFolder,
   onCreateNote,
   onRenameSelection,
   onMoveActiveNote,
   onDeleteSelection,
+  trashEntries,
+  onRestoreTrashItem,
   onMoveItem,
   onSyncWorkspace,
   githubRemote,
@@ -183,10 +216,15 @@ export function ClassicShell({
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [fileSearchQuery, setFileSearchQuery] = useState("");
   const [activeFileMatchIndex, setActiveFileMatchIndex] = useState(0);
+  const [isFileSearchOpen, setIsFileSearchOpen] = useState(false);
+  const fileSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const editorContainerRef = useRef<HTMLElement | null>(null);
   const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; kind: "folder" | "note" } | null>(
     null,
   );
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [focusSearchOnExpand, setFocusSearchOnExpand] = useState(false);
+  const globalSearchInputRef = useRef<HTMLInputElement>(null);
   const hasSelection = activeNotePath !== null || activeFolderPath !== "";
   const hasOpenWorkspace = canManageWorkspace;
   const hasNotes = workspaceTreeHasNotes(workspaceTree);
@@ -307,6 +345,13 @@ export function ClassicShell({
         available: true,
         run: () => setIsCommandHelpOpen(true),
       },
+      {
+        id: "toggle-sidebar",
+        label: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar",
+        shortcut: "Ctrl/Cmd+B",
+        available: true,
+        run: onToggleSidebarCollapse,
+      },
       ...workspaceNotePaths(workspaceTree).map((notePath) => ({
         id: `open-note:${notePath}`,
         label: `Open note: ${notePath}`,
@@ -334,6 +379,8 @@ export function ClassicShell({
       onThemeChange,
       onUiZoomChange,
       uiZoom,
+      onToggleSidebarCollapse,
+      sidebarCollapsed,
       workspaceTree,
     ],
   );
@@ -342,6 +389,27 @@ export function ClassicShell({
   useEffect(() => {
     setActiveFileMatchIndex(0);
   }, [activeNotePath, fileSearchQuery]);
+
+  useEffect(() => {
+    if (!sidebarCollapsed && focusSearchOnExpand) {
+      globalSearchInputRef.current?.focus();
+      setFocusSearchOnExpand(false);
+    }
+  }, [sidebarCollapsed, focusSearchOnExpand]);
+
+  useEffect(() => {
+    if (isFileSearchOpen) {
+      const input = fileSearchInputRef.current;
+      input?.focus();
+      input?.select();
+    }
+  }, [isFileSearchOpen]);
+
+  useEffect(() => {
+    if (!activeNotePath) {
+      setIsFileSearchOpen(false);
+    }
+  }, [activeNotePath]);
 
   useEffect(() => {
     if (!treeContextMenu) {
@@ -412,8 +480,23 @@ export function ClassicShell({
         return;
       }
 
+      if (hasCommandModifier && event.key.toLowerCase() === "f") {
+        if (activeNotePath) {
+          event.preventDefault();
+          setIsFileSearchOpen(true);
+        }
+        return;
+      }
+
       if (hasCommandModifier && event.key.toLowerCase() === "m") {
         if (runAvailableCommand("move-note")) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (hasCommandModifier && event.key.toLowerCase() === "b") {
+        if (runAvailableCommand("toggle-sidebar")) {
           event.preventDefault();
         }
         return;
@@ -486,12 +569,17 @@ export function ClassicShell({
         setIsCommandPaletteOpen(false);
         setIsCommandHelpOpen(false);
         setIsWorkspaceMenuOpen(false);
+        if (isFileSearchOpen) {
+          setIsFileSearchOpen(false);
+          const editorElement = editorContainerRef.current?.querySelector<HTMLElement>(".cm-content");
+          editorElement?.focus();
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [availableCommands]);
+  }, [availableCommands, isFileSearchOpen]);
 
   const runCommand = (command: ShellCommand) => {
     command.run();
@@ -515,6 +603,7 @@ export function ClassicShell({
       className="app-shell"
       data-theme="warm"
       data-mode={themeMode}
+      data-sidebar={sidebarCollapsed ? "collapsed" : "expanded"}
       style={{ "--ui-zoom": uiZoom / 100 } as CSSProperties}
     >
       <TitleBar
@@ -523,221 +612,301 @@ export function ClassicShell({
         onToggleMaximize={onToggleMaximizeWindow}
         onClose={onCloseWindow}
       />
-      <aside className="sidebar" aria-label="Workspace tree">
-        <header className="sidebar__header">
-          <div className="workspace-summary">
+      <aside
+        className={sidebarCollapsed ? "sidebar sidebar--collapsed" : "sidebar"}
+        aria-label="Workspace tree"
+      >
+        {sidebarCollapsed ? (
+          <div className="sidebar-rail" aria-label="Collapsed sidebar">
+            <button type="button" title="Open Workspace" aria-label="Open Workspace" onClick={onOpenWorkspace}>
+              <Icon name="folder" size={18} />
+            </button>
             <button
               type="button"
-              className="workspace-trigger"
-              aria-haspopup="menu"
-              aria-expanded={isWorkspaceMenuOpen}
-              onClick={() => setIsWorkspaceMenuOpen((current) => !current)}
+              title="Global Search"
+              aria-label="Focus Global Search"
+              onClick={() => {
+                setFocusSearchOnExpand(true);
+                onToggleSidebarCollapse();
+              }}
             >
-              <span className="workspace-trigger__text">
-                <strong>{workspaceName}</strong>
-                {workspacePath ? <small>{workspacePath}</small> : null}
-              </span>
-              <Icon name="chevron-down" />
+              <Icon name="search" size={18} />
             </button>
-            {isWorkspaceMenuOpen ? (
-              <WorkspaceMenu
-                recentWorkspaces={recentWorkspaces}
-                onSelectRecent={(workspacePath) => {
-                  onOpenRecentWorkspace(workspacePath);
-                  setIsWorkspaceMenuOpen(false);
-                }}
-                onOpenWorkspace={() => {
-                  onOpenWorkspace();
-                  setIsWorkspaceMenuOpen(false);
-                }}
-                onClose={() => setIsWorkspaceMenuOpen(false)}
-              />
-            ) : null}
-          </div>
-          <div className="sidebar__header-actions">
-            <button type="button" className="workspace-clone-link" onClick={onCloneGitHubRepository}>
-              <Icon name="git-branch" />
-              Clonar desde GitHub
+            <button
+              type="button"
+              title="Sync now"
+              aria-label="Sync now"
+              onClick={onSyncWorkspace}
+              disabled={!canManageWorkspace}
+            >
+              <Icon name="sync" size={18} />
             </button>
-            <div className="sidebar-tabs" role="tablist" aria-label="Sidebar panels">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeRoute === "sync"}
-                aria-label="Sync"
-                title="Sync"
-                className={activeRoute === "sync" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
-                onClick={() => onRouteChange(activeRoute === "sync" ? "workspace" : "sync")}
-              >
-                <Icon name="sync" />
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeRoute === "settings"}
-                aria-label="Settings"
-                title="Settings"
-                className={activeRoute === "settings" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
-                onClick={() => onRouteChange(activeRoute === "settings" ? "workspace" : "settings")}
-              >
-                <Icon name="settings" />
-              </button>
-            </div>
+            <button
+              type="button"
+              title="Expand sidebar"
+              aria-label="Expand sidebar"
+              className="sidebar-rail__expand"
+              onClick={onToggleSidebarCollapse}
+            >
+              <Icon name="chevron-right" size={18} />
+            </button>
           </div>
-        </header>
-
-        {workspaceError ? <p className="workspace-error">{workspaceError}</p> : null}
-
-        {activeRoute === "sync" ? (
-          <section className="sidebar-panel" aria-label="Sync workspace">
-            <SyncWorkspacePanel
-              canManageWorkspace={canManageWorkspace}
-              statusLabel={statusLabel}
-              workspaceName={workspaceName}
-              onSyncWorkspace={onSyncWorkspace}
-              githubRemote={githubRemote}
-              advancedGit={advancedGit}
-              syncEvents={syncEvents}
-              githubAuth={githubAuth}
-              onRefreshAdvancedGit={onRefreshAdvancedGit}
-              onConnectGitHubRemote={onConnectGitHubRemote}
-              conflictedFiles={conflictedFiles}
-              onResolveConflict={onResolveConflict}
-              onEditConflictManually={onEditConflictManually}
-            />
-          </section>
-        ) : activeRoute === "settings" ? (
-          <GitHubAuthenticationPanel
-            githubAuth={githubAuth}
-            onBeginDeviceFlow={onBeginGitHubDeviceFlow}
-            onCheckDeviceFlow={onCheckGitHubDeviceFlow}
-            onStorePersonalAccessToken={onStoreGitHubPersonalAccessToken}
-            onDisconnect={onDisconnectGitHub}
-          />
         ) : (
           <>
-            <div className="tree-controls">
-              <button
-                type="button"
-                className="tree-controls__icon-button"
-                aria-label="Workspace Tree Mode"
-                aria-pressed={treeMode === "accordion"}
-                title={
-                  treeMode === "accordion"
-                    ? "Tree mode: Accordion (opening a folder collapses its siblings). Click for Free mode."
-                    : "Tree mode: Free (opening a folder never collapses others). Click for Accordion mode."
-                }
-                onClick={() => onTreeModeChange(treeMode === "accordion" ? "free" : "accordion")}
-                disabled={!canManageWorkspace}
-              >
-                <Icon name="tree-mode" size={16} />
-              </button>
-              <button
-                type="button"
-                className="tree-controls__icon-button"
-                aria-label="Focus Active Note"
-                title="Focus Active Note: collapse everything except the path to the note you're editing."
-                onClick={onFocusActiveNote}
-                disabled={activeNotePath === null}
-              >
-                <Icon name="target" size={16} />
-              </button>
-            </div>
-            <div className="global-search" role="search" aria-label="Global Search">
-              <label className="global-search__field">
-                <Icon name="search" />
-                <input
-                  type="search"
-                  aria-label="Global Search"
-                  placeholder="Buscar en todos los archivos..."
-                  value={globalSearchQuery}
-                  onChange={(event) => onGlobalSearchChange(event.target.value)}
-                  disabled={!canManageWorkspace}
+            <header className="sidebar__header">
+              <div className="workspace-summary">
+                <button
+                  type="button"
+                  className="workspace-trigger"
+                  aria-haspopup="menu"
+                  aria-expanded={isWorkspaceMenuOpen}
+                  onClick={() => setIsWorkspaceMenuOpen((current) => !current)}
+                >
+                  <span className="workspace-trigger__text">
+                    <strong>{workspaceName}</strong>
+                    {workspacePath ? <small>{workspacePath}</small> : null}
+                  </span>
+                  <Icon name="chevron-down" />
+                </button>
+                {isWorkspaceMenuOpen ? (
+                  <WorkspaceMenu
+                    recentWorkspaces={recentWorkspaces}
+                    onSelectRecent={(workspacePath) => {
+                      onOpenRecentWorkspace(workspacePath);
+                      setIsWorkspaceMenuOpen(false);
+                    }}
+                    onOpenWorkspace={() => {
+                      onOpenWorkspace();
+                      setIsWorkspaceMenuOpen(false);
+                    }}
+                    onClose={() => setIsWorkspaceMenuOpen(false)}
+                  />
+                ) : null}
+              </div>
+              <div className="sidebar__header-actions">
+                <button type="button" className="workspace-clone-link" onClick={onCloneGitHubRepository}>
+                  <Icon name="git-branch" />
+                  Clonar desde GitHub
+                </button>
+                <div className="sidebar-tabs" role="tablist" aria-label="Sidebar panels">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeRoute === "trash"}
+                    aria-label="Trash"
+                    title="Trash"
+                    className={activeRoute === "trash" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
+                    onClick={() => onRouteChange(activeRoute === "trash" ? "workspace" : "trash")}
+                    disabled={!canManageWorkspace}
+                  >
+                    <Icon name="trash" />
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeRoute === "sync"}
+                    aria-label="Sync"
+                    title="Sync"
+                    className={activeRoute === "sync" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
+                    onClick={() => onRouteChange(activeRoute === "sync" ? "workspace" : "sync")}
+                  >
+                    <Icon name="sync" />
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={activeRoute === "settings"}
+                    aria-label="Settings"
+                    title="Settings"
+                    className={activeRoute === "settings" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
+                    onClick={() => onRouteChange(activeRoute === "settings" ? "workspace" : "settings")}
+                  >
+                    <Icon name="settings" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Collapse sidebar"
+                    aria-label="Collapse sidebar"
+                    onClick={onToggleSidebarCollapse}
+                  >
+                    <Icon name="chevron-left" size={16} />
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            {workspaceError ? <p className="workspace-error">{workspaceError}</p> : null}
+
+            {activeRoute === "trash" ? (
+              <section className="sidebar-panel trash-panel" aria-label="Trash items">
+                <h2>Trash</h2>
+                {trashEntries.length === 0 ? <p>Trash is empty.</p> : (
+                  <ol>
+                    {trashEntries.map((entry) => (
+                      <li key={entry.id}>
+                        <span>{entry.originalRelativePath}</span>
+                        <small>{new Date(entry.deletedAt).toLocaleString()}</small>
+                        <button type="button" onClick={() => onRestoreTrashItem(entry.id)}>
+                          Restore
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+            ) : activeRoute === "sync" ? (
+              <section className="sidebar-panel" aria-label="Sync workspace">
+                <SyncWorkspacePanel
+                  canManageWorkspace={canManageWorkspace}
+                  statusLabel={statusLabel}
+                  workspaceName={workspaceName}
+                  onSyncWorkspace={onSyncWorkspace}
+                  githubRemote={githubRemote}
+                  advancedGit={advancedGit}
+                  syncEvents={syncEvents}
+                  githubAuth={githubAuth}
+                  onRefreshAdvancedGit={onRefreshAdvancedGit}
+                  onConnectGitHubRemote={onConnectGitHubRemote}
+                  conflictedFiles={conflictedFiles}
+                  onResolveConflict={onResolveConflict}
+                  onEditConflictManually={onEditConflictManually}
                 />
-              </label>
-              {globalSearchResults.length > 0 ? (
-                <ol className="global-search__results" aria-label="Global Search results">
-                  {globalSearchResults.map((result) => (
-                    <li key={`${result.notePath}:${result.lineNumber}:${result.matchStart}`}>
-                      <button
-                        type="button"
-                        aria-label={`${result.notePath} line ${result.lineNumber}: ${result.lineText}`}
-                        onClick={() => onSelectGlobalSearchResult(result)}
-                      >
-                        <span>{result.notePath}</span>
-                        <small>
-                          Line {result.lineNumber}: {result.lineText}
-                        </small>
-                      </button>
-                    </li>
-                  ))}
-                </ol>
-              ) : null}
-            </div>
-            {workspaceTree.length > 0 ? (
-              <WorkspaceTree
-                items={workspaceTree}
-                activeNotePath={activeNotePath}
-                activeFolderPath={activeFolderPath}
-                openFolderPaths={openFolderPaths}
-                onToggleFolder={onToggleFolder}
-                onSelectFolder={onSelectFolder}
-                onSelectNote={onSelectNote}
-                onItemContextMenu={(event, kind, path) => {
-                  event.preventDefault();
-                  if (kind === "folder") {
-                    onSelectFolder(path);
-                  } else {
-                    onSelectNote(path);
-                  }
-                  setTreeContextMenu({ x: event.clientX, y: event.clientY, kind });
-                }}
-                onMoveItem={onMoveItem}
-                dragOverFolder={dragOverFolder}
-                onDragOverFolder={setDragOverFolder}
-                isRoot
+              </section>
+            ) : activeRoute === "settings" ? (
+              <GitHubAuthenticationPanel
+                githubAuth={githubAuth}
+                onBeginDeviceFlow={onBeginGitHubDeviceFlow}
+                onCheckDeviceFlow={onCheckGitHubDeviceFlow}
+                onStorePersonalAccessToken={onStoreGitHubPersonalAccessToken}
+                onDisconnect={onDisconnectGitHub}
               />
             ) : (
-              <p className="empty-tree">
-                {hasOpenWorkspace ? "This Workspace has no Markdown notes yet." : "Open a Workspace to show Markdown notes."}
-              </p>
-            )}
+              <>
+                <div className="tree-controls">
+                  <button
+                    type="button"
+                    className="tree-controls__icon-button"
+                    aria-label="Workspace Tree Mode"
+                    aria-pressed={treeMode === "accordion"}
+                    title={
+                      treeMode === "accordion"
+                        ? "Tree mode: Accordion (opening a folder collapses its siblings). Click for Free mode."
+                        : "Tree mode: Free (opening a folder never collapses others). Click for Accordion mode."
+                    }
+                    onClick={() => onTreeModeChange(treeMode === "accordion" ? "free" : "accordion")}
+                    disabled={!canManageWorkspace}
+                  >
+                    <Icon name="tree-mode" size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className="tree-controls__icon-button"
+                    aria-label="Focus Active Note"
+                    title="Focus Active Note: collapse everything except the path to the note you're editing."
+                    onClick={onFocusActiveNote}
+                    disabled={activeNotePath === null}
+                  >
+                    <Icon name="target" size={16} />
+                  </button>
+                </div>
+                <div className="global-search" role="search" aria-label="Global Search">
+                  <label className="global-search__field">
+                    <Icon name="search" />
+                    <input
+                      ref={globalSearchInputRef}
+                      type="search"
+                      aria-label="Global Search"
+                      placeholder="Buscar en todos los archivos..."
+                      value={globalSearchQuery}
+                      onChange={(event) => onGlobalSearchChange(event.target.value)}
+                      disabled={!canManageWorkspace}
+                    />
+                  </label>
+                  {globalSearchResults.length > 0 ? (
+                    <ol className="global-search__results" aria-label="Global Search results">
+                      {globalSearchResults.map((result) => (
+                        <li key={`${result.notePath}:${result.lineNumber}:${result.matchStart}`}>
+                          <button
+                            type="button"
+                            aria-label={`${result.notePath} line ${result.lineNumber}: ${result.lineText}`}
+                            onClick={() => onSelectGlobalSearchResult(result)}
+                          >
+                            <span>{result.notePath}</span>
+                            <small>
+                              Line {result.lineNumber}: {result.lineText}
+                            </small>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : null}
+                </div>
+                {workspaceTree.length > 0 ? (
+                  <WorkspaceTree
+                    items={workspaceTree}
+                    activeNotePath={activeNotePath}
+                    activeFolderPath={activeFolderPath}
+                    openFolderPaths={openFolderPaths}
+                    onToggleFolder={onToggleFolder}
+                    onSelectFolder={onSelectFolder}
+                    onSelectNote={onSelectNote}
+                    onItemContextMenu={(event, kind, path) => {
+                      event.preventDefault();
+                      if (kind === "folder") {
+                        onSelectFolder(path);
+                      } else {
+                        onSelectNote(path);
+                      }
+                      setTreeContextMenu({ x: event.clientX, y: event.clientY, kind });
+                    }}
+                    onMoveItem={onMoveItem}
+                    dragOverFolder={dragOverFolder}
+                    onDragOverFolder={setDragOverFolder}
+                    isRoot
+                  />
+                ) : (
+                  <p className="empty-tree">
+                    {hasOpenWorkspace ? "This Workspace has no Markdown notes yet." : "Open a Workspace to show Markdown notes."}
+                  </p>
+                )}
 
-            <div className="tree-actions" aria-label="Workspace actions">
-              <button type="button" title="New folder" aria-label="New folder" onClick={onCreateFolder} disabled={!canManageWorkspace}>
-                <Icon name="folder-plus" />
-              </button>
-              <button type="button" title="New note" aria-label="New note" onClick={onCreateNote} disabled={!canManageWorkspace}>
-                <Icon name="note-plus" />
-              </button>
-              <button
-                type="button"
-                title="Rename"
-                aria-label="Rename"
-                onClick={onRenameSelection}
-                disabled={!canManageWorkspace || !hasSelection}
-              >
-                <Icon name="rename" />
-              </button>
-              <button
-                type="button"
-                title="Move"
-                aria-label="Move"
-                onClick={onMoveActiveNote}
-                disabled={!canManageWorkspace || activeNotePath === null}
-              >
-                <Icon name="move" />
-              </button>
-              <button
-                type="button"
-                title="Delete"
-                aria-label="Delete"
-                onClick={onDeleteSelection}
-                disabled={!canManageWorkspace || !hasSelection}
-              >
-                <Icon name="trash" />
-              </button>
-            </div>
+                <div className="tree-actions" aria-label="Workspace actions">
+                  <button type="button" title="New folder" aria-label="New folder" onClick={onCreateFolder} disabled={!canManageWorkspace}>
+                    <Icon name="folder-plus" />
+                  </button>
+                  <button type="button" title="New note" aria-label="New note" onClick={onCreateNote} disabled={!canManageWorkspace}>
+                    <Icon name="note-plus" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Rename"
+                    aria-label="Rename"
+                    onClick={onRenameSelection}
+                    disabled={!canManageWorkspace || !hasSelection}
+                  >
+                    <Icon name="rename" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Move"
+                    aria-label="Move"
+                    onClick={onMoveActiveNote}
+                    disabled={!canManageWorkspace || activeNotePath === null}
+                  >
+                    <Icon name="move" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Delete"
+                    aria-label="Delete"
+                    onClick={onDeleteSelection}
+                    disabled={!canManageWorkspace || !hasSelection}
+                  >
+                    <Icon name="trash" />
+                  </button>
+                </div>
+              </>
+            )}
           </>
         )}
       </aside>
@@ -745,8 +914,10 @@ export function ClassicShell({
       <main className="editor-pane" aria-label="Markdown editor area">
         <div className="editor-toolbar">
           <Breadcrumb folderPath={activeFolderPath} notePath={activeNotePath} />
+          {isFileSearchOpen ? (
           <div className="file-search" role="search" aria-label="Current note search">
             <input
+              ref={fileSearchInputRef}
               type="search"
               aria-label="Search current note"
               value={fileSearchQuery}
@@ -777,7 +948,18 @@ export function ClassicShell({
               <Icon name="chevron-down" />
             </button>
           </div>
+          ) : null}
           <div className="editor-toolbar__actions">
+            <button
+              type="button"
+              title="Note history"
+              aria-label="Open note history"
+              aria-expanded={noteHistoryOpen}
+              onClick={noteHistoryOpen ? onCloseNoteHistory : onOpenNoteHistory}
+              disabled={!activeNotePath || !isWorkspaceGitBacked}
+            >
+              <Icon name="history" />
+            </button>
             <button
               type="button"
               title={`Switch to ${nextTheme} theme`}
@@ -797,22 +979,44 @@ export function ClassicShell({
           </div>
         </div>
 
-        <section className="editor-surface" aria-label="Raw Markdown editor">
+        <div className={noteHistoryOpen ? "editor-body editor-body--history" : "editor-body"}>
+        <section className="editor-surface" aria-label="Raw Markdown editor" ref={editorContainerRef}>
           {editorError ? (
             <EditorErrorState error={editorError} notePath={activeNotePath} />
           ) : activeNotePath ? (
-            <MarkdownEditor
-              notePath={activeNotePath}
-              value={noteContent}
-              onChange={onNoteChange}
-              searchJump={currentFileSearchJump}
-            />
+            <>
+              {attachmentError ? (
+                <p className="attachment-error" role="alert">
+                  {attachmentError}
+                </p>
+              ) : null}
+              <MarkdownEditor
+                notePath={activeNotePath}
+                workspacePath={workspacePath}
+                value={noteContent}
+                onChange={onNoteChange}
+                searchJump={currentFileSearchJump}
+                onAttachmentError={onAttachmentError}
+              />
+            </>
           ) : hasOpenWorkspace && !hasNotes ? (
             <p className="empty-editor">Create a note to start writing in {workspaceName}.</p>
           ) : (
             <p className="empty-editor">Select a Markdown note to start writing.</p>
           )}
         </section>
+          <NoteHistoryPanel
+            noteHistoryOpen={noteHistoryOpen}
+            noteHistoryEntries={noteHistoryEntries}
+            selectedNoteHistoryCommitId={selectedNoteHistoryCommitId}
+            noteHistoryPreview={noteHistoryPreview}
+            noteHistoryLoading={noteHistoryLoading}
+            noteHistoryError={noteHistoryError}
+            onSelectNoteHistoryEntry={onSelectNoteHistoryEntry}
+            onCloseNoteHistory={onCloseNoteHistory}
+            onRestoreNoteHistoryEntry={onRestoreNoteHistoryEntry}
+          />
+        </div>
       </main>
 
       <footer className="status-bar" aria-label="Workspace status">
@@ -1398,6 +1602,20 @@ function TitleBar({
   );
 }
 
+function activeNoteAncestorFolderPaths(activeNotePath: string | null): ReadonlySet<string> {
+  if (!activeNotePath) {
+    return new Set();
+  }
+  const segments = activeNotePath.split("/").slice(0, -1);
+  const paths = new Set<string>();
+  let cumulative = "";
+  for (const segment of segments) {
+    cumulative = cumulative ? `${cumulative}/${segment}` : segment;
+    paths.add(cumulative);
+  }
+  return paths;
+}
+
 function WorkspaceTree({
   items,
   activeNotePath,
@@ -1426,6 +1644,7 @@ function WorkspaceTree({
   isRoot?: boolean;
 }) {
   const readDraggedPath = (event: DragEvent) => event.dataTransfer.getData("text/plain");
+  const activePathFolders = activeNoteAncestorFolderPaths(activeNotePath);
 
   const rootDropProps = isRoot
     ? {
@@ -1450,7 +1669,13 @@ function WorkspaceTree({
       {items.map((item) => (
         <li key={item.path}>
           {item.kind === "folder" ? (
-            <div className="note-tree__folder-row">
+            <div
+              className={
+                activePathFolders.has(item.path)
+                  ? "note-tree__folder-row note-tree__folder-row--active-path"
+                  : "note-tree__folder-row"
+              }
+            >
               <button
                 type="button"
                 className="note-tree__toggle"

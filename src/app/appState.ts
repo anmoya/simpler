@@ -1,5 +1,5 @@
 import type { AppRoute } from "./routes";
-import type { AdvancedGitStatus, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, SyncStatus as GitSyncStatus } from "../native/commands";
+import type { AdvancedGitStatus, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, SyncStatus as GitSyncStatus, TrashEntry } from "../native/commands";
 
 export type SyncStatus = GitSyncStatus | "workspace-abierto" | "sincronizando" | "desconectado" | "error";
 export type ThemeMode = "light" | "dark";
@@ -62,12 +62,21 @@ export interface AppState {
   activeFolderPath: string;
   noteContent: string;
   themeMode: ThemeMode;
+  // Whether the sidebar is showing its narrow icon rail instead of full content.
+  // Currently only ever set by the manual toggle; a later ticket (auto-collapse
+  // by window width) can OR an automatic signal into this same boolean without
+  // needing a reshape, since "collapsed" is the only thing the UI reads.
+  sidebarCollapsed: boolean;
   editorError: EditorError | null;
+  // Attachment (paste/drop) failures: shown alongside the editor rather than
+  // replacing it, so an import failure never costs the in-progress note.
+  attachmentError: string | null;
   syncStatus: SyncStatus;
   conflictedFiles: string[];
   workspaceError: string | null;
   globalSearchQuery: string;
   globalSearchResults: GlobalSearchResult[];
+  trashEntries: TrashEntry[];
   fileSearchJump: FileSearchJump | null;
   githubAuth: GitHubAuthStatus;
   githubRemote: GitHubRemote | null;
@@ -101,12 +110,15 @@ export const initialAppState: AppState = {
   activeFolderPath: "",
   noteContent: "",
   themeMode: "light",
+  sidebarCollapsed: false,
   editorError: null,
+  attachmentError: null,
   syncStatus: "desconectado",
   conflictedFiles: [],
   workspaceError: null,
   globalSearchQuery: "",
   globalSearchResults: [],
+  trashEntries: [],
   fileSearchJump: null,
   githubAuth: { state: "disconnected", message: null },
   githubRemote: null,

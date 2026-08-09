@@ -1,1 +1,1 @@
-export type AppRoute = "workspace" | "sync" | "settings";
+export type AppRoute = "workspace" | "trash" | "sync" | "settings";
