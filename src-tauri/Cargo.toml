@@ -1,6 +1,6 @@
 [package]
 name = "simpler"
-version = "0.1.4"
+version = "0.1.5"
 description = "Local-first Markdown notes app"
 authors = ["Simpler contributors"]
 edition = "2021"
