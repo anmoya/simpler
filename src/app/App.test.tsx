@@ -652,6 +652,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
     expect(screen.queryByRole("button", { name: "today.md" })).not.toBeInTheDocument();
+    await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
     await user.type(screen.getByRole("searchbox", { name: "Global Search" }), "needle");
     await user.click(screen.getByRole("button", { name: "daily/today.md line 2: needle line" }));
 
