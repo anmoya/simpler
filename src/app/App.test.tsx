@@ -159,6 +159,70 @@ describe("App", () => {
     expect(within(advanced).getByRole("button", { name: "Refresh Git details" })).toBeInTheDocument();
   });
 
+  it("opens Trash, restores an item, and refreshes the Workspace Tree", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      if (request.domain === "workspace" && request.action === "open") {
+        return Promise.resolve({
+          ok: true,
+          domain: "workspace",
+          action: "open",
+          data: {
+            name: "notes",
+            path: "/tmp/notes",
+            tree: [],
+            metadata: { lastNotePath: null, githubWizardPostponed: true, openFolderPaths: [], treeMode: "free" },
+          },
+          error: null,
+        });
+      }
+      if (request.domain === "git" && request.action === "status") {
+        return Promise.resolve({ ok: true, domain: "git", action: "status", data: { isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] }, error: null });
+      }
+      if (request.domain === "git" && request.action === "github-remote") {
+        return Promise.resolve({ ok: true, domain: "git", action: "github-remote", data: { remote: null }, error: null });
+      }
+      if (request.domain === "filesystem" && request.action === "list-trash") {
+        return Promise.resolve({
+          ok: true,
+          domain: "filesystem",
+          action: "list-trash",
+          data: { entries: [{
+            id: "trash-1",
+            originalRelativePath: "today.md",
+            trashedRelativePath: ".simpler/local/trash/trash-1-today.md",
+            deletedAt: "2026-08-08T12:00:00Z",
+            isDirectory: false,
+          }] },
+          error: null,
+        });
+      }
+      if (request.domain === "filesystem" && request.action === "restore-trash-item") {
+        return Promise.resolve({
+          ok: true,
+          domain: "filesystem",
+          action: "restore-trash-item",
+          data: { tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], itemPath: "today.md" },
+          error: null,
+        });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+
+    render(<App />);
+    await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("tab", { name: "Trash" }));
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+    await user.click(screen.getByRole("tab", { name: "Trash" }));
+
+    expect(await screen.findByRole("button", { name: "today.md" })).toBeInTheDocument();
+    expect(mocks.invoke).toHaveBeenCalledWith("native_command", {
+      request: { domain: "filesystem", action: "restore-trash-item", payload: { workspacePath: "/tmp/notes", id: "trash-1" } },
+    });
+  });
+
   it("connects a GitHub remote through the GitHubConnectionWizard, syncs, and reports connection errors", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue("/tmp/notes");
@@ -938,6 +1002,93 @@ describe("App", () => {
     await user.type(editable, "{End}\nChanged");
 
     expect(screen.getByRole("contentinfo", { name: "Workspace status" })).toHaveTextContent("Cambios locales");
+  });
+
+  it("previews note history and restores a version through Local Save before normal Sync", async () => {
+    const user = userEvent.setup();
+    const writes: string[] = [];
+    let syncCalls = 0;
+    let resolveStalePreview!: (response: unknown) => void;
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      if (request.domain === "workspace" && request.action === "open") {
+        return Promise.resolve({
+          ok: true,
+          domain: "workspace",
+          action: "open",
+          data: {
+            name: "notes",
+            path: "/tmp/notes",
+            tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }],
+            metadata: { lastNotePath: "today.md", githubWizardPostponed: true },
+          },
+          error: null,
+        });
+      }
+      if (request.domain === "filesystem" && request.action === "read-note") {
+        return Promise.resolve({ ok: true, domain: "filesystem", action: "read-note", data: { content: "# Current" }, error: null });
+      }
+      if (request.domain === "workspace" && request.action === "remember-note") {
+        return Promise.resolve({ ok: true, domain: "workspace", action: "remember-note", data: { lastNotePath: "today.md" }, error: null });
+      }
+      if (request.domain === "git" && request.action === "status") {
+        return Promise.resolve({ ok: true, domain: "git", action: "status", data: { isRepository: true, hasRemote: true, syncStatus: "sincronizado", conflictedFiles: [] }, error: null });
+      }
+      if (request.domain === "git" && request.action === "github-remote") {
+        return Promise.resolve({ ok: true, domain: "git", action: "github-remote", data: { remote: { name: "origin", url: "git@example.test:notes.git" } }, error: null });
+      }
+      if (request.domain === "git" && request.action === "advanced-status") {
+        return Promise.resolve({ ok: true, domain: "git", action: "advanced-status", data: { isRepository: true, repository: "git@example.test:notes.git", branch: "main", latestCommit: null, pendingChanges: [] }, error: null });
+      }
+      if (request.domain === "git" && request.action === "note-history") {
+        return Promise.resolve({
+          ok: true,
+          domain: "git",
+          action: "note-history",
+          data: [
+            { commitId: "abc123", date: "2026-08-07T09:30:00Z", summary: "Earlier words" },
+            { commitId: "def456", date: "2026-08-06T09:30:00Z", summary: "Chosen words" },
+          ],
+          error: null,
+        });
+      }
+      if (request.domain === "git" && request.action === "note-content-at-commit") {
+        if (request.payload.commitId === "abc123") {
+          return new Promise((resolve) => {
+            resolveStalePreview = resolve;
+          });
+        }
+        return Promise.resolve({ ok: true, domain: "git", action: "note-content-at-commit", data: { content: "# Chosen\n\nChosen words." }, error: null });
+      }
+      if (request.domain === "filesystem" && request.action === "write-note") {
+        writes.push(request.payload.content);
+        return Promise.resolve({ ok: true, domain: "filesystem", action: "write-note", data: { content: request.payload.content }, error: null });
+      }
+      if (request.domain === "git" && request.action === "sync") {
+        syncCalls += 1;
+        return Promise.resolve({ ok: true, domain: "git", action: "sync", data: { status: "synced", message: "Sync completed", conflictedFiles: [] }, error: null });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+
+    await user.click(await screen.findByRole("button", { name: "Open note history" }));
+    await user.click(await screen.findByRole("button", { name: /Earlier words/ }));
+    await user.click(await screen.findByRole("button", { name: /Chosen words/ }));
+    expect(await screen.findByRole("region", { name: "Historical note preview" })).toHaveTextContent("Chosen words.");
+    resolveStalePreview({ ok: true, domain: "git", action: "note-content-at-commit", data: { content: "# Stale\n\nWrong words." }, error: null });
+    await waitFor(() => expect(screen.getByRole("region", { name: "Historical note preview" })).not.toHaveTextContent("Wrong words."));
+
+    await user.click(screen.getByRole("button", { name: "Restore this version" }));
+    await waitFor(() => expect(writes).toEqual(["# Chosen\n\nChosen words."]));
+    expect(screen.getByTestId("markdown-editor").textContent).toContain("Chosen words.");
+
+    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.click(screen.getByRole("button", { name: "Sync now" }));
+    await waitFor(() => expect(syncCalls).toBe(1));
   });
 
   it("lets the user manually Sync an opened Git-backed Workspace", async () => {

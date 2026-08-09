@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import type { AppRoute } from "../app/routes";
 import type {
   CloseSyncPromptState,
@@ -11,9 +11,10 @@ import type {
   UpdateNoticeState,
   WorkspaceTreeItem,
 } from "../app/appState";
-import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult } from "../native/commands";
+import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { MarkdownEditor } from "./MarkdownEditor";
+import { NoteHistoryPanel } from "./NoteHistoryPanel";
 import { Icon } from "./icons";
 import { GitHubConnectionWizard } from "./GitHubConnectionWizard";
 
@@ -40,8 +41,16 @@ export interface ClassicShellProps {
   activeNotePath: string | null;
   activeFolderPath: string;
   noteContent: string;
+  noteHistoryOpen: boolean;
+  noteHistoryEntries: NoteHistoryEntry[];
+  selectedNoteHistoryCommitId: string | null;
+  noteHistoryPreview: string | null;
+  noteHistoryLoading: boolean;
+  noteHistoryError: string | null;
   themeMode: ThemeMode;
   editorError: EditorError | null;
+  attachmentError: string | null;
+  onAttachmentError: (message: string | null) => void;
   canManageWorkspace: boolean;
   onOpenWorkspace: () => void;
   onCloneGitHubRepository: () => void;
@@ -55,11 +64,17 @@ export interface ClassicShellProps {
   onFocusActiveNote: () => void;
   onNavigateToNote: (notePath: string) => void;
   onNoteChange: (content: string) => void;
+  onOpenNoteHistory: () => void;
+  onCloseNoteHistory: () => void;
+  onSelectNoteHistoryEntry: (entry: NoteHistoryEntry) => void;
+  onRestoreNoteHistoryEntry: () => void;
   onCreateFolder: () => void;
   onCreateNote: () => void;
   onRenameSelection: () => void;
   onMoveActiveNote: () => void;
   onDeleteSelection: () => void;
+  trashEntries: TrashEntry[];
+  onRestoreTrashItem: (id: string) => void;
   onMoveItem: (itemPath: string, targetFolderPath: string) => void;
   onSyncWorkspace: () => void;
   githubRemote: GitHubRemote | null;
@@ -114,8 +129,16 @@ export function ClassicShell({
   activeNotePath,
   activeFolderPath,
   noteContent,
+  noteHistoryOpen,
+  noteHistoryEntries,
+  selectedNoteHistoryCommitId,
+  noteHistoryPreview,
+  noteHistoryLoading,
+  noteHistoryError,
   themeMode,
   editorError,
+  attachmentError,
+  onAttachmentError,
   canManageWorkspace,
   onOpenWorkspace,
   onCloneGitHubRepository,
@@ -129,11 +152,17 @@ export function ClassicShell({
   onFocusActiveNote,
   onNavigateToNote,
   onNoteChange,
+  onOpenNoteHistory,
+  onCloseNoteHistory,
+  onSelectNoteHistoryEntry,
+  onRestoreNoteHistoryEntry,
   onCreateFolder,
   onCreateNote,
   onRenameSelection,
   onMoveActiveNote,
   onDeleteSelection,
+  trashEntries,
+  onRestoreTrashItem,
   onMoveItem,
   onSyncWorkspace,
   githubRemote,
@@ -177,6 +206,9 @@ export function ClassicShell({
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [fileSearchQuery, setFileSearchQuery] = useState("");
   const [activeFileMatchIndex, setActiveFileMatchIndex] = useState(0);
+  const [isFileSearchOpen, setIsFileSearchOpen] = useState(false);
+  const fileSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const editorContainerRef = useRef<HTMLElement | null>(null);
   const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; kind: "folder" | "note" } | null>(
     null,
   );
@@ -310,6 +342,20 @@ export function ClassicShell({
   }, [activeNotePath, fileSearchQuery]);
 
   useEffect(() => {
+    if (isFileSearchOpen) {
+      const input = fileSearchInputRef.current;
+      input?.focus();
+      input?.select();
+    }
+  }, [isFileSearchOpen]);
+
+  useEffect(() => {
+    if (!activeNotePath) {
+      setIsFileSearchOpen(false);
+    }
+  }, [activeNotePath]);
+
+  useEffect(() => {
     if (!treeContextMenu) {
       return;
     }
@@ -378,6 +424,14 @@ export function ClassicShell({
         return;
       }
 
+      if (hasCommandModifier && event.key.toLowerCase() === "f") {
+        if (activeNotePath) {
+          event.preventDefault();
+          setIsFileSearchOpen(true);
+        }
+        return;
+      }
+
       if (hasCommandModifier && event.key.toLowerCase() === "m") {
         if (runAvailableCommand("move-note")) {
           event.preventDefault();
@@ -431,12 +485,17 @@ export function ClassicShell({
         setIsCommandPaletteOpen(false);
         setIsCommandHelpOpen(false);
         setIsWorkspaceMenuOpen(false);
+        if (isFileSearchOpen) {
+          setIsFileSearchOpen(false);
+          const editorElement = editorContainerRef.current?.querySelector<HTMLElement>(".cm-content");
+          editorElement?.focus();
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [availableCommands]);
+  }, [availableCommands, isFileSearchOpen]);
 
   const runCommand = (command: ShellCommand) => {
     command.run();
@@ -503,6 +562,18 @@ export function ClassicShell({
               <button
                 type="button"
                 role="tab"
+                aria-selected={activeRoute === "trash"}
+                aria-label="Trash"
+                title="Trash"
+                className={activeRoute === "trash" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
+                onClick={() => onRouteChange(activeRoute === "trash" ? "workspace" : "trash")}
+                disabled={!canManageWorkspace}
+              >
+                <Icon name="trash" />
+              </button>
+              <button
+                type="button"
+                role="tab"
                 aria-selected={activeRoute === "sync"}
                 aria-label="Sync"
                 title="Sync"
@@ -528,7 +599,24 @@ export function ClassicShell({
 
         {workspaceError ? <p className="workspace-error">{workspaceError}</p> : null}
 
-        {activeRoute === "sync" ? (
+        {activeRoute === "trash" ? (
+          <section className="sidebar-panel trash-panel" aria-label="Trash items">
+            <h2>Trash</h2>
+            {trashEntries.length === 0 ? <p>Trash is empty.</p> : (
+              <ol>
+                {trashEntries.map((entry) => (
+                  <li key={entry.id}>
+                    <span>{entry.originalRelativePath}</span>
+                    <small>{new Date(entry.deletedAt).toLocaleString()}</small>
+                    <button type="button" onClick={() => onRestoreTrashItem(entry.id)}>
+                      Restore
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        ) : activeRoute === "sync" ? (
           <section className="sidebar-panel" aria-label="Sync workspace">
             <SyncWorkspacePanel
               canManageWorkspace={canManageWorkspace}
@@ -685,8 +773,10 @@ export function ClassicShell({
       <main className="editor-pane" aria-label="Markdown editor area">
         <div className="editor-toolbar">
           <Breadcrumb folderPath={activeFolderPath} notePath={activeNotePath} />
+          {isFileSearchOpen ? (
           <div className="file-search" role="search" aria-label="Current note search">
             <input
+              ref={fileSearchInputRef}
               type="search"
               aria-label="Search current note"
               value={fileSearchQuery}
@@ -717,7 +807,18 @@ export function ClassicShell({
               <Icon name="chevron-down" />
             </button>
           </div>
+          ) : null}
           <div className="editor-toolbar__actions">
+            <button
+              type="button"
+              title="Note history"
+              aria-label="Open note history"
+              aria-expanded={noteHistoryOpen}
+              onClick={noteHistoryOpen ? onCloseNoteHistory : onOpenNoteHistory}
+              disabled={!activeNotePath || !isWorkspaceGitBacked}
+            >
+              <Icon name="history" />
+            </button>
             <button
               type="button"
               title={`Switch to ${nextTheme} theme`}
@@ -737,22 +838,44 @@ export function ClassicShell({
           </div>
         </div>
 
-        <section className="editor-surface" aria-label="Raw Markdown editor">
+        <div className={noteHistoryOpen ? "editor-body editor-body--history" : "editor-body"}>
+        <section className="editor-surface" aria-label="Raw Markdown editor" ref={editorContainerRef}>
           {editorError ? (
             <EditorErrorState error={editorError} notePath={activeNotePath} />
           ) : activeNotePath ? (
-            <MarkdownEditor
-              notePath={activeNotePath}
-              value={noteContent}
-              onChange={onNoteChange}
-              searchJump={currentFileSearchJump}
-            />
+            <>
+              {attachmentError ? (
+                <p className="attachment-error" role="alert">
+                  {attachmentError}
+                </p>
+              ) : null}
+              <MarkdownEditor
+                notePath={activeNotePath}
+                workspacePath={workspacePath}
+                value={noteContent}
+                onChange={onNoteChange}
+                searchJump={currentFileSearchJump}
+                onAttachmentError={onAttachmentError}
+              />
+            </>
           ) : hasOpenWorkspace && !hasNotes ? (
             <p className="empty-editor">Create a note to start writing in {workspaceName}.</p>
           ) : (
             <p className="empty-editor">Select a Markdown note to start writing.</p>
           )}
         </section>
+          <NoteHistoryPanel
+            noteHistoryOpen={noteHistoryOpen}
+            noteHistoryEntries={noteHistoryEntries}
+            selectedNoteHistoryCommitId={selectedNoteHistoryCommitId}
+            noteHistoryPreview={noteHistoryPreview}
+            noteHistoryLoading={noteHistoryLoading}
+            noteHistoryError={noteHistoryError}
+            onSelectNoteHistoryEntry={onSelectNoteHistoryEntry}
+            onCloseNoteHistory={onCloseNoteHistory}
+            onRestoreNoteHistoryEntry={onRestoreNoteHistoryEntry}
+          />
+        </div>
       </main>
 
       <footer className="status-bar" aria-label="Workspace status">

@@ -5,6 +5,7 @@
 set -euo pipefail
 
 APPIMAGE_PATH="${1:?Usage: patch-appimage-wayland-fix.sh <path-to-appimage>}"
+APPIMAGE_PATH="$(realpath "$APPIMAGE_PATH")"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK_SRC="$ROOT_DIR/src-tauri/appimage-hooks/webkit-wayland-fix.sh"
 WORK_DIR="$(mktemp -d)"
@@ -14,6 +15,15 @@ if ! command -v appimagetool >/dev/null 2>&1; then
   echo "appimagetool not found on PATH" >&2
   exit 1
 fi
+
+if [[ ! -f "$APPIMAGE_PATH" ]]; then
+  echo "AppImage not found at: $APPIMAGE_PATH" >&2
+  echo "Contents of $(dirname "$APPIMAGE_PATH"):" >&2
+  ls -la "$(dirname "$APPIMAGE_PATH")" >&2 || true
+  exit 1
+fi
+
+chmod +x "$APPIMAGE_PATH"
 
 cd "$WORK_DIR"
 "$APPIMAGE_PATH" --appimage-extract >/dev/null
