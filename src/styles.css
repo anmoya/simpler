@@ -51,6 +51,17 @@ button {
   color: var(--color-text);
   font-size: var(--font-size-body);
   font-family: var(--font-family-body);
+
+  /*
+   * Whole-app-shell zoom (see docs on `--ui-zoom`, set inline by ClassicShell
+   * from persisted `simpler.uiZoom`). `zoom` scales layout (including the px
+   * grid tracks and font-size tokens above) without touching the DOM tree, so
+   * no per-value rewrite is needed — and unlike `transform: scale()` it needs
+   * no width/height compensation. Media queries (see the 720px breakpoint
+   * below) evaluate against the real, unzoomed viewport, so the responsive
+   * breakpoint is unaffected by the zoom level.
+   */
+  zoom: var(--ui-zoom, 1);
 }
 
 /*

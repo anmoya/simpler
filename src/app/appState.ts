@@ -3,6 +3,11 @@ import type { AdvancedGitStatus, GitHubAuthStatus, GitHubRemote, GlobalSearchRes
 
 export type SyncStatus = GitSyncStatus | "workspace-abierto" | "sincronizando" | "desconectado" | "error";
 export type ThemeMode = "light" | "dark";
+// Whole-app-shell zoom, independent of the editor font size (a separate control).
+// Discrete steps only, expressed as a percentage of the default 100%.
+export const uiZoomSteps = [70, 80, 90, 100, 110, 120, 130, 140, 150] as const;
+export type UiZoom = (typeof uiZoomSteps)[number];
+export const defaultUiZoom: UiZoom = 100;
 export type TreeMode = "free" | "accordion";
 export type EditorError =
   | { kind: "missing-note"; message: string }

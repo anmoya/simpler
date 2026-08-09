@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type DragEvent, type MouseEvent } from "react";
 import type { AppRoute } from "../app/routes";
 import type {
   CloseSyncPromptState,
@@ -8,9 +8,11 @@ import type {
   SyncEvent,
   ThemeMode,
   TreeMode,
+  UiZoom,
   UpdateNoticeState,
   WorkspaceTreeItem,
 } from "../app/appState";
+import { uiZoomSteps, defaultUiZoom } from "../app/appState";
 import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -41,6 +43,7 @@ export interface ClassicShellProps {
   activeFolderPath: string;
   noteContent: string;
   themeMode: ThemeMode;
+  uiZoom: UiZoom;
   editorError: EditorError | null;
   canManageWorkspace: boolean;
   onOpenWorkspace: () => void;
@@ -48,6 +51,7 @@ export interface ClassicShellProps {
   onOpenRecentWorkspace: (workspacePath: string) => void;
   onRouteChange: (route: AppRoute) => void;
   onThemeChange: (themeMode: ThemeMode) => void;
+  onUiZoomChange: (uiZoom: UiZoom) => void;
   onSelectFolder: (folderPath: string) => void;
   onSelectNote: (notePath: string) => void;
   onToggleFolder: (folderPath: string) => void;
@@ -115,6 +119,7 @@ export function ClassicShell({
   activeFolderPath,
   noteContent,
   themeMode,
+  uiZoom,
   editorError,
   canManageWorkspace,
   onOpenWorkspace,
@@ -122,6 +127,7 @@ export function ClassicShell({
   onOpenRecentWorkspace,
   onRouteChange,
   onThemeChange,
+  onUiZoomChange,
   onSelectFolder,
   onSelectNote,
   onToggleFolder,
@@ -185,6 +191,9 @@ export function ClassicShell({
   const hasOpenWorkspace = canManageWorkspace;
   const hasNotes = workspaceTreeHasNotes(workspaceTree);
   const nextTheme = themeMode === "light" ? "dark" : "light";
+  const uiZoomIndex = uiZoomSteps.indexOf(uiZoom);
+  const nextUiZoomIn = uiZoomSteps[Math.min(uiZoomSteps.length - 1, uiZoomIndex + 1)] ?? uiZoom;
+  const nextUiZoomOut = uiZoomSteps[Math.max(0, uiZoomIndex - 1)] ?? uiZoom;
   const fileSearchMatches = useMemo(
     () => findPlainTextMatches(noteContent, fileSearchQuery),
     [fileSearchQuery, noteContent],
@@ -271,6 +280,27 @@ export function ClassicShell({
         run: () => onThemeChange(nextTheme),
       },
       {
+        id: "zoom-in",
+        label: `Zoom in (${nextUiZoomIn}%)`,
+        shortcut: "Ctrl/Cmd++",
+        available: uiZoom < uiZoomSteps[uiZoomSteps.length - 1],
+        run: () => onUiZoomChange(nextUiZoomIn),
+      },
+      {
+        id: "zoom-out",
+        label: `Zoom out (${nextUiZoomOut}%)`,
+        shortcut: "Ctrl/Cmd+-",
+        available: uiZoom > uiZoomSteps[0],
+        run: () => onUiZoomChange(nextUiZoomOut),
+      },
+      {
+        id: "zoom-reset",
+        label: "Reset zoom to 100%",
+        shortcut: "Ctrl/Cmd+0",
+        available: uiZoom !== defaultUiZoom,
+        run: () => onUiZoomChange(defaultUiZoom),
+      },
+      {
         id: "command-help",
         label: "Command Help",
         shortcut: "Ctrl/Cmd+/",
@@ -291,6 +321,8 @@ export function ClassicShell({
       canManageWorkspace,
       hasSelection,
       nextTheme,
+      nextUiZoomIn,
+      nextUiZoomOut,
       onCreateFolder,
       onCreateNote,
       onMoveActiveNote,
@@ -300,6 +332,8 @@ export function ClassicShell({
       onRouteChange,
       onSyncWorkspace,
       onThemeChange,
+      onUiZoomChange,
+      uiZoom,
       workspaceTree,
     ],
   );
@@ -420,6 +454,27 @@ export function ClassicShell({
         return;
       }
 
+      if (hasCommandModifier && (event.key === "=" || event.key === "+")) {
+        if (runAvailableCommand("zoom-in")) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (hasCommandModifier && event.key === "-") {
+        if (runAvailableCommand("zoom-out")) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (hasCommandModifier && event.key === "0") {
+        if (runAvailableCommand("zoom-reset")) {
+          event.preventDefault();
+        }
+        return;
+      }
+
       if (event.key === "F2") {
         if (runAvailableCommand("rename")) {
           event.preventDefault();
@@ -456,7 +511,12 @@ export function ClassicShell({
   };
 
   return (
-    <div className="app-shell" data-theme="warm" data-mode={themeMode}>
+    <div
+      className="app-shell"
+      data-theme="warm"
+      data-mode={themeMode}
+      style={{ "--ui-zoom": uiZoom / 100 } as CSSProperties}
+    >
       <TitleBar
         isMaximized={isWindowMaximized}
         onMinimize={onMinimizeWindow}
