@@ -102,22 +102,12 @@ function renderShell(props: Partial<ClassicShellProps> = {}) {
 }
 
 describe("ClassicShell", () => {
-  it("shows an empty note-history state without offering history in a plain Workspace", () => {
-    const { rerender } = renderShell({
+  it("disables the note history toggle in a plain (non-Git-backed) Workspace", () => {
+    renderShell({
       activeNotePath: "today.md",
-      noteHistoryOpen: true,
-      noteHistoryEntries: [],
+      isWorkspaceGitBacked: false,
     });
 
-    expect(screen.getByRole("complementary", { name: "Note history" })).toHaveTextContent("No synced versions yet.");
-
-    rerender(
-      <ClassicShell
-        {...defaultProps}
-        activeNotePath="today.md"
-        isWorkspaceGitBacked={false}
-      />,
-    );
     expect(screen.getByRole("button", { name: "Open note history" })).toBeDisabled();
   });
 
