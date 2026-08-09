@@ -9,6 +9,9 @@ import {
   type EditorError,
   type ThemeMode,
   type TreeMode,
+  type UiZoom,
+  uiZoomSteps,
+  defaultUiZoom,
 } from "./appState";
 import { expandPathToNote, focusActiveNote, restoreOpenFolderPaths, toggleFolder } from "./workspaceTreeState";
 import type { AppRoute } from "./routes";
@@ -107,6 +110,7 @@ export function App() {
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
   const [closeSyncPrompt, setCloseSyncPrompt] = useState<CloseSyncPromptState | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const [uiZoom, setUiZoomState] = useState<UiZoom>(() => readUiZoom());
   const [noteHistoryPanel, setNoteHistoryPanel] = useState<NoteHistoryPanelState>(closedNoteHistoryPanel);
 
   const requestPrompt = (title: string, defaultValue = "") =>
@@ -1009,6 +1013,11 @@ export function App() {
     setAppState((current) => ({ ...current, themeMode }));
   };
 
+  const changeUiZoom = (uiZoom: UiZoom) => {
+    saveUiZoom(uiZoom);
+    setUiZoomState(uiZoom);
+  };
+
   const toggleSidebarCollapsed = () => {
     setAppState((current) => {
       const sidebarCollapsed = !current.sidebarCollapsed;
@@ -1251,6 +1260,7 @@ export function App() {
       noteHistoryLoading={noteHistoryPanel.loading}
       noteHistoryError={noteHistoryPanel.error}
       themeMode={appState.themeMode}
+      uiZoom={uiZoom}
       sidebarCollapsed={appState.sidebarCollapsed}
       onToggleSidebarCollapse={toggleSidebarCollapsed}
       editorError={appState.editorError}
@@ -1262,6 +1272,7 @@ export function App() {
       onOpenRecentWorkspace={openWorkspaceAtPath}
       onRouteChange={openRoute}
       onThemeChange={changeTheme}
+      onUiZoomChange={changeUiZoom}
       onSelectFolder={selectFolder}
       onSelectNote={selectNote}
       onToggleFolder={toggleWorkspaceFolder}
@@ -1356,6 +1367,25 @@ function readThemeMode(): ThemeMode {
 function saveThemeMode(themeMode: ThemeMode) {
   try {
     localStorage.setItem(themeModeStorageKey, themeMode);
+  } catch {
+    // localStorage may be unavailable (e.g. private browsing); the app still works, just unpersisted.
+  }
+}
+
+const uiZoomStorageKey = "simpler.uiZoom";
+
+function readUiZoom(): UiZoom {
+  try {
+    const value = Number(localStorage.getItem(uiZoomStorageKey));
+    return uiZoomSteps.includes(value as UiZoom) ? (value as UiZoom) : defaultUiZoom;
+  } catch {
+    return defaultUiZoom;
+  }
+}
+
+function saveUiZoom(uiZoom: UiZoom) {
+  try {
+    localStorage.setItem(uiZoomStorageKey, String(uiZoom));
   } catch {
     // localStorage may be unavailable (e.g. private browsing); the app still works, just unpersisted.
   }

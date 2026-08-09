@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -1813,5 +1813,38 @@ describe("App", () => {
     render(<App />);
 
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-mode", "dark");
+  });
+
+  it("changes UI zoom via keyboard shortcuts, clamps it, and persists it across restarts", async () => {
+    const { unmount } = render(<App />);
+
+    const appShell = () => document.querySelector(".app-shell") as HTMLElement;
+    expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("1");
+
+    fireEvent.keyDown(window, { key: "=", ctrlKey: true });
+    expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("1.1");
+    expect(localStorage.getItem("simpler.uiZoom")).toBe("110");
+
+    fireEvent.keyDown(window, { key: "=", ctrlKey: true });
+    expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("1.2");
+
+    fireEvent.keyDown(window, { key: "0", ctrlKey: true });
+    expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("1");
+    expect(localStorage.getItem("simpler.uiZoom")).toBe("100");
+
+    for (let i = 0; i < 5; i += 1) {
+      fireEvent.keyDown(window, { key: "-", ctrlKey: true });
+    }
+    expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("0.7");
+    expect(localStorage.getItem("simpler.uiZoom")).toBe("70");
+
+    // Below the floor, another decrease is a no-op (the "zoom-out" command becomes unavailable).
+    fireEvent.keyDown(window, { key: "-", ctrlKey: true });
+    expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("0.7");
+
+    unmount();
+    render(<App />);
+
+    expect(appShell().style.getPropertyValue("--ui-zoom")).toBe("0.7");
   });
 });
