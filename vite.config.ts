@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { configDefaults } from "vitest/config";
 
 const host = process.env.TAURI_DEV_HOST;
 
@@ -17,5 +18,6 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
+    exclude: [...configDefaults.exclude, "**/.claude/worktrees/**"],
   },
 });
