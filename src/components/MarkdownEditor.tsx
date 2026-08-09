@@ -7,6 +7,7 @@ import { markdownEditorTheme } from "./markdownEditorTheme";
 import { listContinuationKeymap } from "./listContinuation";
 import { findDroppedImagePath } from "../attachments/droppedImagePath";
 import { logDomDropEvent } from "../attachments/dropChannelDiagnostics";
+import { nativeDropClientPoint, subscribeToNativeImageDrop } from "../attachments/nativeDropChannel";
 import { importAttachment, readClipboardImage, saveAttachment } from "../native/commands";
 import type { FilesystemOperationResult, NativeCommandResponse } from "../native/commands";
 
@@ -236,6 +237,69 @@ export function MarkdownEditor({
   const reportAttachmentErrorRef = useRef<AttachmentErrorReporter>((message) => {
     onAttachmentErrorRef.current?.(message);
   });
+
+  // Drags from the file manager arrive on Tauri's window-level channel, never
+  // as a DOM `drop`, so the import is driven from here rather than from the
+  // editor's own event handlers.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    void subscribeToNativeImageDrop(({ paths, position }) => {
+      const view = viewRef.current;
+      const currentWorkspacePath = workspacePathRef.current;
+      const sourcePath = findDroppedImagePath(paths);
+
+      if (!view || !currentWorkspacePath || !sourcePath) {
+        return;
+      }
+
+      // The channel is window-wide, so a drop anywhere in the app reaches here;
+      // only drops landing on the editor should insert into the note.
+      const point = nativeDropClientPoint(position, window.devicePixelRatio);
+      const editorRect = view.dom.getBoundingClientRect();
+      const droppedOnEditor =
+        point.x >= editorRect.left &&
+        point.x <= editorRect.right &&
+        point.y >= editorRect.top &&
+        point.y <= editorRect.bottom;
+
+      if (!droppedOnEditor) {
+        return;
+      }
+
+      // Falls back to the cursor when the point maps to no document position.
+      const cursor = view.state.selection.main;
+      const dropPosition = view.posAtCoords(point);
+      const insertAt =
+        dropPosition === null
+          ? { from: cursor.from, to: cursor.to }
+          : { from: dropPosition, to: dropPosition };
+
+      const reportError = reportAttachmentErrorRef.current;
+      runAttachmentTask(droppedImageFailureMessage, reportError, () =>
+        importAndInsertAttachment(
+          view,
+          currentWorkspacePath,
+          notePathRef.current,
+          insertAt,
+          sourcePath,
+          reportError,
+        ),
+      );
+    }).then((dispose) => {
+      if (cancelled) {
+        dispose?.();
+        return;
+      }
+      unlisten = dispose;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) {
