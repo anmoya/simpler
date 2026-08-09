@@ -557,6 +557,14 @@ button {
   align-items: center;
 }
 
+.note-tree__folder-row--active-path > .note-tree__folder {
+  color: var(--color-accent);
+}
+
+.note-tree__folder-row--active-path > .note-tree__folder .note-tree__label .icon {
+  color: var(--color-accent);
+}
+
 .note-tree__toggle {
   display: grid;
   flex: 0 0 24px;

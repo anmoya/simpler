@@ -310,6 +310,49 @@ describe("ClassicShell", () => {
     expect(screen.getByRole("button", { name: "Expand daily" })).toBeInTheDocument();
   });
 
+  it("highlights the folder path down to the active note, and clears it with no note open", () => {
+    const workspaceTree = [
+      { name: "A", path: "A", kind: "folder" as const, children: [] },
+      {
+        name: "R",
+        path: "R",
+        kind: "folder" as const,
+        children: [
+          {
+            name: "B",
+            path: "R/B",
+            kind: "folder" as const,
+            children: [{ name: "note.md", path: "R/B/note.md", kind: "note" as const, children: [] }],
+          },
+        ],
+      },
+    ];
+    const openFolderPaths = new Set(["R", "R/B"]);
+
+    const { rerender } = renderShell({
+      workspaceTree,
+      openFolderPaths,
+      activeNotePath: "R/B/note.md",
+    });
+
+    const folderA = screen.getByRole("button", { name: "A" }).closest(".note-tree__folder-row");
+    const folderR = screen.getByRole("button", { name: "R" }).closest(".note-tree__folder-row");
+    const folderB = screen.getByRole("button", { name: "B" }).closest(".note-tree__folder-row");
+
+    expect(folderR).toHaveClass("note-tree__folder-row--active-path");
+    expect(folderB).toHaveClass("note-tree__folder-row--active-path");
+    expect(folderA).not.toHaveClass("note-tree__folder-row--active-path");
+
+    rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={openFolderPaths} activeNotePath={null} />);
+
+    expect(screen.getByRole("button", { name: "R" }).closest(".note-tree__folder-row")).not.toHaveClass(
+      "note-tree__folder-row--active-path",
+    );
+    expect(screen.getByRole("button", { name: "B" }).closest(".note-tree__folder-row")).not.toHaveClass(
+      "note-tree__folder-row--active-path",
+    );
+  });
+
   it("switches Tree Mode and focuses the active note from the sidebar header", async () => {
     const onTreeModeChange = vi.fn();
     const onFocusActiveNote = vi.fn();
