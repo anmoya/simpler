@@ -16,13 +16,14 @@ export interface MarkdownEditorProps {
   value: string;
   onChange: (content: string) => void;
   searchJump?: FileSearchJump | null;
-  onAttachmentError?: (message: string) => void;
+  onAttachmentError?: (message: string | null) => void;
 }
 
 // Attachment failures used to vanish into a discarded promise, which from the
 // outside is indistinguishable from the app ignoring the gesture. Every
 // attachment path now reports through this callback so the shell can show it.
-export type AttachmentErrorReporter = (message: string) => void;
+// `null` clears a previously reported failure once an attachment succeeds.
+export type AttachmentErrorReporter = (message: string | null) => void;
 
 const imageExtensionByMimeType: Record<string, string> = {
   "image/png": "png",
@@ -109,6 +110,8 @@ function insertAttachmentReference(
     reportError(failureMessage);
     return;
   }
+
+  reportError(null);
 
   const relativePath = response.data.itemPath.slice(parentFolderPath(notePath).length);
   const assetPath = relativePath.startsWith("/") ? relativePath.slice(1) : relativePath;

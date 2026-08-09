@@ -792,7 +792,7 @@ export function App() {
     persistWorkspaceTreeState(appState.workspace?.path, openFolderPaths, appState.treeMode);
   };
 
-  const reportAttachmentError = (message: string) => {
+  const reportAttachmentError = (message: string | null) => {
     setAppState((current) => ({ ...current, attachmentError: message }));
   };
 

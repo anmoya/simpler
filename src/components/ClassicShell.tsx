@@ -49,7 +49,7 @@ export interface ClassicShellProps {
   themeMode: ThemeMode;
   editorError: EditorError | null;
   attachmentError: string | null;
-  onAttachmentError: (message: string) => void;
+  onAttachmentError: (message: string | null) => void;
   canManageWorkspace: boolean;
   onOpenWorkspace: () => void;
   onCloneGitHubRepository: () => void;

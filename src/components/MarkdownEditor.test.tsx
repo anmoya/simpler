@@ -299,6 +299,55 @@ describe("MarkdownEditor", () => {
       });
     });
 
+    it("clears a previous attachment failure once an import succeeds", async () => {
+      vi.mocked(importAttachment)
+        .mockResolvedValueOnce({
+          ok: false,
+          domain: "filesystem",
+          action: "import-attachment",
+          error: "permission denied",
+          data: null,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          domain: "filesystem",
+          action: "import-attachment",
+          error: null,
+          data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+        });
+      const onAttachmentError = vi.fn();
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value={"# Today"}
+          onChange={() => undefined}
+          onAttachmentError={onAttachmentError}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      const dropEvent = {
+        dataTransfer: {
+          files: [],
+          items: [],
+          types: ["text/uri-list"],
+          getData: (type: string) =>
+            type === "text/uri-list" ? "file:///home/user/Pictures/screenshot.png" : "",
+        },
+        clientX: 42,
+        clientY: 7,
+      };
+
+      fireEvent.drop(editable, dropEvent);
+      await waitFor(() => expect(onAttachmentError).toHaveBeenCalledWith(expect.any(String)));
+
+      fireEvent.drop(editable, dropEvent);
+      await waitFor(() => expect(onAttachmentError).toHaveBeenLastCalledWith(null));
+    });
+
     it("does not intercept drops of non-image files", () => {
       render(
         <MarkdownEditor
