@@ -9,10 +9,11 @@ import type {
   ThemeMode,
   TreeMode,
   UiZoom,
+  EditorFontSize,
   UpdateNoticeState,
   WorkspaceTreeItem,
 } from "../app/appState";
-import { uiZoomSteps, defaultUiZoom } from "../app/appState";
+import { uiZoomSteps, defaultUiZoom, editorFontSizeSteps, defaultEditorFontSize } from "../app/appState";
 import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -59,6 +60,7 @@ export interface ClassicShellProps {
   noteHistoryError: string | null;
   themeMode: ThemeMode;
   uiZoom: UiZoom;
+  editorFontSize: EditorFontSize;
   sidebarCollapsed: boolean;
   onToggleSidebarCollapse: () => void;
   editorError: EditorError | null;
@@ -71,6 +73,7 @@ export interface ClassicShellProps {
   onRouteChange: (route: AppRoute) => void;
   onThemeChange: (themeMode: ThemeMode) => void;
   onUiZoomChange: (uiZoom: UiZoom) => void;
+  onEditorFontSizeChange: (editorFontSize: EditorFontSize) => void;
   onSelectFolder: (folderPath: string) => void;
   onSelectNote: (notePath: string) => void;
   onToggleFolder: (folderPath: string) => void;
@@ -151,6 +154,7 @@ export function ClassicShell({
   noteHistoryError,
   themeMode,
   uiZoom,
+  editorFontSize,
   sidebarCollapsed,
   onToggleSidebarCollapse,
   editorError,
@@ -163,6 +167,7 @@ export function ClassicShell({
   onRouteChange,
   onThemeChange,
   onUiZoomChange,
+  onEditorFontSizeChange,
   onSelectFolder,
   onSelectNote,
   onToggleFolder,
@@ -225,6 +230,7 @@ export function ClassicShell({
   const [fileSearchQuery, setFileSearchQuery] = useState("");
   const [activeFileMatchIndex, setActiveFileMatchIndex] = useState(0);
   const [isFileSearchOpen, setIsFileSearchOpen] = useState(false);
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const fileSearchInputRef = useRef<HTMLInputElement | null>(null);
   const editorContainerRef = useRef<HTMLElement | null>(null);
   const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; kind: "folder" | "note" } | null>(
@@ -286,6 +292,10 @@ export function ClassicShell({
   const uiZoomIndex = uiZoomSteps.indexOf(uiZoom);
   const nextUiZoomIn = uiZoomSteps[Math.min(uiZoomSteps.length - 1, uiZoomIndex + 1)] ?? uiZoom;
   const nextUiZoomOut = uiZoomSteps[Math.max(0, uiZoomIndex - 1)] ?? uiZoom;
+  const editorFontSizeIndex = editorFontSizeSteps.indexOf(editorFontSize);
+  const nextEditorFontSizeIn =
+    editorFontSizeSteps[Math.min(editorFontSizeSteps.length - 1, editorFontSizeIndex + 1)] ?? editorFontSize;
+  const nextEditorFontSizeOut = editorFontSizeSteps[Math.max(0, editorFontSizeIndex - 1)] ?? editorFontSize;
   const fileSearchMatches = useMemo(
     () => findPlainTextMatches(noteContent, fileSearchQuery),
     [fileSearchQuery, noteContent],
@@ -393,6 +403,27 @@ export function ClassicShell({
         run: () => onUiZoomChange(defaultUiZoom),
       },
       {
+        id: "editor-font-size-in",
+        label: `Increase editor font size (${nextEditorFontSizeIn}px)`,
+        shortcut: "Ctrl/Cmd+Shift++",
+        available: editorFontSize < editorFontSizeSteps[editorFontSizeSteps.length - 1],
+        run: () => onEditorFontSizeChange(nextEditorFontSizeIn),
+      },
+      {
+        id: "editor-font-size-out",
+        label: `Decrease editor font size (${nextEditorFontSizeOut}px)`,
+        shortcut: "Ctrl/Cmd+Shift+-",
+        available: editorFontSize > editorFontSizeSteps[0],
+        run: () => onEditorFontSizeChange(nextEditorFontSizeOut),
+      },
+      {
+        id: "editor-font-size-reset",
+        label: `Reset editor font size to ${defaultEditorFontSize}px`,
+        shortcut: "Ctrl/Cmd+Shift+0",
+        available: editorFontSize !== defaultEditorFontSize,
+        run: () => onEditorFontSizeChange(defaultEditorFontSize),
+      },
+      {
         id: "command-help",
         label: "Command Help",
         shortcut: "Ctrl/Cmd+/",
@@ -422,6 +453,8 @@ export function ClassicShell({
       nextTheme,
       nextUiZoomIn,
       nextUiZoomOut,
+      nextEditorFontSizeIn,
+      nextEditorFontSizeOut,
       onCreateFolder,
       onCreateNote,
       onMoveActiveNote,
@@ -432,9 +465,13 @@ export function ClassicShell({
       onSyncWorkspace,
       onThemeChange,
       onUiZoomChange,
+      onEditorFontSizeChange,
       uiZoom,
+      editorFontSize,
       handleToggleSidebarCollapse,
       effectiveSidebarCollapsed,
+      onToggleSidebarCollapse,
+      sidebarCollapsed,
       workspaceTree,
     ],
   );
@@ -458,6 +495,14 @@ export function ClassicShell({
       input?.select();
     }
   }, [isFileSearchOpen]);
+
+  useEffect(() => {
+    if (isGlobalSearchOpen) {
+      const input = globalSearchInputRef.current;
+      input?.focus();
+      input?.select();
+    }
+  }, [isGlobalSearchOpen]);
 
   useEffect(() => {
     if (!activeNotePath) {
@@ -534,6 +579,16 @@ export function ClassicShell({
         return;
       }
 
+      if (hasCommandModifier && event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        if (sidebarCollapsed) {
+          setFocusSearchOnExpand(true);
+          onToggleSidebarCollapse();
+        }
+        setIsGlobalSearchOpen(true);
+        return;
+      }
+
       if (hasCommandModifier && event.key.toLowerCase() === "f") {
         if (activeNotePath) {
           event.preventDefault();
@@ -591,6 +646,31 @@ export function ClassicShell({
         return;
       }
 
+      // Editor font size shortcuts add Shift to UI zoom's combo, so they must
+      // be checked before the plain zoom branches below: Shift+= also
+      // produces event.key === "+", which the plain zoom-in check would
+      // otherwise swallow.
+      if (hasCommandModifier && event.shiftKey && (event.key === "=" || event.key === "+")) {
+        if (runAvailableCommand("editor-font-size-in")) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (hasCommandModifier && event.shiftKey && event.key === "-") {
+        if (runAvailableCommand("editor-font-size-out")) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (hasCommandModifier && event.shiftKey && event.key === "0") {
+        if (runAvailableCommand("editor-font-size-reset")) {
+          event.preventDefault();
+        }
+        return;
+      }
+
       if (hasCommandModifier && (event.key === "=" || event.key === "+")) {
         if (runAvailableCommand("zoom-in")) {
           event.preventDefault();
@@ -628,12 +708,17 @@ export function ClassicShell({
           const editorElement = editorContainerRef.current?.querySelector<HTMLElement>(".cm-content");
           editorElement?.focus();
         }
+        if (isGlobalSearchOpen) {
+          setIsGlobalSearchOpen(false);
+          const editorElement = editorContainerRef.current?.querySelector<HTMLElement>(".cm-content");
+          editorElement?.focus();
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [availableCommands, isFileSearchOpen]);
+  }, [availableCommands, isFileSearchOpen, isGlobalSearchOpen, sidebarCollapsed, onToggleSidebarCollapse]);
 
   const runCommand = (command: ShellCommand) => {
     command.run();
@@ -681,6 +766,7 @@ export function ClassicShell({
               aria-label="Focus Global Search"
               onClick={() => {
                 setFocusSearchOnExpand(true);
+                setIsGlobalSearchOpen(true);
                 handleToggleSidebarCollapse();
               }}
             >
@@ -863,38 +949,40 @@ export function ClassicShell({
                     <Icon name="target" size={16} />
                   </button>
                 </div>
-                <div className="global-search" role="search" aria-label="Global Search">
-                  <label className="global-search__field">
-                    <Icon name="search" />
-                    <input
-                      ref={globalSearchInputRef}
-                      type="search"
-                      aria-label="Global Search"
-                      placeholder="Buscar en todos los archivos..."
-                      value={globalSearchQuery}
-                      onChange={(event) => onGlobalSearchChange(event.target.value)}
-                      disabled={!canManageWorkspace}
-                    />
-                  </label>
-                  {globalSearchResults.length > 0 ? (
-                    <ol className="global-search__results" aria-label="Global Search results">
-                      {globalSearchResults.map((result) => (
-                        <li key={`${result.notePath}:${result.lineNumber}:${result.matchStart}`}>
-                          <button
-                            type="button"
-                            aria-label={`${result.notePath} line ${result.lineNumber}: ${result.lineText}`}
-                            onClick={() => onSelectGlobalSearchResult(result)}
-                          >
-                            <span>{result.notePath}</span>
-                            <small>
-                              Line {result.lineNumber}: {result.lineText}
-                            </small>
-                          </button>
-                        </li>
-                      ))}
-                    </ol>
-                  ) : null}
-                </div>
+                {isGlobalSearchOpen ? (
+                  <div className="global-search" role="search" aria-label="Global Search">
+                    <label className="global-search__field">
+                      <Icon name="search" />
+                      <input
+                        ref={globalSearchInputRef}
+                        type="search"
+                        aria-label="Global Search"
+                        placeholder="Buscar en todos los archivos..."
+                        value={globalSearchQuery}
+                        onChange={(event) => onGlobalSearchChange(event.target.value)}
+                        disabled={!canManageWorkspace}
+                      />
+                    </label>
+                    {globalSearchResults.length > 0 ? (
+                      <ol className="global-search__results" aria-label="Global Search results">
+                        {globalSearchResults.map((result) => (
+                          <li key={`${result.notePath}:${result.lineNumber}:${result.matchStart}`}>
+                            <button
+                              type="button"
+                              aria-label={`${result.notePath} line ${result.lineNumber}: ${result.lineText}`}
+                              onClick={() => onSelectGlobalSearchResult(result)}
+                            >
+                              <span>{result.notePath}</span>
+                              <small>
+                                Line {result.lineNumber}: {result.lineText}
+                              </small>
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : null}
+                  </div>
+                ) : null}
                 {workspaceTree.length > 0 ? (
                   <WorkspaceTree
                     items={workspaceTree}
@@ -1051,6 +1139,7 @@ export function ClassicShell({
                 onChange={onNoteChange}
                 searchJump={currentFileSearchJump}
                 onAttachmentError={onAttachmentError}
+                fontSize={editorFontSize}
               />
             </>
           ) : hasOpenWorkspace && !hasNotes ? (
@@ -1066,6 +1155,7 @@ export function ClassicShell({
             noteHistoryPreview={noteHistoryPreview}
             noteHistoryLoading={noteHistoryLoading}
             noteHistoryError={noteHistoryError}
+            currentContent={noteContent}
             onSelectNoteHistoryEntry={onSelectNoteHistoryEntry}
             onCloseNoteHistory={onCloseNoteHistory}
             onRestoreNoteHistoryEntry={onRestoreNoteHistoryEntry}

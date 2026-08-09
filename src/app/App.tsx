@@ -12,6 +12,9 @@ import {
   type UiZoom,
   uiZoomSteps,
   defaultUiZoom,
+  type EditorFontSize,
+  editorFontSizeSteps,
+  defaultEditorFontSize,
 } from "./appState";
 import { expandPathToNote, focusActiveNote, restoreOpenFolderPaths, toggleFolder } from "./workspaceTreeState";
 import type { AppRoute } from "./routes";
@@ -111,6 +114,7 @@ export function App() {
   const [closeSyncPrompt, setCloseSyncPrompt] = useState<CloseSyncPromptState | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [uiZoom, setUiZoomState] = useState<UiZoom>(() => readUiZoom());
+  const [editorFontSize, setEditorFontSizeState] = useState<EditorFontSize>(() => readEditorFontSize());
   const [noteHistoryPanel, setNoteHistoryPanel] = useState<NoteHistoryPanelState>(closedNoteHistoryPanel);
 
   const requestPrompt = (title: string, defaultValue = "") =>
@@ -1018,6 +1022,11 @@ export function App() {
     setUiZoomState(uiZoom);
   };
 
+  const changeEditorFontSize = (editorFontSize: EditorFontSize) => {
+    saveEditorFontSize(editorFontSize);
+    setEditorFontSizeState(editorFontSize);
+  };
+
   const toggleSidebarCollapsed = () => {
     setAppState((current) => {
       const sidebarCollapsed = !current.sidebarCollapsed;
@@ -1261,6 +1270,7 @@ export function App() {
       noteHistoryError={noteHistoryPanel.error}
       themeMode={appState.themeMode}
       uiZoom={uiZoom}
+      editorFontSize={editorFontSize}
       sidebarCollapsed={appState.sidebarCollapsed}
       onToggleSidebarCollapse={toggleSidebarCollapsed}
       editorError={appState.editorError}
@@ -1273,6 +1283,7 @@ export function App() {
       onRouteChange={openRoute}
       onThemeChange={changeTheme}
       onUiZoomChange={changeUiZoom}
+      onEditorFontSizeChange={changeEditorFontSize}
       onSelectFolder={selectFolder}
       onSelectNote={selectNote}
       onToggleFolder={toggleWorkspaceFolder}
@@ -1386,6 +1397,27 @@ function readUiZoom(): UiZoom {
 function saveUiZoom(uiZoom: UiZoom) {
   try {
     localStorage.setItem(uiZoomStorageKey, String(uiZoom));
+  } catch {
+    // localStorage may be unavailable (e.g. private browsing); the app still works, just unpersisted.
+  }
+}
+
+const editorFontSizeStorageKey = "simpler.editorFontSize";
+
+function readEditorFontSize(): EditorFontSize {
+  try {
+    const value = Number(localStorage.getItem(editorFontSizeStorageKey));
+    return editorFontSizeSteps.includes(value as EditorFontSize)
+      ? (value as EditorFontSize)
+      : defaultEditorFontSize;
+  } catch {
+    return defaultEditorFontSize;
+  }
+}
+
+function saveEditorFontSize(editorFontSize: EditorFontSize) {
+  try {
+    localStorage.setItem(editorFontSizeStorageKey, String(editorFontSize));
   } catch {
     // localStorage may be unavailable (e.g. private browsing); the app still works, just unpersisted.
   }

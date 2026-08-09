@@ -8,6 +8,12 @@ export type ThemeMode = "light" | "dark";
 export const uiZoomSteps = [70, 80, 90, 100, 110, 120, 130, 140, 150] as const;
 export type UiZoom = (typeof uiZoomSteps)[number];
 export const defaultUiZoom: UiZoom = 100;
+// Editor-only font size, independent of the whole-app-shell UI zoom above.
+// Discrete steps only, expressed in px, centered on the current
+// `--font-size-body` default (13.5px).
+export const editorFontSizeSteps = [11, 12, 13, 13.5, 14.5, 16, 18, 20, 22] as const;
+export type EditorFontSize = (typeof editorFontSizeSteps)[number];
+export const defaultEditorFontSize: EditorFontSize = 13.5;
 export type TreeMode = "free" | "accordion";
 export type EditorError =
   | { kind: "missing-note"; message: string }

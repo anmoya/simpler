@@ -425,4 +425,38 @@ describe("MarkdownEditor", () => {
       expect(onChange).toHaveBeenCalledWith(expected);
     });
   });
+
+  describe("editor font size", () => {
+    it("applies the fontSize prop as the --editor-font-size CSS variable, and updates it when the prop changes", () => {
+      const { rerender } = render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          value="# Today"
+          onChange={() => undefined}
+          fontSize={16}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      expect(editor.style.getPropertyValue("--editor-font-size")).toBe("16px");
+
+      rerender(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          value="# Today"
+          onChange={() => undefined}
+          fontSize={20}
+        />,
+      );
+
+      expect(editor.style.getPropertyValue("--editor-font-size")).toBe("20px");
+    });
+
+    it("defaults to 13.5px when no fontSize prop is given", () => {
+      render(<MarkdownEditor notePath="daily/today.md" value="# Today" onChange={() => undefined} />);
+
+      const editor = screen.getByTestId("markdown-editor");
+      expect(editor.style.getPropertyValue("--editor-font-size")).toBe("13.5px");
+    });
+  });
 });
