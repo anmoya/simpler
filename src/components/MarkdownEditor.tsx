@@ -5,6 +5,8 @@ import { markdown } from "@codemirror/lang-markdown";
 import type { FileSearchJump } from "../app/appState";
 import { markdownEditorTheme } from "./markdownEditorTheme";
 import { listContinuationKeymap } from "./listContinuation";
+import { findDroppedImagePath } from "../attachments/droppedImagePath";
+import { logDomDropEvent } from "../attachments/dropChannelDiagnostics";
 import { importAttachment, readClipboardImage, saveAttachment } from "../native/commands";
 import type { FilesystemOperationResult, NativeCommandResponse } from "../native/commands";
 
@@ -14,7 +16,13 @@ export interface MarkdownEditorProps {
   value: string;
   onChange: (content: string) => void;
   searchJump?: FileSearchJump | null;
+  onAttachmentError?: (message: string) => void;
 }
+
+// Attachment failures used to vanish into a discarded promise, which from the
+// outside is indistinguishable from the app ignoring the gesture. Every
+// attachment path now reports through this callback so the shell can show it.
+export type AttachmentErrorReporter = (message: string) => void;
 
 const imageExtensionByMimeType: Record<string, string> = {
   "image/png": "png",
@@ -24,6 +32,9 @@ const imageExtensionByMimeType: Record<string, string> = {
   "image/svg+xml": "svg",
   "image/bmp": "bmp",
 };
+
+const pastedImageFailureMessage = "Could not save the pasted image into the Workspace.";
+const droppedImageFailureMessage = "Could not import the dropped image into the Workspace.";
 
 function parentFolderPath(notePath: string) {
   const lastSlash = notePath.lastIndexOf("/");
@@ -71,14 +82,31 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+// Runs an attachment task, reporting both a rejected promise and an `ok: false`
+// response through the same visible channel — the second is where failures
+// actually surfaced before, since the native commands resolve rather than throw.
+function runAttachmentTask(
+  failureMessage: string,
+  reportError: AttachmentErrorReporter,
+  task: () => Promise<void>,
+) {
+  void task().catch((error) => {
+    console.error(failureMessage, error);
+    reportError(failureMessage);
+  });
+}
+
 function insertAttachmentReference(
   view: EditorView,
   notePath: string,
   insertAt: { from: number; to: number },
   response: NativeCommandResponse<FilesystemOperationResult>,
+  failureMessage: string,
+  reportError: AttachmentErrorReporter,
 ) {
   if (!response.ok || !response.data) {
-    console.error("failed to save attachment", response.error);
+    console.error(failureMessage, response.error);
+    reportError(failureMessage);
     return;
   }
 
@@ -98,6 +126,8 @@ async function saveAndInsertAttachment(
   insertAt: { from: number; to: number },
   contentBase64: string,
   mimeType: string,
+  failureMessage: string,
+  reportError: AttachmentErrorReporter,
 ) {
   const fileName = attachmentFileName(mimeType);
   const response = await saveAttachment(
@@ -106,7 +136,7 @@ async function saveAndInsertAttachment(
     fileName,
     contentBase64,
   );
-  insertAttachmentReference(view, notePath, insertAt, response);
+  insertAttachmentReference(view, notePath, insertAt, response, failureMessage, reportError);
 }
 
 async function insertAttachment(
@@ -115,40 +145,29 @@ async function insertAttachment(
   workspacePath: string,
   notePath: string,
   insertAt: { from: number; to: number },
+  failureMessage: string,
+  reportError: AttachmentErrorReporter,
 ) {
   const contentBase64 = await fileToBase64(file);
-  await saveAndInsertAttachment(view, workspacePath, notePath, insertAt, contentBase64, file.type);
+  await saveAndInsertAttachment(
+    view,
+    workspacePath,
+    notePath,
+    insertAt,
+    contentBase64,
+    file.type,
+    failureMessage,
+    reportError,
+  );
 }
-
-const importableImageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
 
 // WebKitGTK's `drop` DOM event delivers files dragged from a file manager as
 // a `text/uri-list` (a `file://` URI), not as a `File` object with readable
-// bytes, so this decodes the local path and imports it through a native
-// command instead of reading bytes in the browser.
-function findDroppedImagePath(dataTransfer: DataTransfer | null | undefined) {
-  const uriList = dataTransfer?.getData?.("text/uri-list");
-  if (!uriList) {
-    return undefined;
-  }
-
-  const uri = uriList
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line && !line.startsWith("#"));
-
-  if (!uri || !uri.startsWith("file://")) {
-    return undefined;
-  }
-
-  const path = decodeURIComponent(uri.slice("file://".length));
-  const extension = path.split(".").pop()?.toLowerCase();
-
-  if (!extension || !importableImageExtensions.has(extension)) {
-    return undefined;
-  }
-
-  return path;
+// bytes, so the local path is recognised and imported through a native command
+// instead of reading bytes in the browser. All the parsing lives in the pure
+// module; this only pulls the raw string off the event.
+function droppedImagePathFrom(dataTransfer: DataTransfer | null | undefined) {
+  return findDroppedImagePath(dataTransfer?.getData?.("text/uri-list"));
 }
 
 async function importAndInsertAttachment(
@@ -157,9 +176,11 @@ async function importAndInsertAttachment(
   notePath: string,
   insertAt: { from: number; to: number },
   sourcePath: string,
+  failureMessage: string,
+  reportError: AttachmentErrorReporter,
 ) {
   const response = await importAttachment(workspacePath, parentFolderPath(notePath), sourcePath);
-  insertAttachmentReference(view, notePath, insertAt, response);
+  insertAttachmentReference(view, notePath, insertAt, response, failureMessage, reportError);
 }
 
 // WebKitGTK's `paste` DOM event does not expose image bytes on Linux
@@ -172,7 +193,10 @@ async function pasteFromSystemClipboard(
   workspacePath: string,
   notePath: string,
   insertAt: { from: number; to: number },
+  reportError: AttachmentErrorReporter,
 ) {
+  // A failed `readClipboardImage` is the normal "the clipboard holds text, not
+  // an image" fall-through, so it is deliberately not reported as an error.
   const imageResponse = await readClipboardImage();
 
   if (imageResponse.ok && imageResponse.data) {
@@ -183,6 +207,8 @@ async function pasteFromSystemClipboard(
       insertAt,
       imageResponse.data.contentBase64,
       imageResponse.data.mimeType,
+      pastedImageFailureMessage,
+      reportError,
     );
     return;
   }
@@ -206,6 +232,7 @@ export function MarkdownEditor({
   value,
   onChange,
   searchJump = null,
+  onAttachmentError,
 }: MarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -216,6 +243,13 @@ export function MarkdownEditor({
   notePathRef.current = notePath;
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
+  // Read through a ref: the EditorView is built once per note, so a prop
+  // captured in a handler closure would go stale.
+  const onAttachmentErrorRef = useRef(onAttachmentError);
+  onAttachmentErrorRef.current = onAttachmentError;
+  const reportAttachmentErrorRef = useRef<AttachmentErrorReporter>((message) => {
+    onAttachmentErrorRef.current?.(message);
+  });
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -243,10 +277,16 @@ export function MarkdownEditor({
 
               event.preventDefault();
               const selection = view.state.selection.main;
-              void pasteFromSystemClipboard(view, currentWorkspacePath, notePathRef.current, {
-                from: selection.from,
-                to: selection.to,
-              });
+              const reportError = reportAttachmentErrorRef.current;
+              runAttachmentTask(pastedImageFailureMessage, reportError, () =>
+                pasteFromSystemClipboard(
+                  view,
+                  currentWorkspacePath,
+                  notePathRef.current,
+                  { from: selection.from, to: selection.to },
+                  reportError,
+                ),
+              );
               return true;
             },
             paste: (event, view) => {
@@ -259,12 +299,17 @@ export function MarkdownEditor({
 
               event.preventDefault();
               const selection = view.state.selection.main;
-              void insertAttachment(
-                view,
-                imageFile,
-                currentWorkspacePath,
-                notePathRef.current,
-                { from: selection.from, to: selection.to },
+              const reportError = reportAttachmentErrorRef.current;
+              runAttachmentTask(pastedImageFailureMessage, reportError, () =>
+                insertAttachment(
+                  view,
+                  imageFile,
+                  currentWorkspacePath,
+                  notePathRef.current,
+                  { from: selection.from, to: selection.to },
+                  pastedImageFailureMessage,
+                  reportError,
+                ),
               );
               return true;
             },
@@ -281,6 +326,10 @@ export function MarkdownEditor({
               return false;
             },
             drop: (event, view) => {
+              // TEMPORARY DIAGNOSTIC (ticket 03) — must stay the first
+              // statement, before any condition that could skip it.
+              logDomDropEvent(event);
+
               const imageFile = findImageFile(event.dataTransfer?.files, event.dataTransfer?.items);
               const currentWorkspacePath = workspacePathRef.current;
 
@@ -289,28 +338,38 @@ export function MarkdownEditor({
                 const dropPosition =
                   view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
                   view.state.selection.main.from;
-                void insertAttachment(
-                  view,
-                  imageFile,
-                  currentWorkspacePath,
-                  notePathRef.current,
-                  { from: dropPosition, to: dropPosition },
+                const reportError = reportAttachmentErrorRef.current;
+                runAttachmentTask(droppedImageFailureMessage, reportError, () =>
+                  insertAttachment(
+                    view,
+                    imageFile,
+                    currentWorkspacePath,
+                    notePathRef.current,
+                    { from: dropPosition, to: dropPosition },
+                    droppedImageFailureMessage,
+                    reportError,
+                  ),
                 );
                 return true;
               }
 
-              const droppedImagePath = findDroppedImagePath(event.dataTransfer);
+              const droppedImagePath = droppedImagePathFrom(event.dataTransfer);
               if (droppedImagePath && currentWorkspacePath) {
                 event.preventDefault();
                 const dropPosition =
                   view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
                   view.state.selection.main.from;
-                void importAndInsertAttachment(
-                  view,
-                  currentWorkspacePath,
-                  notePathRef.current,
-                  { from: dropPosition, to: dropPosition },
-                  droppedImagePath,
+                const reportError = reportAttachmentErrorRef.current;
+                runAttachmentTask(droppedImageFailureMessage, reportError, () =>
+                  importAndInsertAttachment(
+                    view,
+                    currentWorkspacePath,
+                    notePathRef.current,
+                    { from: dropPosition, to: dropPosition },
+                    droppedImagePath,
+                    droppedImageFailureMessage,
+                    reportError,
+                  ),
                 );
                 return true;
               }

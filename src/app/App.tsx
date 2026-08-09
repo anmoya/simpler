@@ -60,6 +60,7 @@ import {
 } from "../native/commands";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { subscribeToNativeDropDiagnostics } from "../attachments/dropChannelDiagnostics";
 
 type SyncOutcome = { ok: true } | { ok: false; kind?: "conflict"; error?: string };
 
@@ -136,6 +137,26 @@ export function App() {
   }
 
   const updateSchedulerRef = useRef<UpdateScheduler | null>(null);
+
+  // TEMPORARY DIAGNOSTIC — remove with ticket 03 of
+  // `.scratch/attachments-drag-drop-fix/`.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    void subscribeToNativeDropDiagnostics().then((dispose) => {
+      if (cancelled) {
+        dispose?.();
+        return;
+      }
+      unlisten = dispose;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -705,6 +726,7 @@ export function App() {
       activeFolderPath: parentFolderPath(notePath),
       noteContent: response.data!.content,
       editorError: null,
+      attachmentError: null,
       workspaceError: null,
       fileSearchJump,
     }));
@@ -768,6 +790,10 @@ export function App() {
     const openFolderPaths = focusActiveNote(appState.activeNotePath, appState.workspaceTree);
     setAppState((current) => ({ ...current, openFolderPaths }));
     persistWorkspaceTreeState(appState.workspace?.path, openFolderPaths, appState.treeMode);
+  };
+
+  const reportAttachmentError = (message: string) => {
+    setAppState((current) => ({ ...current, attachmentError: message }));
   };
 
   const changeNoteContent = async (content: string) => {
@@ -1238,6 +1264,8 @@ export function App() {
       noteHistoryError={noteHistoryPanel.error}
       themeMode={appState.themeMode}
       editorError={appState.editorError}
+      attachmentError={appState.attachmentError}
+      onAttachmentError={reportAttachmentError}
       canManageWorkspace={appState.workspace !== null}
       onOpenWorkspace={openWorkspaceFromPath}
       onCloneGitHubRepository={cloneExistingGitHubRepository}

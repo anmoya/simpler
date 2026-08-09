@@ -649,6 +649,13 @@ button {
   color: var(--color-error);
 }
 
+.attachment-error {
+  margin: 0;
+  padding: 8px 16px;
+  color: var(--color-error);
+  font-size: var(--font-size-body);
+}
+
 .editor-pane {
   display: grid;
   min-width: 0;

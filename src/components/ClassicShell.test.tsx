@@ -26,6 +26,8 @@ const defaultProps: ClassicShellProps = {
   noteHistoryError: null,
   themeMode: "light",
   editorError: null,
+  attachmentError: null,
+  onAttachmentError: noop,
   canManageWorkspace: false,
   onOpenWorkspace: noop,
   onCloneGitHubRepository: noop,
@@ -643,6 +645,22 @@ describe("ClassicShell", () => {
 
     expect(screen.getByText("The note could not be opened.")).toBeInTheDocument();
     expect(screen.getByText("failed to read note: permission denied")).toBeInTheDocument();
+  });
+
+  it("shows an attachment failure without unmounting the editor", () => {
+    renderShell({
+      canManageWorkspace: true,
+      workspaceName: "notes",
+      activeNotePath: "daily/today.md",
+      activeFolderPath: "daily",
+      noteContent: "# Today",
+      attachmentError: "Could not import the dropped image into the Workspace.",
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not import the dropped image into the Workspace.",
+    );
+    expect(screen.getByTestId("markdown-editor")).toBeInTheDocument();
   });
 
   it("keeps deeply nested folders and long note names reachable", () => {

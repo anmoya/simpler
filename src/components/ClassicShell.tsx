@@ -48,6 +48,8 @@ export interface ClassicShellProps {
   noteHistoryError: string | null;
   themeMode: ThemeMode;
   editorError: EditorError | null;
+  attachmentError: string | null;
+  onAttachmentError: (message: string) => void;
   canManageWorkspace: boolean;
   onOpenWorkspace: () => void;
   onCloneGitHubRepository: () => void;
@@ -134,6 +136,8 @@ export function ClassicShell({
   noteHistoryError,
   themeMode,
   editorError,
+  attachmentError,
+  onAttachmentError,
   canManageWorkspace,
   onOpenWorkspace,
   onCloneGitHubRepository,
@@ -805,13 +809,21 @@ export function ClassicShell({
           {editorError ? (
             <EditorErrorState error={editorError} notePath={activeNotePath} />
           ) : activeNotePath ? (
-            <MarkdownEditor
-              notePath={activeNotePath}
-              workspacePath={workspacePath}
-              value={noteContent}
-              onChange={onNoteChange}
-              searchJump={currentFileSearchJump}
-            />
+            <>
+              {attachmentError ? (
+                <p className="attachment-error" role="alert">
+                  {attachmentError}
+                </p>
+              ) : null}
+              <MarkdownEditor
+                notePath={activeNotePath}
+                workspacePath={workspacePath}
+                value={noteContent}
+                onChange={onNoteChange}
+                searchJump={currentFileSearchJump}
+                onAttachmentError={onAttachmentError}
+              />
+            </>
           ) : hasOpenWorkspace && !hasNotes ? (
             <p className="empty-editor">Create a note to start writing in {workspaceName}.</p>
           ) : (

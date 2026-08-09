@@ -58,6 +58,9 @@ export interface AppState {
   noteContent: string;
   themeMode: ThemeMode;
   editorError: EditorError | null;
+  // Attachment (paste/drop) failures: shown alongside the editor rather than
+  // replacing it, so an import failure never costs the in-progress note.
+  attachmentError: string | null;
   syncStatus: SyncStatus;
   conflictedFiles: string[];
   workspaceError: string | null;
@@ -98,6 +101,7 @@ export const initialAppState: AppState = {
   noteContent: "",
   themeMode: "light",
   editorError: null,
+  attachmentError: null,
   syncStatus: "desconectado",
   conflictedFiles: [],
   workspaceError: null,

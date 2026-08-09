@@ -104,6 +104,40 @@ describe("MarkdownEditor", () => {
         expect(onChange).toHaveBeenCalledWith("pasted text");
       });
     });
+
+    it("reports a failed clipboard-image save through onAttachmentError", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: null,
+        data: { contentBase64: "ZmFrZQ==", mimeType: "image/png" },
+      });
+      vi.mocked(saveAttachment).mockRejectedValue(new Error("disk full"));
+      const onAttachmentError = vi.fn();
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+          onAttachmentError={onAttachmentError}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(onAttachmentError).toHaveBeenCalledWith(
+          expect.stringContaining("Could not save the pasted image"),
+        );
+      });
+    });
   });
 
   describe("pasting an image", () => {
@@ -218,34 +252,39 @@ describe("MarkdownEditor", () => {
       posAtCoordsSpy.mockRestore();
     });
 
-    it("imports a file-manager drop delivered only as text/uri-list", async () => {
+    // The former happy-path test for a `text/uri-list` drop was removed rather
+    // than kept: it passed against a hand-built synthetic event while the
+    // feature was completely inoperative in the real app. The parsing it
+    // covered now lives in `attachments/droppedImagePath.test.ts`, and the drop
+    // channel itself is verified manually (see the drag-and-drop spec).
+    it("reports a failed import through onAttachmentError instead of failing silently", async () => {
       vi.mocked(importAttachment).mockResolvedValue({
-        ok: true,
+        ok: false,
         domain: "filesystem",
         action: "import-attachment",
-        error: null,
-        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+        error: "permission denied",
+        data: null,
       });
+      const onAttachmentError = vi.fn();
 
       render(
         <MarkdownEditor
           notePath="daily/today.md"
           workspacePath="/workspace"
-          value={"# Today\n\nSome body text far from the drop point"}
+          value={"# Today"}
           onChange={() => undefined}
+          onAttachmentError={onAttachmentError}
         />,
       );
 
       const editor = screen.getByTestId("markdown-editor");
       const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
 
-      const posAtCoordsSpy = vi.spyOn(EditorView.prototype, "posAtCoords").mockReturnValue(9);
-
       fireEvent.drop(editable, {
         dataTransfer: {
           files: [],
           items: [],
-          types: ["text/uri-list", "text/html"],
+          types: ["text/uri-list"],
           getData: (type: string) =>
             type === "text/uri-list" ? "file:///home/user/Pictures/screenshot.png" : "",
         },
@@ -254,18 +293,10 @@ describe("MarkdownEditor", () => {
       });
 
       await waitFor(() => {
-        expect(importAttachment).toHaveBeenCalledWith(
-          "/workspace",
-          "daily",
-          "/home/user/Pictures/screenshot.png",
+        expect(onAttachmentError).toHaveBeenCalledWith(
+          expect.stringContaining("Could not import the dropped image"),
         );
       });
-
-      await waitFor(() => {
-        expect(editable.textContent).toContain("![](assets/2026-08-08-143022.png)");
-      });
-
-      posAtCoordsSpy.mockRestore();
     });
 
     it("does not intercept drops of non-image files", () => {
