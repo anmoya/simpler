@@ -18,10 +18,18 @@ const defaultProps: ClassicShellProps = {
   activeNotePath: null,
   activeFolderPath: "",
   noteContent: "",
+  noteHistoryOpen: false,
+  noteHistoryEntries: [],
+  selectedNoteHistoryCommitId: null,
+  noteHistoryPreview: null,
+  noteHistoryLoading: false,
+  noteHistoryError: null,
   themeMode: "light",
   sidebarCollapsed: false,
   onToggleSidebarCollapse: noop,
   editorError: null,
+  attachmentError: null,
+  onAttachmentError: noop,
   canManageWorkspace: false,
   onOpenWorkspace: noop,
   onCloneGitHubRepository: noop,
@@ -35,11 +43,17 @@ const defaultProps: ClassicShellProps = {
   onFocusActiveNote: noop,
   onNavigateToNote: noop,
   onNoteChange: noop,
+  onOpenNoteHistory: noop,
+  onCloseNoteHistory: noop,
+  onSelectNoteHistoryEntry: noop,
+  onRestoreNoteHistoryEntry: noop,
   onCreateFolder: noop,
   onCreateNote: noop,
   onRenameSelection: noop,
   onMoveActiveNote: noop,
   onDeleteSelection: noop,
+  trashEntries: [],
+  onRestoreTrashItem: noop,
   onMoveItem: noop,
   onSyncWorkspace: noop,
   githubRemote: null,
@@ -90,6 +104,15 @@ function renderShell(props: Partial<ClassicShellProps> = {}) {
 }
 
 describe("ClassicShell", () => {
+  it("disables the note history toggle in a plain (non-Git-backed) Workspace", () => {
+    renderShell({
+      activeNotePath: "today.md",
+      isWorkspaceGitBacked: false,
+    });
+
+    expect(screen.getByRole("button", { name: "Open note history" })).toBeDisabled();
+  });
+
   it("reserves space for the sidebar, editor, and status area", () => {
     renderShell({
       workspaceTree: [{ name: "today.md", path: "daily/today.md", kind: "note", children: [] }],
@@ -143,6 +166,28 @@ describe("ClassicShell", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Sync" }));
 
     expect(onRouteChange).toHaveBeenCalledWith("sync");
+  });
+
+  it("opens the Trash view and offers restore for each trashed item", async () => {
+    const onRouteChange = vi.fn();
+    const onRestoreTrashItem = vi.fn();
+
+    const { rerender } = renderShell({ canManageWorkspace: true, onRouteChange });
+
+    await userEvent.click(screen.getByRole("tab", { name: "Trash" }));
+    expect(onRouteChange).toHaveBeenCalledWith("trash");
+
+    rerender(<ClassicShell {...defaultProps} activeRoute="trash" canManageWorkspace trashEntries={[{
+      id: "trash-1",
+      originalRelativePath: "daily/today.md",
+      trashedRelativePath: ".simpler/local/trash/trash-1-today.md",
+      deletedAt: "2026-08-08T12:00:00Z",
+      isDirectory: false,
+    }]} onRestoreTrashItem={onRestoreTrashItem} />);
+    expect(screen.getByText("daily/today.md")).toBeInTheDocument();
+    expect(screen.getByText(/2026|8\/8\/2026/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    expect(onRestoreTrashItem).toHaveBeenCalledWith("trash-1");
   });
 
   it("toggles a sidebar panel back to the note tree when its tab is active", async () => {
@@ -265,6 +310,49 @@ describe("ClassicShell", () => {
     rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={new Set()} />);
     expect(screen.queryByRole("button", { name: /today.md/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand daily" })).toBeInTheDocument();
+  });
+
+  it("highlights the folder path down to the active note, and clears it with no note open", () => {
+    const workspaceTree = [
+      { name: "A", path: "A", kind: "folder" as const, children: [] },
+      {
+        name: "R",
+        path: "R",
+        kind: "folder" as const,
+        children: [
+          {
+            name: "B",
+            path: "R/B",
+            kind: "folder" as const,
+            children: [{ name: "note.md", path: "R/B/note.md", kind: "note" as const, children: [] }],
+          },
+        ],
+      },
+    ];
+    const openFolderPaths = new Set(["R", "R/B"]);
+
+    const { rerender } = renderShell({
+      workspaceTree,
+      openFolderPaths,
+      activeNotePath: "R/B/note.md",
+    });
+
+    const folderA = screen.getByRole("button", { name: "A" }).closest(".note-tree__folder-row");
+    const folderR = screen.getByRole("button", { name: "R" }).closest(".note-tree__folder-row");
+    const folderB = screen.getByRole("button", { name: "B" }).closest(".note-tree__folder-row");
+
+    expect(folderR).toHaveClass("note-tree__folder-row--active-path");
+    expect(folderB).toHaveClass("note-tree__folder-row--active-path");
+    expect(folderA).not.toHaveClass("note-tree__folder-row--active-path");
+
+    rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={openFolderPaths} activeNotePath={null} />);
+
+    expect(screen.getByRole("button", { name: "R" }).closest(".note-tree__folder-row")).not.toHaveClass(
+      "note-tree__folder-row--active-path",
+    );
+    expect(screen.getByRole("button", { name: "B" }).closest(".note-tree__folder-row")).not.toHaveClass(
+      "note-tree__folder-row--active-path",
+    );
   });
 
   it("switches Tree Mode and focuses the active note from the sidebar header", async () => {
@@ -594,6 +682,22 @@ describe("ClassicShell", () => {
     expect(screen.getByText("failed to read note: permission denied")).toBeInTheDocument();
   });
 
+  it("shows an attachment failure without unmounting the editor", () => {
+    renderShell({
+      canManageWorkspace: true,
+      workspaceName: "notes",
+      activeNotePath: "daily/today.md",
+      activeFolderPath: "daily",
+      noteContent: "# Today",
+      attachmentError: "Could not import the dropped image into the Workspace.",
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not import the dropped image into the Workspace.",
+    );
+    expect(screen.getByTestId("markdown-editor")).toBeInTheDocument();
+  });
+
   it("keeps deeply nested folders and long note names reachable", () => {
     renderShell({
       workspaceName: "notes",
@@ -639,6 +743,8 @@ describe("ClassicShell", () => {
       noteContent: "alpha\nneedle one\nbeta\nneedle two",
       canManageWorkspace: true,
     });
+
+    await user.keyboard("{Control>}f{/Control}");
 
     await user.type(screen.getByRole("searchbox", { name: "Search current note" }), "needle");
 
@@ -708,6 +814,78 @@ describe("ClassicShell", () => {
 
     expect(screen.getByRole("button", { name: "notes" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
+  });
+
+  it("hides the current-note search by default and opens/focuses it with Ctrl/Cmd+F", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      activeNotePath: "daily/today.md",
+      activeFolderPath: "daily",
+      noteContent: "alpha\nneedle one",
+      canManageWorkspace: true,
+    });
+
+    expect(screen.queryByRole("search", { name: "Current note search" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Control>}f{/Control}");
+
+    const searchInput = screen.getByRole("searchbox", { name: "Search current note" });
+    expect(searchInput).toBeInTheDocument();
+    expect(searchInput).toHaveFocus();
+  });
+
+  it("closes the current-note search on Esc and returns focus to the editor", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      activeNotePath: "daily/today.md",
+      activeFolderPath: "daily",
+      noteContent: "alpha\nneedle one",
+      canManageWorkspace: true,
+    });
+
+    await user.keyboard("{Control>}f{/Control}");
+    expect(screen.getByRole("searchbox", { name: "Search current note" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("search", { name: "Current note search" })).not.toBeInTheDocument();
+  });
+
+  it("preserves the current-note search query across hide and reopen", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      activeNotePath: "daily/today.md",
+      activeFolderPath: "daily",
+      noteContent: "alpha\nneedle one\nbeta\nneedle two",
+      canManageWorkspace: true,
+    });
+
+    await user.keyboard("{Control>}f{/Control}");
+    await user.type(screen.getByRole("searchbox", { name: "Search current note" }), "needle");
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("search", { name: "Current note search" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Control>}f{/Control}");
+    expect(screen.getByRole("searchbox", { name: "Search current note" })).toHaveValue("needle");
+    expect(screen.getByText("1 of 2")).toBeInTheDocument();
+  });
+
+  it("does nothing on Ctrl/Cmd+F when no note is open", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      activeNotePath: null,
+      canManageWorkspace: true,
+    });
+
+    await user.keyboard("{Control>}f{/Control}");
+
+    expect(screen.queryByRole("search", { name: "Current note search" })).not.toBeInTheDocument();
   });
 
   it("shows Global Search results with file and line references", async () => {
