@@ -1,6 +1,6 @@
 # Paste image from clipboard into a note
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

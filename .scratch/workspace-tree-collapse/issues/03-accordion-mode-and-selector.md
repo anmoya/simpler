@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Workspace Tree — Accordion Tree Mode + mode selector
 

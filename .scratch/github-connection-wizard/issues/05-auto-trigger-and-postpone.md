@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # GitHub Connection Wizard: auto-trigger on open and postpone persistence
 

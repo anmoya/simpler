@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Workspace Tree — auto-expand path on note navigation
 

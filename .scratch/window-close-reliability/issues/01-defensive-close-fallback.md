@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Guarantee the window closes even if app-closing logic fails
 

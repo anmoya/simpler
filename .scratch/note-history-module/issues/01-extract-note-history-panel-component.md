@@ -1,6 +1,6 @@
 # Extract note history panel to its own component
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

@@ -1,6 +1,6 @@
 # UI zoom control
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

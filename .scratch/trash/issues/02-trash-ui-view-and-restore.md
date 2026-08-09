@@ -1,6 +1,6 @@
 # Trash UI: view and restore
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

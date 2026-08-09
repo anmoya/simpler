@@ -1,6 +1,6 @@
 # Highlight the folder path to the active note
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

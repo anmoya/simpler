@@ -1,6 +1,6 @@
 # Move to trash instead of deleting
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

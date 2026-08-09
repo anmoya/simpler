@@ -1,6 +1,6 @@
 # Current-note search: hide by default, Ctrl+F to open, Esc to close
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

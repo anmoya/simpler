@@ -1,6 +1,6 @@
 # Restore a past version as a new local change
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

@@ -1,6 +1,6 @@
 # Automatic purge after 30 days
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

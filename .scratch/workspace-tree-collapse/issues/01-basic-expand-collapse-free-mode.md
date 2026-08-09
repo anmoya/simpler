@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Workspace Tree — basic expand/collapse (Free Tree Mode)
 

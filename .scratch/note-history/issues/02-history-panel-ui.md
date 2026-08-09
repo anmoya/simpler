@@ -1,6 +1,6 @@
 # History panel UI
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

@@ -1,6 +1,6 @@
 # Checklist continuation and empty-item exit
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

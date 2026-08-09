@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Document root cause and update release-verification habit
 

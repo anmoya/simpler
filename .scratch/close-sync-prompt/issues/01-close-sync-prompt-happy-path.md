@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Close Sync Prompt — happy path (wait for sync / close without sync)
 

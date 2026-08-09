@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Root-cause why onCloseRequested never reaches destroy()
 

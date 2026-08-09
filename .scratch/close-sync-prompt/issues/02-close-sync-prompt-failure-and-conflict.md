@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Close Sync Prompt — Sync failure or conflict while waiting
 

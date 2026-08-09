@@ -1,6 +1,6 @@
 # List commit history for a note
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

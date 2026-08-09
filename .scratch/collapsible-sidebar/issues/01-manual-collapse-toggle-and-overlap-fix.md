@@ -1,6 +1,6 @@
 # Manual sidebar collapse toggle + narrow-width overlap fix
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

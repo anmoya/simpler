@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Add Wayland/EGL launch-fix hook to the AppImage
 

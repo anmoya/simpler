@@ -1,6 +1,6 @@
 # Drag-and-drop image from the OS file explorer
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 

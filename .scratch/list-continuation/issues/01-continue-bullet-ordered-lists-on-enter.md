@@ -1,6 +1,6 @@
 # Continue bullet/ordered lists on Enter
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
