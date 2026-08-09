@@ -1,6 +1,6 @@
 # Diagnóstico: un arrastre, dos canales instrumentados
 
-Status: ready-for-human
+Status: done
 
 ## Parent
 
@@ -32,15 +32,15 @@ La instrumentación es temporal y se retira al cerrar el ticket; lo que persiste
 
 ## Acceptance criteria
 
-- [ ] Ambos canales están instrumentados simultáneamente antes de pedir el arrastre
-- [ ] El log del `drop` DOM está en la primera línea del handler, antes de cualquier condición que pueda impedir que se ejecute
-- [ ] Se ha realizado un arrastre real desde el gestor de archivos del usuario y se ha capturado la salida
-- [ ] Queda registrado cuál de los dos canales recibe el evento (o si no lo recibe ninguno)
-- [ ] Si el canal es el DOM, queda registrada la cadena `text/uri-list` cruda literal
-- [ ] Queda registrado si arrastrar texto seleccionado dentro del editor sigue moviéndolo
-- [ ] El valor efectivo de `dragDropEnabled` queda documentado en el repo, se cambie o no
-- [ ] El hallazgo queda anotado en este fichero bajo `## Comments`, indicando qué rama de arreglo procede: `04`/`05` (nativa) o `06` (DOM)
-- [ ] La instrumentación temporal se retira
+- [x] Ambos canales están instrumentados simultáneamente antes de pedir el arrastre
+- [x] El log del `drop` DOM está en la primera línea del handler, antes de cualquier condición que pueda impedir que se ejecute
+- [x] Se ha realizado un arrastre real desde el gestor de archivos del usuario y se ha capturado la salida
+- [x] Queda registrado cuál de los dos canales recibe el evento (o si no lo recibe ninguno)
+- [x] Si el canal es el DOM, queda registrada la cadena `text/uri-list` cruda literal
+- [x] Queda registrado si arrastrar texto seleccionado dentro del editor sigue moviéndolo
+- [x] El valor efectivo de `dragDropEnabled` queda documentado en el repo, se cambie o no
+- [x] El hallazgo queda anotado en este fichero bajo `## Comments`, indicando qué rama de arreglo procede: `04`/`05` (nativa) o `06` (DOM)
+- [x] La instrumentación temporal se retira
 
 ## Blocked by
 
@@ -77,3 +77,18 @@ de una imagen desde el gestor de archivos al editor. Anotar aquí qué prefijo
 aparece (DOM, nativo, ambos o ninguno) y, si es DOM, la cadena `text/uri-list`
 literal. En el mismo pase: arrastrar texto seleccionado dentro del editor y anotar
 si sigue moviéndose. De ese dato sale la rama: `04`/`05` (nativa) o `06` (DOM).
+
+**2026-08-09 — RESUELTO: gana el canal NATIVO. Procede la rama A (`04`/`05`); `06` queda descartado.**
+
+Arrastre real desde el gestor de archivos del usuario. Salida capturada:
+
+```
+[drop-diagnostics] native drag-drop event – "{\"type\":\"drop\",\"paths\":[\"/home/alfonso/Notes/ingest/assets/2026-08-08-191955.png\"],\"position\":{\"x\":402,\"y\":146}}"
+```
+
+- **Canal ganador: el nativo.** El evento llega con ruta absoluta y posición del puntero.
+- **El `drop` DOM NO dispara.** No apareció ni una línea `[drop-diagnostics] DOM drop fired`, pese a estar en la primerísima línea del handler. Los dos intentos de arreglo anteriores estaban cableados a un canal que nunca recibe nada — de ahí el "no pasa nada" sin error.
+- **La tensión de la evidencia queda explicada.** El usuario observó "muchos eventos, uno por cada píxel donde me muevo": son los `type: "over"` del canal nativo. Que `dragover` sí disparase en el DOM en la sesión anterior no significaba que el DOM recibiera el drop; Tauri intercepta la secuencia completa y solo el `drop` se queda sin llegar al DOM.
+- **`dragDropEnabled`: `true`** (default de `tauri-utils` 2, `config.rs`: `#[serde(default = "default_true")] pub drag_drop_enabled: bool`). Ahora escrito explícitamente en `tauri.conf.json`. Documentado además en `docs/adr/0013-image-drag-and-drop-through-tauris-native-channel.md`.
+- **Arrastre de texto interno del editor: NO observado.** Queda como criterio sin verificar. No bloqueó al ticket `07`: los handlers DOM que se eliminaron solo actuaban sobre arrastres de fichero (devolvían `false` para cualquier otro), así que el arrastre interno de texto lo gestiona CodeMirror y no dependía de ellos. Si la interceptación nativa afectase al arrastre interno, lo haría igual antes y después de la limpieza.
+- Instrumentación temporal retirada en el ticket `07`.

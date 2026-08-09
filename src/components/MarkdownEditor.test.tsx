@@ -1,15 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { EditorView } from "codemirror";
 import { MarkdownEditor } from "./MarkdownEditor";
-import { importAttachment, readClipboardImage, saveAttachment } from "../native/commands";
+import { readClipboardImage, saveAttachment } from "../native/commands";
 
 vi.mock("../native/commands", () => ({
   saveAttachment: vi.fn(),
   readClipboardImage: vi.fn(),
   importAttachment: vi.fn(),
 }));
+
 
 function makeImageFile(name = "screenshot.png", type = "image/png") {
   return new File(["fake-image-bytes"], name, { type });
@@ -19,7 +19,6 @@ describe("MarkdownEditor", () => {
   beforeEach(() => {
     vi.mocked(saveAttachment).mockReset();
     vi.mocked(readClipboardImage).mockReset();
-    vi.mocked(importAttachment).mockReset();
   });
 
   describe("pasting an image via Ctrl+V (system clipboard)", () => {
@@ -138,6 +137,95 @@ describe("MarkdownEditor", () => {
         );
       });
     });
+
+    // The native commands resolve with `ok: false` rather than throwing, so
+    // this — not the rejected promise above — is where failures used to vanish.
+    it("reports a save the native command refused, not just a rejected promise", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: null,
+        data: { contentBase64: "ZmFrZQ==", mimeType: "image/png" },
+      });
+      vi.mocked(saveAttachment).mockResolvedValue({
+        ok: false,
+        domain: "filesystem",
+        action: "save-attachment",
+        error: "permission denied",
+        data: null,
+      });
+      const onAttachmentError = vi.fn();
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+          onAttachmentError={onAttachmentError}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(onAttachmentError).toHaveBeenCalledWith(
+          expect.stringContaining("Could not save the pasted image"),
+        );
+      });
+      expect(editable.textContent).not.toContain("![](");
+    });
+
+    it("clears a previous attachment failure once a save succeeds", async () => {
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: null,
+        data: { contentBase64: "ZmFrZQ==", mimeType: "image/png" },
+      });
+      vi.mocked(saveAttachment)
+        .mockResolvedValueOnce({
+          ok: false,
+          domain: "filesystem",
+          action: "save-attachment",
+          error: "permission denied",
+          data: null,
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          domain: "filesystem",
+          action: "save-attachment",
+          error: null,
+          data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+        });
+      const onAttachmentError = vi.fn();
+
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+          onAttachmentError={onAttachmentError}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+      await waitFor(() => expect(onAttachmentError).toHaveBeenCalledWith(expect.any(String)));
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+      await waitFor(() => expect(onAttachmentError).toHaveBeenLastCalledWith(null));
+    });
   });
 
   describe("pasting an image", () => {
@@ -205,172 +293,13 @@ describe("MarkdownEditor", () => {
     });
   });
 
-  describe("dropping an image", () => {
-    it("saves the image and inserts the Markdown reference at the drop position", async () => {
-      vi.mocked(saveAttachment).mockResolvedValue({
-        ok: true,
-        domain: "filesystem",
-        action: "save-attachment",
-        error: null,
-        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
-      });
-
-      render(
-        <MarkdownEditor
-          notePath="daily/today.md"
-          workspacePath="/workspace"
-          value={"# Today\n\nSome body text far from the drop point"}
-          onChange={() => undefined}
-        />,
-      );
-
-      const editor = screen.getByTestId("markdown-editor");
-      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
-
-      const posAtCoordsSpy = vi.spyOn(EditorView.prototype, "posAtCoords").mockReturnValue(9);
-
-      const file = makeImageFile();
-      fireEvent.drop(editable, {
-        dataTransfer: { files: [file], items: [], types: ["Files"] },
-        clientX: 42,
-        clientY: 7,
-      });
-
-      await waitFor(() => {
-        expect(saveAttachment).toHaveBeenCalledWith(
-          "/workspace",
-          "daily",
-          expect.stringMatching(/^\d{4}-\d{2}-\d{2}-\d{6}\.png$/),
-          expect.any(String),
-        );
-      });
-
-      await waitFor(() => {
-        expect(editable.textContent).toContain("![](assets/2026-08-08-143022.png)");
-      });
-
-      posAtCoordsSpy.mockRestore();
-    });
-
-    // The former happy-path test for a `text/uri-list` drop was removed rather
-    // than kept: it passed against a hand-built synthetic event while the
-    // feature was completely inoperative in the real app. The parsing it
-    // covered now lives in `attachments/droppedImagePath.test.ts`, and the drop
-    // channel itself is verified manually (see the drag-and-drop spec).
-    it("reports a failed import through onAttachmentError instead of failing silently", async () => {
-      vi.mocked(importAttachment).mockResolvedValue({
-        ok: false,
-        domain: "filesystem",
-        action: "import-attachment",
-        error: "permission denied",
-        data: null,
-      });
-      const onAttachmentError = vi.fn();
-
-      render(
-        <MarkdownEditor
-          notePath="daily/today.md"
-          workspacePath="/workspace"
-          value={"# Today"}
-          onChange={() => undefined}
-          onAttachmentError={onAttachmentError}
-        />,
-      );
-
-      const editor = screen.getByTestId("markdown-editor");
-      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
-
-      fireEvent.drop(editable, {
-        dataTransfer: {
-          files: [],
-          items: [],
-          types: ["text/uri-list"],
-          getData: (type: string) =>
-            type === "text/uri-list" ? "file:///home/user/Pictures/screenshot.png" : "",
-        },
-        clientX: 42,
-        clientY: 7,
-      });
-
-      await waitFor(() => {
-        expect(onAttachmentError).toHaveBeenCalledWith(
-          expect.stringContaining("Could not import the dropped image"),
-        );
-      });
-    });
-
-    it("clears a previous attachment failure once an import succeeds", async () => {
-      vi.mocked(importAttachment)
-        .mockResolvedValueOnce({
-          ok: false,
-          domain: "filesystem",
-          action: "import-attachment",
-          error: "permission denied",
-          data: null,
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          domain: "filesystem",
-          action: "import-attachment",
-          error: null,
-          data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
-        });
-      const onAttachmentError = vi.fn();
-
-      render(
-        <MarkdownEditor
-          notePath="daily/today.md"
-          workspacePath="/workspace"
-          value={"# Today"}
-          onChange={() => undefined}
-          onAttachmentError={onAttachmentError}
-        />,
-      );
-
-      const editor = screen.getByTestId("markdown-editor");
-      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
-      const dropEvent = {
-        dataTransfer: {
-          files: [],
-          items: [],
-          types: ["text/uri-list"],
-          getData: (type: string) =>
-            type === "text/uri-list" ? "file:///home/user/Pictures/screenshot.png" : "",
-        },
-        clientX: 42,
-        clientY: 7,
-      };
-
-      fireEvent.drop(editable, dropEvent);
-      await waitFor(() => expect(onAttachmentError).toHaveBeenCalledWith(expect.any(String)));
-
-      fireEvent.drop(editable, dropEvent);
-      await waitFor(() => expect(onAttachmentError).toHaveBeenLastCalledWith(null));
-    });
-
-    it("does not intercept drops of non-image files", () => {
-      render(
-        <MarkdownEditor
-          notePath="daily/today.md"
-          workspacePath="/workspace"
-          value=""
-          onChange={() => undefined}
-        />,
-      );
-
-      const editor = screen.getByTestId("markdown-editor");
-      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
-
-      const file = new File(["not an image"], "notes.txt", { type: "text/plain" });
-      fireEvent.drop(editable, {
-        dataTransfer: { files: [file], items: [], types: ["Files"] },
-        clientX: 42,
-        clientY: 7,
-      });
-
-      expect(saveAttachment).not.toHaveBeenCalled();
-    });
-  });
+  // There is no test here for the file-manager drop. It arrives on Tauri's
+  // window-level channel, which jsdom cannot produce: a synthetic event would
+  // only re-assert our own logic and would pass with the feature inoperative,
+  // which is exactly how this feature was closed twice while broken. The
+  // parsing is covered in `attachments/droppedImagePath.test.ts`, the
+  // coordinate translation in `attachments/nativeDropChannel.test.ts`, and the
+  // channel itself by a real drag (see the drag-and-drop spec).
 
   it("renders the note's raw Markdown content with line numbers", () => {
     render(<MarkdownEditor notePath="daily/today.md" value={"# Today\n\nBody"} onChange={() => undefined} />);

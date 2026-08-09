@@ -1,6 +1,6 @@
 # Rama B · Arreglar el drop DOM por `text/uri-list`
 
-Status: ready-for-human
+Status: discarded
 
 ## Parent
 
@@ -44,3 +44,5 @@ El handler DOM se conserva y se arregla; no se introduce el canal nativo.
 
 - `.scratch/attachments-drag-drop-fix/issues/03-diagnose-which-drop-channel-fires.md`
 - `.scratch/attachments-drag-drop-fix/issues/01-extract-dropped-image-path-module.md`
+
+**2026-08-09 — descartado.** El diagnóstico (`03`) concluyó que el drop llega por el canal nativo de Tauri y que el `drop` DOM no dispara. Esta rebanada solo aplicaba si ganaba la rama B. Se implementó `04`/`05` en su lugar.

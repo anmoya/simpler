@@ -60,7 +60,6 @@ import {
 } from "../native/commands";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { subscribeToNativeDropDiagnostics } from "../attachments/dropChannelDiagnostics";
 
 type SyncOutcome = { ok: true } | { ok: false; kind?: "conflict"; error?: string };
 
@@ -137,26 +136,6 @@ export function App() {
   }
 
   const updateSchedulerRef = useRef<UpdateScheduler | null>(null);
-
-  // TEMPORARY DIAGNOSTIC — remove with ticket 03 of
-  // `.scratch/attachments-drag-drop-fix/`.
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let cancelled = false;
-
-    void subscribeToNativeDropDiagnostics().then((dispose) => {
-      if (cancelled) {
-        dispose?.();
-        return;
-      }
-      unlisten = dispose;
-    });
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;

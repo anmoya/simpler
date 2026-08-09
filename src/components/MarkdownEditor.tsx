@@ -6,7 +6,6 @@ import type { FileSearchJump } from "../app/appState";
 import { markdownEditorTheme } from "./markdownEditorTheme";
 import { listContinuationKeymap } from "./listContinuation";
 import { findDroppedImagePath } from "../attachments/droppedImagePath";
-import { logDomDropEvent } from "../attachments/dropChannelDiagnostics";
 import { nativeDropClientPoint, subscribeToNativeImageDrop } from "../attachments/nativeDropChannel";
 import { importAttachment, readClipboardImage, saveAttachment } from "../native/commands";
 import type { FilesystemOperationResult, NativeCommandResponse } from "../native/commands";
@@ -361,72 +360,6 @@ export function MarkdownEditor({
                 ),
               );
               return true;
-            },
-            dragover: (event) => {
-              const types = event.dataTransfer?.types ?? [];
-              const hasDraggedFile =
-                Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === "file") ||
-                Array.from(types).includes("text/uri-list") ||
-                Array.from(types).includes("Files");
-
-              if (hasDraggedFile) {
-                event.preventDefault();
-              }
-              return false;
-            },
-            drop: (event, view) => {
-              // TEMPORARY DIAGNOSTIC (ticket 03) — must stay the first
-              // statement, before any condition that could skip it.
-              logDomDropEvent(event);
-
-              const imageFile = findImageFile(event.dataTransfer?.files, event.dataTransfer?.items);
-              const currentWorkspacePath = workspacePathRef.current;
-
-              if (imageFile && currentWorkspacePath) {
-                event.preventDefault();
-                const dropPosition =
-                  view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
-                  view.state.selection.main.from;
-                const reportError = reportAttachmentErrorRef.current;
-                runAttachmentTask(droppedImageFailureMessage, reportError, () =>
-                  insertAttachment(
-                    view,
-                    imageFile,
-                    currentWorkspacePath,
-                    notePathRef.current,
-                    { from: dropPosition, to: dropPosition },
-                    reportError,
-                  ),
-                );
-                return true;
-              }
-
-              // WebKitGTK delivers a file-manager drag as a `text/uri-list`
-              // (a `file://` URI), not as a `File` with readable bytes, so the
-              // path is imported through a native command instead.
-              const droppedImagePath = findDroppedImagePath(
-                event.dataTransfer?.getData?.("text/uri-list"),
-              );
-              if (droppedImagePath && currentWorkspacePath) {
-                event.preventDefault();
-                const dropPosition =
-                  view.posAtCoords({ x: event.clientX, y: event.clientY }) ??
-                  view.state.selection.main.from;
-                const reportError = reportAttachmentErrorRef.current;
-                runAttachmentTask(droppedImageFailureMessage, reportError, () =>
-                  importAndInsertAttachment(
-                    view,
-                    currentWorkspacePath,
-                    notePathRef.current,
-                    { from: dropPosition, to: dropPosition },
-                    droppedImagePath,
-                    reportError,
-                  ),
-                );
-                return true;
-              }
-
-              return false;
             },
           }),
           EditorView.updateListener.of((update) => {
