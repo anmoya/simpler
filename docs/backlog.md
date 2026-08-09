@@ -58,3 +58,33 @@ Borrar una nota o carpeta mueve el archivo a una papelera recuperable en vez de 
 ## Fuera de alcance de esta ronda
 - Wikilinks, backlinks, tags, búsqueda semántica — excluidos por decisión de producto ya documentada en `CONTEXT.md`.
 - Soporte mobile / otros sistemas operativos, accesibilidad, empaquetado adicional — no descartado, solo no cubierto en esta sesión.
+
+# Backlog de ideas (2026-08-09) — UI/UX
+
+Segunda ronda, enfocada en fricciones de uso reportadas directamente (pantalla chica en tiling WM, tamaño de letra, orientación en el árbol). Contrastada contra `CONTEXT.md` (Accordion/Free Tree Mode, Focus Active Note, Theme/Appearance Mode) y el código actual (`ClassicShell.tsx`, `styles.css`).
+
+### Zoom / tamaño de letra
+Dos controles independientes: tamaño de fuente del editor, y zoom de la UI general (sidebar, toolbar, etc.).
+
+- **Guardado**: por dispositivo, como Theme/Appearance Mode — no viaja con Sync, no es parte del Workspace.
+- **Control**: atajos estilo navegador (Ctrl+/Ctrl-/Ctrl+0) para cada uno, más entrada en el Command Palette. Pasos discretos, no un slider continuo.
+
+### Resaltar la ruta hacia la nota abierta en el árbol
+Mientras hay una nota abierta, todas las carpetas en su ruta (raíz → ... → carpeta contenedora) se resaltan con `--color-accent`, siempre automático (no depende de Focus Active Note ni del modo Accordion/Free).
+
+### Sidebar colapsable a rail de íconos
+- **Trigger**: automático por debajo de cierto ancho de ventana + toggle manual en cualquier momento.
+- **Modo colapsado**: oculta todo el panel (workspace switcher, búsqueda, árbol, acciones) y deja un rail angosto con iconos de acceso rápido (abrir Workspace, búsqueda global, sync, expandir de nuevo). No es un modo de navegación compacta del árbol — es "dame espacio para el editor".
+- Incluye arreglar, como parte de esta misma implementación, el bug de layout donde la fila de `tree-actions` se superpone con el árbol en anchos muy chicos (ver captura de pantalla del 2026-08-09).
+
+### Atajos de búsqueda estilo VSCode
+- Ctrl+F abre/enfoca la búsqueda dentro de la nota actual; Ctrl+Shift+F abre/enfoca la búsqueda global.
+- Ambos inputs pasan a estar **ocultos por defecto** (hoy están siempre visibles) y solo aparecen al usar el atajo o hacer click en su entrada de menú/ícono correspondiente.
+- Esc cierra la búsqueda activa y devuelve el foco al editor.
+
+### Historial de nota: extraer a módulo + diff
+- Extraer el bloque `note-history` de `ClassicShell.tsx` a un componente propio (`NoteHistoryPanel.tsx`), siguiendo el patrón de componentes dedicados como `MarkdownEditor.tsx`.
+- Agregar una vista de diff: compara la versión histórica seleccionada contra el contenido **actual** del archivo (no contra el commit anterior), calculado client-side.
+
+### Pestaña de búsqueda avanzada (anotado, no profundizado)
+Mencionado para el futuro, sin especificar todavía — evaluar en una próxima sesión de grill qué significa "avanzada" (filtros por carpeta/fecha, regex, etc.) antes de convertir en issue.
