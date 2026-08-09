@@ -911,6 +911,39 @@ button {
   padding: 8px 12px;
 }
 
+.note-history__diff-line {
+  display: flex;
+  gap: 8px;
+}
+
+.note-history__diff-marker {
+  flex: none;
+  width: 1ch;
+  color: var(--color-muted);
+}
+
+.note-history__diff-text {
+  flex: 1;
+}
+
+.note-history__diff-line--added {
+  background: var(--color-accent-ring);
+  color: var(--color-accent-strong);
+}
+
+.note-history__diff-line--added .note-history__diff-marker {
+  color: var(--color-accent-strong);
+}
+
+.note-history__diff-line--removed {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+}
+
+.note-history__diff-line--removed .note-history__diff-marker {
+  color: var(--color-error);
+}
+
 .markdown-editor {
   min-width: 0;
   min-height: 0;

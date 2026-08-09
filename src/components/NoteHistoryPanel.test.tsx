@@ -12,6 +12,7 @@ const defaultProps: NoteHistoryPanelProps = {
   noteHistoryPreview: null,
   noteHistoryLoading: false,
   noteHistoryError: null,
+  currentContent: "",
   onSelectNoteHistoryEntry: noop,
   onCloseNoteHistory: noop,
   onRestoreNoteHistoryEntry: noop,
@@ -69,6 +70,33 @@ describe("NoteHistoryPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Restore this version" }));
 
     expect(onRestoreNoteHistoryEntry).toHaveBeenCalledOnce();
+  });
+
+  it("renders a line-level diff between the historical version and the current content", () => {
+    renderPanel({
+      noteHistoryEntries: [
+        { commitId: "abc123", summary: "Sync version 1", date: "2026-08-08T12:00:00Z" },
+      ],
+      selectedNoteHistoryCommitId: "abc123",
+      currentContent: "line one\nline two\nline three",
+      noteHistoryPreview: "line one\nline two changed\nline three\nnew line",
+    });
+
+    // Unchanged line: present in both, rendered without added/removed markers.
+    const unchangedLine = screen.getByText("line one").closest(".note-history__diff-line");
+    expect(unchangedLine).not.toHaveClass("note-history__diff-line--added");
+    expect(unchangedLine).not.toHaveClass("note-history__diff-line--removed");
+
+    // Removed line: only in the current content, lost by restoring.
+    const removedLine = screen.getByText("line two").closest(".note-history__diff-line");
+    expect(removedLine).toHaveClass("note-history__diff-line--removed");
+
+    // Added lines: only in the historical version, gained by restoring.
+    const addedChangedLine = screen.getByText("line two changed").closest(".note-history__diff-line");
+    expect(addedChangedLine).toHaveClass("note-history__diff-line--added");
+
+    const addedNewLine = screen.getByText("new line").closest(".note-history__diff-line");
+    expect(addedNewLine).toHaveClass("note-history__diff-line--added");
   });
 
   it("closes the panel via its close button", async () => {

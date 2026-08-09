@@ -777,7 +777,7 @@ describe("ClassicShell", () => {
     });
 
     expect(screen.getByRole("button", { name: "notes" })).toBeInTheDocument();
-    expect(screen.getByRole("search", { name: "Global Search" })).toBeInTheDocument();
+    expect(screen.queryByRole("search", { name: "Global Search" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Workspace actions")).toBeInTheDocument();
     expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
 
@@ -892,6 +892,97 @@ describe("ClassicShell", () => {
     expect(screen.queryByRole("search", { name: "Current note search" })).not.toBeInTheDocument();
   });
 
+  it("hides the global search by default and opens/focuses it with Ctrl/Cmd+Shift+F", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      canManageWorkspace: true,
+    });
+
+    expect(screen.queryByRole("search", { name: "Global Search" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+
+    const searchInput = screen.getByRole("searchbox", { name: "Global Search" });
+    expect(searchInput).toBeInTheDocument();
+    expect(searchInput).toHaveFocus();
+  });
+
+  it("closes the global search on Esc and returns focus to the editor", async () => {
+    const user = userEvent.setup();
+
+    renderShell({
+      activeNotePath: "daily/today.md",
+      activeFolderPath: "daily",
+      noteContent: "alpha",
+      canManageWorkspace: true,
+    });
+
+    await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+    expect(screen.getByRole("searchbox", { name: "Global Search" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("search", { name: "Global Search" })).not.toBeInTheDocument();
+  });
+
+  it("preserves the global search query across hide and reopen", async () => {
+    const user = userEvent.setup();
+    let globalSearchQuery = "";
+    const onGlobalSearchChange = vi.fn((query: string) => {
+      globalSearchQuery = query;
+    });
+
+    const { rerender } = renderShell({
+      canManageWorkspace: true,
+      globalSearchQuery,
+      onGlobalSearchChange,
+    });
+
+    await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+    await user.type(screen.getByRole("searchbox", { name: "Global Search" }), "needle");
+
+    rerender(<ClassicShell {...defaultProps} canManageWorkspace globalSearchQuery={globalSearchQuery} onGlobalSearchChange={onGlobalSearchChange} />);
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("search", { name: "Global Search" })).not.toBeInTheDocument();
+
+    await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+    expect(screen.getByRole("searchbox", { name: "Global Search" })).toHaveValue(globalSearchQuery);
+  });
+
+  it("expands a collapsed sidebar then focuses global search on Ctrl/Cmd+Shift+F", async () => {
+    const user = userEvent.setup();
+    let sidebarCollapsed = true;
+    const onToggleSidebarCollapse = vi.fn(() => {
+      sidebarCollapsed = !sidebarCollapsed;
+    });
+
+    const { rerender } = renderShell({
+      canManageWorkspace: true,
+      sidebarCollapsed: true,
+      onToggleSidebarCollapse,
+    });
+
+    expect(screen.getByLabelText("Collapsed sidebar")).toBeInTheDocument();
+
+    await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
+    expect(onToggleSidebarCollapse).toHaveBeenCalledOnce();
+
+    rerender(
+      <ClassicShell
+        {...defaultProps}
+        canManageWorkspace
+        sidebarCollapsed={false}
+        onToggleSidebarCollapse={onToggleSidebarCollapse}
+      />,
+    );
+
+    const searchInput = screen.getByRole("searchbox", { name: "Global Search" });
+    expect(searchInput).toBeInTheDocument();
+    expect(searchInput).toHaveFocus();
+  });
+
   it("shows Global Search results with file and line references", async () => {
     const user = userEvent.setup();
     const onGlobalSearchChange = vi.fn();
@@ -912,6 +1003,8 @@ describe("ClassicShell", () => {
       onGlobalSearchChange,
       onSelectGlobalSearchResult,
     });
+
+    await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
 
     await user.type(screen.getByRole("searchbox", { name: "Global Search" }), "s");
 

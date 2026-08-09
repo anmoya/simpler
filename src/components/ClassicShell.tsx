@@ -222,6 +222,7 @@ export function ClassicShell({
   const [fileSearchQuery, setFileSearchQuery] = useState("");
   const [activeFileMatchIndex, setActiveFileMatchIndex] = useState(0);
   const [isFileSearchOpen, setIsFileSearchOpen] = useState(false);
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const fileSearchInputRef = useRef<HTMLInputElement | null>(null);
   const editorContainerRef = useRef<HTMLElement | null>(null);
   const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; kind: "folder" | "note" } | null>(
@@ -440,6 +441,14 @@ export function ClassicShell({
   }, [isFileSearchOpen]);
 
   useEffect(() => {
+    if (isGlobalSearchOpen) {
+      const input = globalSearchInputRef.current;
+      input?.focus();
+      input?.select();
+    }
+  }, [isGlobalSearchOpen]);
+
+  useEffect(() => {
     if (!activeNotePath) {
       setIsFileSearchOpen(false);
     }
@@ -511,6 +520,16 @@ export function ClassicShell({
         if (runAvailableCommand("open-workspace")) {
           event.preventDefault();
         }
+        return;
+      }
+
+      if (hasCommandModifier && event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        if (sidebarCollapsed) {
+          setFocusSearchOnExpand(true);
+          onToggleSidebarCollapse();
+        }
+        setIsGlobalSearchOpen(true);
         return;
       }
 
@@ -633,12 +652,17 @@ export function ClassicShell({
           const editorElement = editorContainerRef.current?.querySelector<HTMLElement>(".cm-content");
           editorElement?.focus();
         }
+        if (isGlobalSearchOpen) {
+          setIsGlobalSearchOpen(false);
+          const editorElement = editorContainerRef.current?.querySelector<HTMLElement>(".cm-content");
+          editorElement?.focus();
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [availableCommands, isFileSearchOpen]);
+  }, [availableCommands, isFileSearchOpen, isGlobalSearchOpen, sidebarCollapsed, onToggleSidebarCollapse]);
 
   const runCommand = (command: ShellCommand) => {
     command.run();
@@ -686,6 +710,7 @@ export function ClassicShell({
               aria-label="Focus Global Search"
               onClick={() => {
                 setFocusSearchOnExpand(true);
+                setIsGlobalSearchOpen(true);
                 onToggleSidebarCollapse();
               }}
             >
@@ -868,38 +893,40 @@ export function ClassicShell({
                     <Icon name="target" size={16} />
                   </button>
                 </div>
-                <div className="global-search" role="search" aria-label="Global Search">
-                  <label className="global-search__field">
-                    <Icon name="search" />
-                    <input
-                      ref={globalSearchInputRef}
-                      type="search"
-                      aria-label="Global Search"
-                      placeholder="Buscar en todos los archivos..."
-                      value={globalSearchQuery}
-                      onChange={(event) => onGlobalSearchChange(event.target.value)}
-                      disabled={!canManageWorkspace}
-                    />
-                  </label>
-                  {globalSearchResults.length > 0 ? (
-                    <ol className="global-search__results" aria-label="Global Search results">
-                      {globalSearchResults.map((result) => (
-                        <li key={`${result.notePath}:${result.lineNumber}:${result.matchStart}`}>
-                          <button
-                            type="button"
-                            aria-label={`${result.notePath} line ${result.lineNumber}: ${result.lineText}`}
-                            onClick={() => onSelectGlobalSearchResult(result)}
-                          >
-                            <span>{result.notePath}</span>
-                            <small>
-                              Line {result.lineNumber}: {result.lineText}
-                            </small>
-                          </button>
-                        </li>
-                      ))}
-                    </ol>
-                  ) : null}
-                </div>
+                {isGlobalSearchOpen ? (
+                  <div className="global-search" role="search" aria-label="Global Search">
+                    <label className="global-search__field">
+                      <Icon name="search" />
+                      <input
+                        ref={globalSearchInputRef}
+                        type="search"
+                        aria-label="Global Search"
+                        placeholder="Buscar en todos los archivos..."
+                        value={globalSearchQuery}
+                        onChange={(event) => onGlobalSearchChange(event.target.value)}
+                        disabled={!canManageWorkspace}
+                      />
+                    </label>
+                    {globalSearchResults.length > 0 ? (
+                      <ol className="global-search__results" aria-label="Global Search results">
+                        {globalSearchResults.map((result) => (
+                          <li key={`${result.notePath}:${result.lineNumber}:${result.matchStart}`}>
+                            <button
+                              type="button"
+                              aria-label={`${result.notePath} line ${result.lineNumber}: ${result.lineText}`}
+                              onClick={() => onSelectGlobalSearchResult(result)}
+                            >
+                              <span>{result.notePath}</span>
+                              <small>
+                                Line {result.lineNumber}: {result.lineText}
+                              </small>
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : null}
+                  </div>
+                ) : null}
                 {workspaceTree.length > 0 ? (
                   <WorkspaceTree
                     items={workspaceTree}
@@ -1072,6 +1099,7 @@ export function ClassicShell({
             noteHistoryPreview={noteHistoryPreview}
             noteHistoryLoading={noteHistoryLoading}
             noteHistoryError={noteHistoryError}
+            currentContent={noteContent}
             onSelectNoteHistoryEntry={onSelectNoteHistoryEntry}
             onCloseNoteHistory={onCloseNoteHistory}
             onRestoreNoteHistoryEntry={onRestoreNoteHistoryEntry}
