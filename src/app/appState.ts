@@ -57,6 +57,11 @@ export interface AppState {
   activeFolderPath: string;
   noteContent: string;
   themeMode: ThemeMode;
+  // Whether the sidebar is showing its narrow icon rail instead of full content.
+  // Currently only ever set by the manual toggle; a later ticket (auto-collapse
+  // by window width) can OR an automatic signal into this same boolean without
+  // needing a reshape, since "collapsed" is the only thing the UI reads.
+  sidebarCollapsed: boolean;
   editorError: EditorError | null;
   syncStatus: SyncStatus;
   conflictedFiles: string[];
@@ -96,6 +101,7 @@ export const initialAppState: AppState = {
   activeFolderPath: "",
   noteContent: "",
   themeMode: "light",
+  sidebarCollapsed: false,
   editorError: null,
   syncStatus: "desconectado",
   conflictedFiles: [],

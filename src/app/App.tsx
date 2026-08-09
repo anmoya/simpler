@@ -79,6 +79,7 @@ export function App() {
     ...initialAppState,
     recentWorkspaces: readRecentWorkspaces(),
     themeMode: readThemeMode(),
+    sidebarCollapsed: readSidebarCollapsed(),
   }));
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
   const [closeSyncPrompt, setCloseSyncPrompt] = useState<CloseSyncPromptState | null>(null);
@@ -876,6 +877,14 @@ export function App() {
     setAppState((current) => ({ ...current, themeMode }));
   };
 
+  const toggleSidebarCollapsed = () => {
+    setAppState((current) => {
+      const sidebarCollapsed = !current.sidebarCollapsed;
+      saveSidebarCollapsed(sidebarCollapsed);
+      return { ...current, sidebarCollapsed };
+    });
+  };
+
   const syncWorkspace = async () => {
     schedulerRef.current?.manualSync();
   };
@@ -1104,6 +1113,8 @@ export function App() {
       activeFolderPath={appState.activeFolderPath}
       noteContent={appState.noteContent}
       themeMode={appState.themeMode}
+      sidebarCollapsed={appState.sidebarCollapsed}
+      onToggleSidebarCollapse={toggleSidebarCollapsed}
       editorError={appState.editorError}
       canManageWorkspace={appState.workspace !== null}
       onOpenWorkspace={openWorkspaceFromPath}
@@ -1185,6 +1196,7 @@ export function App() {
 
 const recentWorkspacesStorageKey = "simpler.recentWorkspaces";
 const themeModeStorageKey = "simpler.themeMode";
+const sidebarCollapsedStorageKey = "simpler.sidebarCollapsed";
 
 function readThemeMode(): ThemeMode {
   try {
@@ -1198,6 +1210,26 @@ function readThemeMode(): ThemeMode {
 function saveThemeMode(themeMode: ThemeMode) {
   try {
     localStorage.setItem(themeModeStorageKey, themeMode);
+  } catch {
+    // localStorage may be unavailable (e.g. private browsing); the app still works, just unpersisted.
+  }
+}
+
+// Per-device manual collapse preference, same storage pattern as themeMode. A
+// later ticket (auto-collapse by window width) reads/derives its own signal
+// at render time rather than persisting it here — only the manual choice is
+// durable across restarts.
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(sidebarCollapsedStorageKey) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveSidebarCollapsed(sidebarCollapsed: boolean) {
+  try {
+    localStorage.setItem(sidebarCollapsedStorageKey, String(sidebarCollapsed));
   } catch {
     // localStorage may be unavailable (e.g. private browsing); the app still works, just unpersisted.
   }
