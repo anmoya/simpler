@@ -2595,12 +2595,24 @@ fn search_markdown_files(
 
         if metadata.is_dir() {
             search_markdown_files(root_path, &path, query, results)?;
-        } else if metadata.is_file() && is_markdown_note(&path) {
+        } else if metadata.is_file() && is_searchable_text_file(&path) {
             search_note_file(root_path, &path, query, results)?;
         }
     }
 
     Ok(())
+}
+
+const SEARCHABLE_TEXT_EXTENSIONS: [&str; 3] = ["md", "txt", "csv"];
+
+fn is_searchable_text_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            SEARCHABLE_TEXT_EXTENSIONS
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
 }
 
 fn search_note_file(
@@ -2689,6 +2701,17 @@ mod commands {
         }
         if request.domain == NativeDomain::Filesystem && request.action == "read-clipboard-text" {
             return handle_read_clipboard_text_command(app, request).await;
+        }
+        if request.domain == NativeDomain::Filesystem && request.action == "global-search" {
+            return tauri::async_runtime::spawn_blocking(move || dispatch_native_command(request))
+                .await
+                .unwrap_or_else(|error| NativeCommandResponse {
+                    ok: false,
+                    domain: NativeDomain::Filesystem,
+                    action: "global-search".to_string(),
+                    data: None,
+                    error: Some(format!("global search task failed: {error}")),
+                });
         }
         dispatch_native_command(request)
     }
@@ -5030,7 +5053,7 @@ mod tests {
     }
 
     #[test]
-    fn global_search_returns_markdown_file_and_line_matches_only_from_visible_workspace_entries() {
+    fn global_search_returns_markdown_txt_and_csv_matches_only_from_visible_workspace_entries() {
         let workspace = test_workspace("global_search");
         fs::create_dir_all(workspace.join("daily")).unwrap();
         fs::create_dir_all(workspace.join(".simpler")).unwrap();
@@ -5041,6 +5064,8 @@ mod tests {
         .unwrap();
         fs::write(workspace.join(".simpler").join("hidden.md"), "search term").unwrap();
         fs::write(workspace.join("notes.txt"), "search term").unwrap();
+        fs::write(workspace.join("data.csv"), "name,search term\n").unwrap();
+        fs::write(workspace.join("binary.png"), "search term").unwrap();
 
         let response = dispatch_native_command(NativeCommandRequest {
             domain: NativeDomain::Filesystem,
@@ -5068,6 +5093,20 @@ mod tests {
                     "lineText": "another search term",
                     "matchStart": 8,
                     "matchEnd": 14
+                },
+                {
+                    "notePath": "data.csv",
+                    "lineNumber": 1,
+                    "lineText": "name,search term",
+                    "matchStart": 5,
+                    "matchEnd": 11
+                },
+                {
+                    "notePath": "notes.txt",
+                    "lineNumber": 1,
+                    "lineText": "search term",
+                    "matchStart": 0,
+                    "matchEnd": 6
                 }
             ])
         );

@@ -654,7 +654,7 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "today.md" })).not.toBeInTheDocument();
     await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
     await user.type(screen.getByRole("searchbox", { name: "Global Search" }), "needle");
-    await user.click(screen.getByRole("button", { name: "daily/today.md line 2: needle line" }));
+    await user.click(await screen.findByRole("button", { name: "daily/today.md line 2: needle line" }));
 
     const breadcrumb = screen.getByRole("navigation", { name: "Note location" });
     expect(within(breadcrumb).getByText("daily")).toBeInTheDocument();

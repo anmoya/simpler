@@ -4,3 +4,4 @@ src-tauri/target/
 src-tauri/gen/
 .simpler/local/
 docs/agent-reports/
+docs/repairs/

@@ -125,6 +125,8 @@ export function App() {
   const appStateRef = useRef(appState);
   const activeWorkspacePathRef = useRef<string | null>(null);
   const noteHistoryRequestRef = useRef(0);
+  const globalSearchRequestRef = useRef(0);
+  const globalSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncWorkspaceRef = useRef<(trigger: AutomaticSyncTrigger) => void>(() => undefined);
   const schedulerRef = useRef<AutomaticSyncScheduler | null>(null);
   // Set right before a decided close (via performClose) calls currentWindow.close(),
@@ -720,30 +722,45 @@ export function App() {
     }));
   };
 
-  const changeGlobalSearch = async (query: string) => {
+  const changeGlobalSearch = (query: string) => {
     setAppState((current) => ({ ...current, globalSearchQuery: query }));
 
+    if (globalSearchTimeoutRef.current !== null) {
+      clearTimeout(globalSearchTimeoutRef.current);
+      globalSearchTimeoutRef.current = null;
+    }
+
     if (!appState.workspace || query.trim() === "") {
+      globalSearchRequestRef.current += 1;
       setAppState((current) => ({ ...current, globalSearchResults: [] }));
       return;
     }
 
-    const response = await globalSearch(appState.workspace.path, query);
+    const requestId = ++globalSearchRequestRef.current;
+    const workspacePath = appState.workspace.path;
 
-    if (!response.ok || !response.data) {
+    globalSearchTimeoutRef.current = setTimeout(async () => {
+      const response = await globalSearch(workspacePath, query);
+
+      if (requestId !== globalSearchRequestRef.current) {
+        return;
+      }
+
+      if (!response.ok || !response.data) {
+        setAppState((current) => ({
+          ...current,
+          globalSearchResults: [],
+          workspaceError: response.error ?? "No se pudo buscar en el Workspace",
+        }));
+        return;
+      }
+
       setAppState((current) => ({
         ...current,
-        globalSearchResults: [],
-        workspaceError: response.error ?? "No se pudo buscar en el Workspace",
+        globalSearchResults: response.data!.results,
+        workspaceError: null,
       }));
-      return;
-    }
-
-    setAppState((current) => ({
-      ...current,
-      globalSearchResults: response.data!.results,
-      workspaceError: null,
-    }));
+    }, 200);
   };
 
   const selectGlobalSearchResult = async (result: GlobalSearchResult) => {
