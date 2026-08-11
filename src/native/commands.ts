@@ -233,6 +233,18 @@ export function readClipboardImage() {
   });
 }
 
+export interface ClipboardText {
+  text: string;
+}
+
+export function readClipboardText() {
+  return invokeNativeCommand<ClipboardText, Record<string, never>>({
+    domain: "filesystem",
+    action: "read-clipboard-text",
+    payload: {},
+  });
+}
+
 export function saveAttachment(
   workspacePath: string,
   parentPath: string,

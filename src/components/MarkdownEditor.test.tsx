@@ -2,11 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { MarkdownEditor } from "./MarkdownEditor";
-import { readClipboardImage, saveAttachment } from "../native/commands";
+import { readClipboardImage, readClipboardText, saveAttachment } from "../native/commands";
 
 vi.mock("../native/commands", () => ({
   saveAttachment: vi.fn(),
   readClipboardImage: vi.fn(),
+  readClipboardText: vi.fn(),
   importAttachment: vi.fn(),
 }));
 
@@ -19,6 +20,7 @@ describe("MarkdownEditor", () => {
   beforeEach(() => {
     vi.mocked(saveAttachment).mockReset();
     vi.mocked(readClipboardImage).mockReset();
+    vi.mocked(readClipboardText).mockReset();
   });
 
   describe("pasting an image via Ctrl+V (system clipboard)", () => {
@@ -68,7 +70,7 @@ describe("MarkdownEditor", () => {
       });
     });
 
-    it("falls back to clipboard text when there is no clipboard image", async () => {
+    it("falls back to the native clipboard text read when there is no clipboard image", async () => {
       vi.mocked(readClipboardImage).mockResolvedValue({
         ok: false,
         domain: "filesystem",
@@ -76,10 +78,12 @@ describe("MarkdownEditor", () => {
         error: "clipboard does not contain an image",
         data: null,
       });
-      const readText = vi.fn().mockResolvedValue("pasted text");
-      Object.defineProperty(navigator, "clipboard", {
-        value: { readText },
-        configurable: true,
+      vi.mocked(readClipboardText).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-text",
+        error: null,
+        data: { text: "pasted text" },
       });
 
       const onChange = vi.fn();
@@ -102,6 +106,54 @@ describe("MarkdownEditor", () => {
         expect(saveAttachment).not.toHaveBeenCalled();
         expect(onChange).toHaveBeenCalledWith("pasted text");
       });
+    });
+
+    it("pastes externally-copied text even when the browser Clipboard API denies permission", async () => {
+      // Regression test for
+      // .scratch/ui-repairs-aug2026/issues/05-diagnose-external-clipboard-paste-failure.md:
+      // navigator.clipboard.readText() rejected with NotAllowedError under
+      // WebKitGTK for text copied outside the app. The paste path no longer
+      // calls it at all, but this asserts that explicitly.
+      const readText = vi.fn().mockRejectedValue(new DOMException("denied", "NotAllowedError"));
+      Object.defineProperty(navigator, "clipboard", {
+        value: { readText },
+        configurable: true,
+      });
+      vi.mocked(readClipboardImage).mockResolvedValue({
+        ok: false,
+        domain: "filesystem",
+        action: "read-clipboard-image",
+        error: "clipboard does not contain an image",
+        data: null,
+      });
+      vi.mocked(readClipboardText).mockResolvedValue({
+        ok: true,
+        domain: "filesystem",
+        action: "read-clipboard-text",
+        error: null,
+        data: { text: "externally copied text" },
+      });
+
+      const onChange = vi.fn();
+      render(
+        <MarkdownEditor
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value=""
+          onChange={onChange}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", ctrlKey: true });
+
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledWith("externally copied text");
+      });
+      expect(readText).not.toHaveBeenCalled();
     });
 
     it("reports a failed clipboard-image save through onAttachmentError", async () => {

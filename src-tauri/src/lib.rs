@@ -314,6 +314,13 @@ struct ClipboardImage {
     mime_type: String,
 }
 
+#[cfg(not(test))]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardText {
+    text: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GlobalSearchResults {
@@ -2660,8 +2667,9 @@ fn folder_rank(item: &WorkspaceTreeItem) -> u8 {
 #[cfg(not(test))]
 mod commands {
     use super::{
-        dispatch_native_command, handle_read_clipboard_image_command, handle_update_command,
-        NativeCommandRequest, NativeCommandResponse, NativeDomain,
+        dispatch_native_command, handle_read_clipboard_image_command,
+        handle_read_clipboard_text_command, handle_update_command, NativeCommandRequest,
+        NativeCommandResponse, NativeDomain,
     };
 
     #[tauri::command]
@@ -2678,6 +2686,9 @@ mod commands {
         }
         if request.domain == NativeDomain::Filesystem && request.action == "read-clipboard-image" {
             return handle_read_clipboard_image_command(app, request).await;
+        }
+        if request.domain == NativeDomain::Filesystem && request.action == "read-clipboard-text" {
+            return handle_read_clipboard_text_command(app, request).await;
         }
         dispatch_native_command(request)
     }
@@ -2774,6 +2785,90 @@ async fn handle_read_clipboard_image_command(
             action: request.action,
             data: None,
             error: Some("clipboard image reads are only supported on Linux".to_string()),
+        }
+    }
+}
+
+/// Reads text from the system clipboard.
+///
+/// Externally-copied text pasted with Ctrl+V never reached the editor:
+/// `navigator.clipboard.readText()` rejects with `NotAllowedError` under
+/// WebKitGTK's Permissions model even on a user-gesture-triggered paste (see
+/// `.scratch/ui-repairs-aug2026/issues/05-diagnose-external-clipboard-paste-failure.md`
+/// for the confirmed diagnosis). Reading GTK's clipboard directly, the same
+/// way `handle_read_clipboard_image_command` already does for images,
+/// sidesteps the browser clipboard permission model entirely.
+#[cfg(not(test))]
+async fn handle_read_clipboard_text_command(
+    app: tauri::AppHandle,
+    request: NativeCommandRequest,
+) -> NativeCommandResponse {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let main_thread_result = app.run_on_main_thread(move || {
+            let clipboard = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD);
+            let text = clipboard.wait_for_text().map(|value| value.to_string());
+            let _ = tx.send(text);
+        });
+
+        if main_thread_result.is_err() {
+            return NativeCommandResponse {
+                ok: false,
+                domain: request.domain,
+                action: request.action,
+                data: None,
+                error: Some("failed to read the system clipboard".to_string()),
+            };
+        }
+
+        return match rx.await {
+            Ok(Some(text)) => match serde_json::to_value(ClipboardText { text }) {
+                Ok(data) => NativeCommandResponse {
+                    ok: true,
+                    domain: request.domain,
+                    action: request.action,
+                    data: Some(data),
+                    error: None,
+                },
+                Err(_) => NativeCommandResponse {
+                    ok: false,
+                    domain: request.domain,
+                    action: request.action,
+                    data: None,
+                    error: Some("failed to serialize clipboard text".to_string()),
+                },
+            },
+            _ => NativeCommandResponse {
+                ok: false,
+                domain: request.domain,
+                action: request.action,
+                data: None,
+                error: Some("clipboard does not contain text".to_string()),
+            },
+        };
+    }
+
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    )))]
+    {
+        NativeCommandResponse {
+            ok: false,
+            domain: request.domain,
+            action: request.action,
+            data: None,
+            error: Some("clipboard text reads are only supported on Linux".to_string()),
         }
     }
 }

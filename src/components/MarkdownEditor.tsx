@@ -8,7 +8,7 @@ import { markdownEditorTheme } from "./markdownEditorTheme";
 import { listContinuationKeymap } from "./listContinuation";
 import { findDroppedImagePath } from "../attachments/droppedImagePath";
 import { nativeDropClientPoint, subscribeToNativeImageDrop } from "../attachments/nativeDropChannel";
-import { importAttachment, readClipboardImage, saveAttachment } from "../native/commands";
+import { importAttachment, readClipboardImage, readClipboardText, saveAttachment } from "../native/commands";
 import type { FilesystemOperationResult, NativeCommandResponse } from "../native/commands";
 
 export interface MarkdownEditorProps {
@@ -178,8 +178,11 @@ async function importAndInsertAttachment(
 // WebKitGTK's `paste` DOM event does not expose image bytes on Linux
 // (`clipboardData` comes back empty even when the OS clipboard holds an
 // image), so Ctrl+V reads the system clipboard through a native command
-// instead of relying on the browser paste event for images. Plain text
-// still goes through the browser's normal clipboard read.
+// instead of relying on the browser paste event for images. Plain text goes
+// through a native command too: `navigator.clipboard.readText()` rejects
+// with `NotAllowedError` under WebKitGTK's clipboard permission model even
+// on this user-gesture-triggered paste, so text reads the same GTK
+// clipboard directly rather than going through the browser API.
 async function pasteFromSystemClipboard(
   view: EditorView,
   workspacePath: string,
@@ -204,16 +207,13 @@ async function pasteFromSystemClipboard(
     return;
   }
 
-  try {
-    const text = await navigator.clipboard.readText();
-    if (text) {
-      view.dispatch({
-        changes: { from: insertAt.from, to: insertAt.to, insert: text },
-        selection: { anchor: insertAt.from + text.length },
-      });
-    }
-  } catch (error) {
-    console.error("failed to read clipboard text", error);
+  const textResponse = await readClipboardText();
+  if (textResponse.ok && textResponse.data?.text) {
+    const text = textResponse.data.text;
+    view.dispatch({
+      changes: { from: insertAt.from, to: insertAt.to, insert: text },
+      selection: { anchor: insertAt.from + text.length },
+    });
   }
 }
 
