@@ -343,6 +343,31 @@ describe("MarkdownEditor", () => {
     expect(styleRules).toMatch(new RegExp(`\\.${headingClass}\\s*\\{[^}]*var\\(--font-family-heading\\)`));
   });
 
+  it("gives a fenced code block one continuous background, distinct from the inline code pill", () => {
+    render(
+      <MarkdownEditor
+        notePath="daily/today.md"
+        value={"`inline`\n\n```\nfirst\nsecond\n```"}
+        onChange={() => undefined}
+      />,
+    );
+
+    const editor = screen.getByTestId("markdown-editor");
+
+    expect(editor.querySelector(".cm-inline-code")).not.toBeNull();
+
+    const fencedLines = editor.querySelectorAll(".cm-fenced-code-line");
+    expect(fencedLines.length).toBeGreaterThanOrEqual(2);
+    expect(editor.querySelector(".cm-fenced-code-line-first")).not.toBeNull();
+    expect(editor.querySelector(".cm-fenced-code-line-last")).not.toBeNull();
+
+    const styleRules = Array.from(document.querySelectorAll("style"))
+      .map((style) => style.textContent ?? "")
+      .join("\n");
+    expect(styleRules).toMatch(/\.cm-inline-code\s*\{[^}]*var\(--color-code-bg\)/);
+    expect(styleRules).toMatch(/\.cm-fenced-code-line\s*\{[^}]*var\(--color-code-bg\)/);
+  });
+
   it("selects the requested file search jump range", () => {
     render(
       <MarkdownEditor

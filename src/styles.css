@@ -711,6 +711,27 @@ button {
   border-radius: var(--radius-sm);
 }
 
+.note-tree__folder-children {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 180ms ease;
+}
+
+.note-tree__folder-children--open {
+  grid-template-rows: 1fr;
+}
+
+.note-tree__folder-children-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .note-tree__folder-children {
+    transition: none;
+  }
+}
+
 .empty-tree,
 .workspace-error {
   margin: 0;

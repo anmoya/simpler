@@ -332,6 +332,10 @@ describe("ClassicShell", () => {
     rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={new Set()} />);
     expect(screen.queryByRole("button", { name: /today.md/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand daily" })).toBeInTheDocument();
+
+    const childrenWrapper = document.querySelector(".note-tree__folder-children");
+    expect(childrenWrapper).not.toHaveClass("note-tree__folder-children--open");
+    expect(childrenWrapper).toHaveAttribute("aria-hidden", "true");
   });
 
   it("highlights the folder path down to the active note, and clears it with no note open", () => {

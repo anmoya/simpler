@@ -1810,7 +1810,9 @@ function WorkspaceTree({
 
   return (
     <ul className={isRoot && dragOverFolder === "" ? "note-tree note-tree--drop-target" : "note-tree"} {...rootDropProps}>
-      {items.map((item) => (
+      {items.map((item) => {
+        const isOpen = openFolderPaths.has(item.path);
+        return (
         <li key={item.path}>
           {item.kind === "folder" ? (
             <div
@@ -1823,11 +1825,11 @@ function WorkspaceTree({
               <button
                 type="button"
                 className="note-tree__toggle"
-                aria-label={`${openFolderPaths.has(item.path) ? "Collapse" : "Expand"} ${item.name}`}
-                aria-expanded={openFolderPaths.has(item.path)}
+                aria-label={`${isOpen ? "Collapse" : "Expand"} ${item.name}`}
+                aria-expanded={isOpen}
                 onClick={() => onToggleFolder(item.path)}
               >
-                <Icon name={openFolderPaths.has(item.path) ? "chevron-down" : "chevron-right"} size={12} />
+                <Icon name={isOpen ? "chevron-down" : "chevron-right"} size={12} />
               </button>
               <button
                 type="button"
@@ -1892,23 +1894,39 @@ function WorkspaceTree({
               </span>
             </button>
           )}
-          {item.kind === "folder" && openFolderPaths.has(item.path) && item.children.length > 0 ? (
-            <WorkspaceTree
-              items={item.children}
-              activeNotePath={activeNotePath}
-              activeFolderPath={activeFolderPath}
-              openFolderPaths={openFolderPaths}
-              onToggleFolder={onToggleFolder}
-              onSelectFolder={onSelectFolder}
-              onSelectNote={onSelectNote}
-              onItemContextMenu={onItemContextMenu}
-              onMoveItem={onMoveItem}
-              dragOverFolder={dragOverFolder}
-              onDragOverFolder={onDragOverFolder}
-            />
+          {item.kind === "folder" && item.children.length > 0 ? (
+            <div
+              className={
+                isOpen
+                  ? "note-tree__folder-children note-tree__folder-children--open"
+                  : "note-tree__folder-children"
+              }
+              aria-hidden={!isOpen}
+              // Keeps a collapsed folder's descendants out of tab order and the
+              // a11y tree while still letting the CSS grid-rows transition
+              // animate them, instead of unmounting (which would jump-cut).
+              inert={!isOpen || undefined}
+            >
+              <div className="note-tree__folder-children-inner">
+                <WorkspaceTree
+                  items={item.children}
+                  activeNotePath={activeNotePath}
+                  activeFolderPath={activeFolderPath}
+                  openFolderPaths={openFolderPaths}
+                  onToggleFolder={onToggleFolder}
+                  onSelectFolder={onSelectFolder}
+                  onSelectNote={onSelectNote}
+                  onItemContextMenu={onItemContextMenu}
+                  onMoveItem={onMoveItem}
+                  dragOverFolder={dragOverFolder}
+                  onDragOverFolder={onDragOverFolder}
+                />
+              </div>
+            </div>
           ) : null}
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }
