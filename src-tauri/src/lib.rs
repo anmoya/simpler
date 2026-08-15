@@ -3227,11 +3227,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build Simpler");
 
+    #[cfg(target_os = "macos")]
     app.run(|app_handle, event| {
         // macOS only: `applicationShouldHandleReopen` (clicking the Dock
         // icon) with no visible windows — the window was hidden by the red
         // traffic light (ADR 0014), never destroyed, so this just needs to
-        // show and focus it again rather than recreate anything.
+        // show and focus it again rather than recreate anything. RunEvent
+        // has no `Reopen` variant at all outside macOS (it's cfg-gated
+        // inside the `tauri` crate itself), so this whole closure has to be
+        // macOS-only rather than matching on an event that never fires.
         if let tauri::RunEvent::Reopen {
             has_visible_windows,
             ..
@@ -3246,6 +3250,9 @@ pub fn run() {
             }
         }
     });
+
+    #[cfg(not(target_os = "macos"))]
+    app.run(|_, _| {});
 }
 
 #[cfg(test)]

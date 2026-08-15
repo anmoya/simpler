@@ -55,6 +55,20 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 
+// CodeMirror mounts its contenteditable DOM node in a useEffect that fires
+// after the "markdown-editor" container itself is in the DOM, so a bare
+// querySelector immediately after opening a note is a race — flaky under
+// CI's scheduling even when reliably fast on a local machine. Poll instead.
+async function findEditableElement(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]");
+    if (!editable) {
+      throw new Error("markdown editor contenteditable not mounted yet");
+    }
+    return editable as HTMLElement;
+  });
+}
+
 describe("App", () => {
   beforeEach(() => {
     mocks.invoke.mockReset();
@@ -1011,7 +1025,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.type(editable, "{End}\nChanged");
 
@@ -1529,7 +1543,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.type(editable, "{End}\nClose me");
     window.dispatchEvent(new Event("beforeunload"));
@@ -1653,7 +1667,7 @@ describe("App", () => {
     async function openWorkspaceAndMakePending(user: ReturnType<typeof userEvent.setup>) {
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
       await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
-      const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+      const editable = await findEditableElement();
       editable.focus();
       await user.type(editable, "{End}\nmore text");
     }
@@ -1924,9 +1938,13 @@ describe("App", () => {
 
     it("hides rather than syncs-and-destroys when the red traffic light triggers close-requested with no prior decision", async () => {
       mockMacOSPlatform();
-      render(<App />);
+      const { container } = render(<App />);
 
       await waitFor(() => expect(mocks.closeRequestedHandler).not.toBeNull());
+      // getPlatform() resolving is a separate async effect from onCloseRequested
+      // registration — wait for it to actually land before relying on it below,
+      // or this races (and did, once, in CI).
+      await waitFor(() => expect(container.querySelector(".titlebar")).toHaveAttribute("data-platform", "macos"));
 
       await mocks.closeRequestedHandler!({ preventDefault: vi.fn() });
 
