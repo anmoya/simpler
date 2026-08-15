@@ -8,10 +8,13 @@ import { markdownEditorTheme } from "./markdownEditorTheme";
 import { listContinuationKeymap } from "./listContinuation";
 import { findDroppedImagePath } from "../attachments/droppedImagePath";
 import { nativeDropClientPoint, subscribeToNativeImageDrop } from "../attachments/nativeDropChannel";
-import { importAttachment, readClipboardImage, readClipboardText, saveAttachment } from "../native/commands";
-import type { FilesystemOperationResult, NativeCommandResponse } from "../native/commands";
+import { importAttachment, isMacOS, readClipboardImage, readClipboardText, saveAttachment } from "../native/commands";
+import type { FilesystemOperationResult, NativeCommandResponse, Platform } from "../native/commands";
 
 export interface MarkdownEditorProps {
+  // Defaults to "linux" so existing call sites (and most tests, which don't
+  // care about the paste-interception split) don't need to pass it.
+  platform?: Platform;
   notePath: string;
   workspacePath?: string | null;
   value: string;
@@ -183,6 +186,12 @@ async function importAndInsertAttachment(
 // with `NotAllowedError` under WebKitGTK's clipboard permission model even
 // on this user-gesture-triggered paste, so text reads the same GTK
 // clipboard directly rather than going through the browser API.
+//
+// This is a Linux-only workaround (see the platform check at the Cmd/Ctrl+V
+// keydown handler below): WKWebView on macOS has no such defect and exposes
+// clipboard bytes to the DOM normally, so macOS never calls this function —
+// CodeMirror's native paste handles text, and the DOM `paste` handler below
+// handles images.
 async function pasteFromSystemClipboard(
   view: EditorView,
   workspacePath: string,
@@ -218,6 +227,7 @@ async function pasteFromSystemClipboard(
 }
 
 export function MarkdownEditor({
+  platform = "linux",
   notePath,
   workspacePath = null,
   value,
@@ -235,6 +245,8 @@ export function MarkdownEditor({
   notePathRef.current = notePath;
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
+  const platformRef = useRef(platform);
+  platformRef.current = platform;
   // Read through a ref: the EditorView is built once per note, so a prop
   // captured in a handler closure would go stale.
   const onAttachmentErrorRef = useRef(onAttachmentError);
@@ -326,7 +338,11 @@ export function MarkdownEditor({
                 (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v";
               const currentWorkspacePath = workspacePathRef.current;
 
-              if (!isPasteShortcut || !currentWorkspacePath) {
+              // macOS has no version of the WebKitGTK defect this native path
+              // works around: WKWebView exposes clipboard bytes to the DOM,
+              // so CodeMirror's native paste (text) and the `paste` handler
+              // below (images) already do the job without interception.
+              if (!isPasteShortcut || !currentWorkspacePath || isMacOS(platformRef.current)) {
                 return false;
               }
 

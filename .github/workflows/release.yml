@@ -6,10 +6,8 @@ on:
       - "v*.*.*"
 
 jobs:
-  release:
+  build-linux:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +42,7 @@ jobs:
           APPIMAGE=$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -n1)
           ./scripts/patch-appimage-wayland-fix.sh "$APPIMAGE"
 
-      - name: Sign AppImage and write update manifest
+      - name: Sign AppImage and write this platform's manifest entry
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -57,23 +55,125 @@ jobs:
             exit 1
           fi
           npm run tauri signer sign -- "$APPIMAGE"
+          mkdir -p release-artifacts
+          cp "$APPIMAGE" "$APPIMAGE.sig" src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/rpm/*.rpm release-artifacts/
+          # A manifest *fragment*, not the full latest.json: this job only
+          # knows its own platform. The publish job (which sees both this
+          # and the macOS job's fragment) assembles the real manifest, so
+          # neither platform's job can race the other into overwriting its
+          # entry.
           node -e '
             const fs = require("fs");
             const path = require("path");
             const [, appImage, repo, refName] = process.argv;
+            const entry = {
+              "linux-x86_64": {
+                signature: fs.readFileSync(appImage + ".sig", "utf8").trim(),
+                url: `https://github.com/${repo}/releases/download/${refName}/${path.basename(appImage)}`,
+              },
+            };
+            fs.writeFileSync("release-artifacts/linux-x86_64.platform.json", JSON.stringify(entry, null, 2));
+          ' "$APPIMAGE" "${{ github.repository }}" "${{ github.ref_name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: release-artifacts/*
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build bundles
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --target aarch64-apple-darwin --bundles dmg,app
+
+      - name: Sign the .app updater artifact and write this platform's manifest entry
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -x
+          BUNDLE_DIR=src-tauri/target/aarch64-apple-darwin/release/bundle
+          APP_ARCHIVE=$(find "$BUNDLE_DIR/macos" -name '*.app.tar.gz' | head -n1)
+          DMG=$(find "$BUNDLE_DIR/dmg" -name '*.dmg' | head -n1)
+          if [[ -z "$APP_ARCHIVE" || -z "$DMG" ]]; then
+            echo "Expected both a .app.tar.gz and a .dmg under $BUNDLE_DIR" >&2
+            ls -la "$BUNDLE_DIR/macos" "$BUNDLE_DIR/dmg" >&2 || true
+            exit 1
+          fi
+          npm run tauri signer sign -- "$APP_ARCHIVE"
+          mkdir -p release-artifacts
+          cp "$APP_ARCHIVE" "$APP_ARCHIVE.sig" "$DMG" release-artifacts/
+          # See the matching comment in build-linux: fragment only, merged by publish.
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const [, appArchive, repo, refName] = process.argv;
+            const entry = {
+              "darwin-aarch64": {
+                signature: fs.readFileSync(appArchive + ".sig", "utf8").trim(),
+                url: `https://github.com/${repo}/releases/download/${refName}/${path.basename(appArchive)}`,
+              },
+            };
+            fs.writeFileSync("release-artifacts/darwin-aarch64.platform.json", JSON.stringify(entry, null, 2));
+          ' "$APP_ARCHIVE" "${{ github.repository }}" "${{ github.ref_name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: release-artifacts/*
+          if-no-files-found: error
+
+  publish:
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-release
+          path: release-artifacts
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-release
+          path: release-artifacts
+
+      - name: Assemble the update manifest from both platforms' fragments
+        run: |
+          node -e '
+            const fs = require("fs");
+            const refName = process.argv[1];
+            const linux = JSON.parse(fs.readFileSync("release-artifacts/linux-x86_64.platform.json", "utf8"));
+            const macos = JSON.parse(fs.readFileSync("release-artifacts/darwin-aarch64.platform.json", "utf8"));
             const manifest = {
               version: refName.replace(/^v/, ""),
               notes: "",
               pub_date: new Date().toISOString(),
-              platforms: {
-                "linux-x86_64": {
-                  signature: fs.readFileSync(appImage + ".sig", "utf8").trim(),
-                  url: `https://github.com/${repo}/releases/download/${refName}/${path.basename(appImage)}`,
-                },
-              },
+              platforms: { ...linux, ...macos },
             };
-            fs.writeFileSync("latest.json", JSON.stringify(manifest, null, 2));
-          ' "$APPIMAGE" "${{ github.repository }}" "${{ github.ref_name }}"
+            fs.writeFileSync("release-artifacts/latest.json", JSON.stringify(manifest, null, 2));
+          ' "${{ github.ref_name }}"
+          rm release-artifacts/*.platform.json
 
       - name: Publish release
         env:
@@ -82,8 +182,4 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             --title "Simpler ${{ github.ref_name }}" \
             --notes "" \
-            src-tauri/target/release/bundle/deb/*.deb \
-            src-tauri/target/release/bundle/rpm/*.rpm \
-            src-tauri/target/release/bundle/appimage/*.AppImage \
-            src-tauri/target/release/bundle/appimage/*.AppImage.sig \
-            latest.json
+            release-artifacts/*

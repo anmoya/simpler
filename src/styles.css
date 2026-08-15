@@ -42,6 +42,12 @@ button {
     sans-serif;
   --font-family-heading: "Josefin Sans", var(--font-family-body);
   --font-family-mono: "DM Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  /*
+   * Raw Markdown body text in the editor, as opposed to `--font-family-body`
+   * which drives the surrounding UI chrome. They coincide unless a Theme
+   * separates them (Mate Cerámico pairs a serif prose face with a sans UI).
+   */
+  --font-family-prose: var(--font-family-body);
 
   display: grid;
   grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
@@ -101,6 +107,7 @@ button {
   --color-find-highlight-border: #c9932e;
   --color-line-highlight-bg: rgb(193 89 44 / 12%);
   --color-quote-border: #dcc7a8;
+  --color-markdown-mark: #b7a488;
   --shadow-float: 0 1px 2px rgb(60 50 30 / 6%), 0 3px 6px rgb(60 50 30 / 5%);
   --shadow-pop: 0 2px 4px rgb(60 50 30 / 8%), 0 8px 16px rgb(60 50 30 / 10%);
 }
@@ -131,8 +138,92 @@ button {
   --color-find-highlight-border: #e0b04e;
   --color-line-highlight-bg: rgb(217 113 63 / 18%);
   --color-quote-border: #4a3626;
+  --color-markdown-mark: #8a7259;
   --shadow-float: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 35%);
   --shadow-pop: 0 4px 14px rgb(0 0 0 / 35%), 0 12px 32px rgb(0 0 0 / 40%);
+}
+
+/*
+ * Mate Cerámico. Four materials only: raw ceramic (the surfaces), yerba green
+ * (accent, caret, focus, selection), wood (quote bars, live borders, strings)
+ * and brushed steel (metadata, informational states). Nothing else introduces
+ * a hue. Typography splits prose (serif) from UI chrome (sans), which is why
+ * `--font-family-prose` exists as a token separate from `--font-family-body`.
+ */
+.app-shell[data-theme="ceramic"] {
+  --font-family-body: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-family-heading: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-family-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --font-family-prose: var(--font-family-heading);
+}
+
+.app-shell[data-theme="ceramic"][data-mode="light"] {
+  --color-background: #d8d4cf;
+  --color-sidebar: #d2cec8;
+  --color-sidebar-selected: #dbe0d3;
+  --color-editor: #e6e2dc;
+  --color-status: #d2cec8;
+  --color-border: #bebfbd;
+  --color-border-subtle: rgb(45 27 18 / 8%);
+  --color-divider: #c9c8c4;
+  --color-text: #2d1b12;
+  --color-muted: #736a62;
+  --color-muted-light: #9c948c;
+  --color-subtle: #ece7e1;
+  --color-control: #ece7e1;
+  --color-active: #dbe0d3;
+  --color-accent: #2c3a26;
+  --color-accent-strong: #232e1e;
+  --color-accent-ring: rgb(91 103 87 / 30%);
+  --color-error: #7a4034;
+  --color-heading: #2d1b12;
+  --color-heading-text: #5a473b;
+  --color-amber: #8a6a3c;
+  --color-code-bg: #dfdad3;
+  --color-find-highlight-bg: #e3d9c9;
+  --color-find-highlight-border: #8a6a3c;
+  --color-line-highlight-bg: rgb(44 58 38 / 10%);
+  --color-quote-border: #a98b76;
+  --color-markdown-mark: #a98b76;
+  --shadow-float: 0 1px 2px rgb(45 27 18 / 5%);
+  --shadow-pop: 0 1px 2px rgb(45 27 18 / 5%), 0 6px 18px rgb(45 27 18 / 5%);
+}
+
+/*
+ * The dark Appearance Mode reads as the same clay after firing: the greige
+ * turns to a warm near-black and yerba lifts to a sage that clears contrast
+ * against it, while wood and steel keep their exact roles.
+ */
+.app-shell[data-theme="ceramic"][data-mode="dark"] {
+  --color-background: #23211e;
+  --color-sidebar: #1d1b19;
+  --color-sidebar-selected: #343a2c;
+  --color-editor: #262421;
+  --color-status: #1d1b19;
+  --color-border: #423e39;
+  --color-border-subtle: rgb(0 0 0 / 26%);
+  --color-divider: #37342f;
+  --color-text: #e8e3dc;
+  --color-muted: #a79e94;
+  --color-muted-light: #7e766d;
+  --color-subtle: #2f2c28;
+  --color-control: #2f2c28;
+  --color-active: #343a2c;
+  --color-accent: #9cb489;
+  --color-accent-strong: #7e9a6c;
+  --color-accent-ring: rgb(156 180 137 / 28%);
+  --color-error: #e0a99b;
+  --color-heading: #e3d9c9;
+  --color-heading-text: #c4b7a5;
+  --color-amber: #c9a46a;
+  --color-code-bg: rgb(255 255 255 / 6%);
+  --color-find-highlight-bg: rgb(201 164 106 / 26%);
+  --color-find-highlight-border: #c9a46a;
+  --color-line-highlight-bg: rgb(156 180 137 / 14%);
+  --color-quote-border: #a98b76;
+  --color-markdown-mark: #a98b76;
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow-pop: 0 1px 2px rgb(0 0 0 / 32%), 0 6px 18px rgb(0 0 0 / 38%);
 }
 
 .titlebar {
@@ -179,6 +270,17 @@ button {
 .titlebar__controls button.titlebar__close:hover {
   background: var(--color-error);
   color: var(--color-background);
+}
+
+/* macOS (ADR 0014): the native traffic lights (titleBarStyle: "Overlay")
+   do the min/max/close job instead, so the app's own buttons are hidden and
+   the title gets left padding clear of them instead of sitting underneath. */
+.titlebar[data-platform="macos"] {
+  padding-left: 78px;
+}
+
+.titlebar[data-platform="macos"] .titlebar__controls {
+  display: none;
 }
 
 .sidebar {
@@ -724,6 +826,120 @@ button {
 .note-tree__folder-children-inner {
   min-height: 0;
   overflow: hidden;
+}
+
+.appearance-settings {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.appearance-settings h2 {
+  margin: 0 0 10px;
+  color: var(--color-muted);
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.appearance-settings__themes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.appearance-settings__theme {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-control);
+  color: var(--color-text);
+  font-size: var(--font-size-meta);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.appearance-settings__theme:hover {
+  background: var(--color-subtle);
+}
+
+.appearance-settings__theme--active {
+  border-color: var(--color-accent);
+  background: var(--color-active);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.appearance-settings__swatches {
+  display: flex;
+  flex-shrink: 0;
+  gap: 3px;
+}
+
+.appearance-settings__swatch {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+}
+
+/*
+ * The preview swatches must show each Theme's own colors regardless of which
+ * Theme is currently applied, so they are literal values rather than tokens —
+ * and they show the values for the Appearance Mode currently in effect, since
+ * a Theme's light surface is unreadable as a sample on a dark shell.
+ */
+[data-theme-preview="warm"] .appearance-settings__swatch--surface {
+  background: #f4e9d8;
+}
+
+[data-theme-preview="warm"] .appearance-settings__swatch--accent {
+  background: #c1592c;
+}
+
+[data-theme-preview="warm"] .appearance-settings__swatch--detail {
+  background: #c9932e;
+}
+
+[data-mode="dark"] [data-theme-preview="warm"] .appearance-settings__swatch--surface {
+  background: #241a14;
+}
+
+[data-mode="dark"] [data-theme-preview="warm"] .appearance-settings__swatch--accent {
+  background: #d9713f;
+}
+
+[data-mode="dark"] [data-theme-preview="warm"] .appearance-settings__swatch--detail {
+  background: #e0b04e;
+}
+
+[data-theme-preview="ceramic"] .appearance-settings__swatch--surface {
+  background: #d8d4cf;
+}
+
+[data-theme-preview="ceramic"] .appearance-settings__swatch--accent {
+  background: #2c3a26;
+}
+
+[data-theme-preview="ceramic"] .appearance-settings__swatch--detail {
+  background: #a98b76;
+}
+
+[data-mode="dark"] [data-theme-preview="ceramic"] .appearance-settings__swatch--surface {
+  background: #23211e;
+}
+
+[data-mode="dark"] [data-theme-preview="ceramic"] .appearance-settings__swatch--accent {
+  background: #9cb489;
+}
+
+[data-mode="dark"] [data-theme-preview="ceramic"] .appearance-settings__swatch--detail {
+  background: #a98b76;
 }
 
 @media (prefers-reduced-motion: reduce) {

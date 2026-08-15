@@ -31,3 +31,14 @@ The complete automated suite passed during this readiness pass: 46 frontend test
 3. Use `Ctrl/Cmd+K` for Command Palette, `Ctrl/Cmd+/` for Command Help, and test both current-file and Global Search.
 4. With a disposable Git remote, use **Sync** after a local edit and confirm the status changes to **Sincronizado**. Make divergent commits in a second clone and confirm the conflict options preserve a deliberate local, remote, or manually edited choice.
 5. With a configured OAuth client, complete Device Flow from Settings and exercise **Conectar remoto GitHub** and **Clonar desde GitHub** with a disposable repository.
+
+### macOS-specific checks
+
+Linux is the reference platform (`docs/adr/0014-macos-supported-linux-reference-platform.md`); these cover only where macOS deliberately diverges.
+
+6. Native traffic lights are visible over the title bar and function (close/minimize/zoom); the app's own min/max/close buttons are hidden and the title isn't obscured by the traffic lights.
+7. The red traffic light hides the window rather than quitting — the app stays in the Dock and no Close Sync Prompt appears.
+8. Clicking the Dock icon while hidden restores the window with the Workspace and active note intact.
+9. Cmd+Q quits: immediately with nothing pending, or through the Close Sync Prompt with changes pending Sync.
+10. Cmd+V pastes both plain text and an image copied from another app (a total break without the platform check — see `docs/adr/0014-macos-supported-linux-reference-platform.md`'s "Clipboard paste" section).
+11. Dragging an image file from Finder into a note imports it into `assets/` at the correct pointer position (see the ADR 0013 amendment for the verified/unverified status of this one).

@@ -8,6 +8,9 @@ import {
   type DialogRequest,
   type EditorError,
   type ThemeMode,
+  type Theme,
+  themes,
+  defaultTheme,
   type TreeMode,
   type UiZoom,
   uiZoomSteps,
@@ -36,6 +39,8 @@ import {
   disconnectGitHub,
   downloadAndInstallUpdate,
   getInstallKind,
+  getPlatform,
+  isMacOS,
   githubRemote,
   gitSync,
   gitStatus,
@@ -107,6 +112,7 @@ export function App() {
   const [appState, setAppState] = useState<AppState>(() => ({
     ...initialAppState,
     recentWorkspaces: readRecentWorkspaces(),
+    theme: readTheme(),
     themeMode: readThemeMode(),
     sidebarCollapsed: readSidebarCollapsed(),
   }));
@@ -134,6 +140,9 @@ export function App() {
   // appClosing() call would silently re-run Sync after the Close Sync Prompt already
   // decided to skip it, contradicting the user's "close without sync" choice.
   const skipCloseRequestedSyncRef = useRef(false);
+  // Read through a ref by the mount-once "simpler://quit-requested" listener
+  // below, which would otherwise close over the first render's closeWindow.
+  const closeWindowRef = useRef<() => void>(() => undefined);
 
   appStateRef.current = appState;
 
@@ -145,6 +154,25 @@ export function App() {
       },
     });
   }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await getPlatform();
+        if (!cancelled && response?.ok && response.data) {
+          setAppState((current) => ({ ...current, platform: response.data!.platform }));
+        }
+      } catch {
+        // Leave the default ("linux") platform for this session if detection fails.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const updateSchedulerRef = useRef<UpdateScheduler | null>(null);
 
@@ -214,7 +242,8 @@ export function App() {
           return;
         }
         const installKind = response?.ok && response.data ? response.data.installKind : "packaged";
-        updateSchedulerRef.current = createUpdateScheduler({ installKind, requestCheck, requestDownload });
+        const canSelfUpdate = installKind === "appimage" || installKind === "macos-app";
+        updateSchedulerRef.current = createUpdateScheduler({ canSelfUpdate, requestCheck, requestDownload });
         updateSchedulerRef.current.appOpened();
         applySchedulerState();
       } catch {
@@ -269,6 +298,7 @@ export function App() {
     };
 
     let unlistenClose: (() => void) | null = null;
+    let unlistenQuitRequested: (() => void) | null = null;
     try {
       const currentWindow = getCurrentWindow();
       void currentWindow
@@ -277,11 +307,39 @@ export function App() {
           // plugin's own post-handler destroy() call, which is one of the
           // suspected hang points (see .scratch/window-close-reliability).
           event.preventDefault();
+
+          // macOS only (ADR 0011 amendment, ADR 0014): this fires for the
+          // in-app close button and Cmd+Q too (both funnel through
+          // performClose()'s currentWindow.close() call below), but only
+          // those set skipCloseRequestedSyncRef first. An unset flag here
+          // means this CloseRequested came from the native red traffic
+          // light instead — hide rather than sync-and-destroy, since the
+          // process staying alive isn't a loss (Local Save already wrote
+          // the file) and a sync prompt on every red-light click a Mac
+          // user makes dozens of times a day would be pure noise.
+          if (isMacOS(appStateRef.current.platform) && !skipCloseRequestedSyncRef.current) {
+            void currentWindow.hide().catch(() => undefined);
+            return;
+          }
+
           await runAppClosingWithFallback();
           void currentWindow.destroy().catch(() => undefined);
         })
         .then((unlisten) => {
           unlistenClose = unlisten;
+        })
+        .catch(() => undefined);
+
+      // macOS only: Cmd+Q's accelerator is wired to a custom menu item
+      // (src-tauri/src/lib.rs) instead of the native Quit action, so it can
+      // run through the same closeWindow() the in-app close button uses —
+      // Close Sync Prompt included — rather than bypassing Rust/JS entirely.
+      void currentWindow
+        .listen("simpler://quit-requested", () => {
+          closeWindowRef.current();
+        })
+        .then((unlisten) => {
+          unlistenQuitRequested = unlisten;
         })
         .catch(() => undefined);
     } catch {
@@ -291,6 +349,7 @@ export function App() {
     return () => {
       window.removeEventListener("beforeunload", requestCloseSync);
       unlistenClose?.();
+      unlistenQuitRequested?.();
       schedulerRef.current?.dispose();
     };
   }, []);
@@ -366,6 +425,7 @@ export function App() {
 
     setCloseSyncPrompt({ kind: "choice" });
   };
+  closeWindowRef.current = closeWindow;
 
   const waitForSyncBeforeClose = async () => {
     if (!(schedulerRef.current?.prepareManualSync() ?? true)) {
@@ -1034,6 +1094,11 @@ export function App() {
     setAppState((current) => ({ ...current, themeMode }));
   };
 
+  const changeAppTheme = (theme: Theme) => {
+    saveTheme(theme);
+    setAppState((current) => ({ ...current, theme }));
+  };
+
   const changeUiZoom = (uiZoom: UiZoom) => {
     saveUiZoom(uiZoom);
     setUiZoomState(uiZoom);
@@ -1267,6 +1332,7 @@ export function App() {
 
   return (
     <ClassicShell
+      platform={appState.platform}
       activeRoute={appState.activeRoute}
       workspaceTree={appState.workspaceTree}
       openFolderPaths={appState.openFolderPaths}
@@ -1286,6 +1352,7 @@ export function App() {
       noteHistoryLoading={noteHistoryPanel.loading}
       noteHistoryError={noteHistoryPanel.error}
       themeMode={appState.themeMode}
+      theme={appState.theme}
       uiZoom={uiZoom}
       editorFontSize={editorFontSize}
       sidebarCollapsed={appState.sidebarCollapsed}
@@ -1299,6 +1366,7 @@ export function App() {
       onOpenRecentWorkspace={openWorkspaceAtPath}
       onRouteChange={openRoute}
       onThemeChange={changeTheme}
+      onAppThemeChange={changeAppTheme}
       onUiZoomChange={changeUiZoom}
       onEditorFontSizeChange={changeEditorFontSize}
       onSelectFolder={selectFolder}
@@ -1381,6 +1449,7 @@ export function App() {
 
 const recentWorkspacesStorageKey = "simpler.recentWorkspaces";
 const themeModeStorageKey = "simpler.themeMode";
+const themeStorageKey = "simpler.theme";
 const sidebarCollapsedStorageKey = "simpler.sidebarCollapsed";
 
 function readThemeMode(): ThemeMode {
@@ -1397,6 +1466,23 @@ function saveThemeMode(themeMode: ThemeMode) {
     localStorage.setItem(themeModeStorageKey, themeMode);
   } catch {
     // localStorage may be unavailable (e.g. private browsing); the app still works, just unpersisted.
+  }
+}
+
+function readTheme(): Theme {
+  try {
+    const value = localStorage.getItem(themeStorageKey);
+    return themes.includes(value as Theme) ? (value as Theme) : defaultTheme;
+  } catch {
+    return defaultTheme;
+  }
+}
+
+function saveTheme(theme: Theme) {
+  try {
+    localStorage.setItem(themeStorageKey, theme);
+  } catch {
+    // Same as saveThemeMode: unpersisted is an acceptable degradation.
   }
 }
 

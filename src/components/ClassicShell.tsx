@@ -13,8 +13,9 @@ import type {
   UpdateNoticeState,
   WorkspaceTreeItem,
 } from "../app/appState";
-import { uiZoomSteps, defaultUiZoom, editorFontSizeSteps, defaultEditorFontSize } from "../app/appState";
-import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
+import { uiZoomSteps, defaultUiZoom, editorFontSizeSteps, defaultEditorFontSize, themes, themeLabels } from "../app/appState";
+import type { Theme } from "../app/appState";
+import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, Platform, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { NoteHistoryPanel } from "./NoteHistoryPanel";
@@ -40,6 +41,7 @@ interface ShellCommand {
 }
 
 export interface ClassicShellProps {
+  platform: Platform;
   activeRoute: AppRoute;
   workspaceTree: WorkspaceTreeItem[];
   openFolderPaths: ReadonlySet<string>;
@@ -59,6 +61,7 @@ export interface ClassicShellProps {
   noteHistoryLoading: boolean;
   noteHistoryError: string | null;
   themeMode: ThemeMode;
+  theme: Theme;
   uiZoom: UiZoom;
   editorFontSize: EditorFontSize;
   sidebarCollapsed: boolean;
@@ -72,6 +75,7 @@ export interface ClassicShellProps {
   onOpenRecentWorkspace: (workspacePath: string) => void;
   onRouteChange: (route: AppRoute) => void;
   onThemeChange: (themeMode: ThemeMode) => void;
+  onAppThemeChange: (theme: Theme) => void;
   onUiZoomChange: (uiZoom: UiZoom) => void;
   onEditorFontSizeChange: (editorFontSize: EditorFontSize) => void;
   onSelectFolder: (folderPath: string) => void;
@@ -134,6 +138,7 @@ export interface ClassicShellProps {
 const releasePageUrl = "https://github.com/anmoya/simpler/releases/latest";
 
 export function ClassicShell({
+  platform,
   activeRoute,
   workspaceTree,
   openFolderPaths,
@@ -153,6 +158,7 @@ export function ClassicShell({
   noteHistoryLoading,
   noteHistoryError,
   themeMode,
+  theme,
   uiZoom,
   editorFontSize,
   sidebarCollapsed,
@@ -166,6 +172,7 @@ export function ClassicShell({
   onOpenRecentWorkspace,
   onRouteChange,
   onThemeChange,
+  onAppThemeChange,
   onUiZoomChange,
   onEditorFontSizeChange,
   onSelectFolder,
@@ -289,6 +296,9 @@ export function ClassicShell({
   const hasOpenWorkspace = canManageWorkspace;
   const hasNotes = workspaceTreeHasNotes(workspaceTree);
   const nextTheme = themeMode === "light" ? "dark" : "light";
+  // Themes cycle in declaration order so one command/shortcut reaches every
+  // Theme without needing a submenu; the Settings pane still offers direct picks.
+  const nextAppTheme = themes[(themes.indexOf(theme) + 1) % themes.length] ?? theme;
   const uiZoomIndex = uiZoomSteps.indexOf(uiZoom);
   const nextUiZoomIn = uiZoomSteps[Math.min(uiZoomSteps.length - 1, uiZoomIndex + 1)] ?? uiZoom;
   const nextUiZoomOut = uiZoomSteps[Math.max(0, uiZoomIndex - 1)] ?? uiZoom;
@@ -376,10 +386,17 @@ export function ClassicShell({
       },
       {
         id: "theme",
-        label: `Switch to ${nextTheme} theme`,
+        label: `Switch to ${nextTheme} appearance`,
         shortcut: "Ctrl/Cmd+Shift+T",
         available: true,
         run: () => onThemeChange(nextTheme),
+      },
+      {
+        id: "app-theme",
+        label: `Switch Theme to ${themeLabels[nextAppTheme]}`,
+        shortcut: "",
+        available: themes.length > 1,
+        run: () => onAppThemeChange(nextAppTheme),
       },
       {
         id: "zoom-in",
@@ -451,6 +468,7 @@ export function ClassicShell({
       canManageWorkspace,
       hasSelection,
       nextTheme,
+      nextAppTheme,
       nextUiZoomIn,
       nextUiZoomOut,
       nextEditorFontSizeIn,
@@ -464,6 +482,7 @@ export function ClassicShell({
       onRouteChange,
       onSyncWorkspace,
       onThemeChange,
+      onAppThemeChange,
       onUiZoomChange,
       onEditorFontSizeChange,
       uiZoom,
@@ -740,12 +759,13 @@ export function ClassicShell({
   return (
     <div
       className="app-shell"
-      data-theme="warm"
+      data-theme={theme}
       data-mode={themeMode}
       data-sidebar={effectiveSidebarCollapsed ? "collapsed" : "expanded"}
       style={{ "--ui-zoom": uiZoom / 100 } as CSSProperties}
     >
       <TitleBar
+        platform={platform}
         isMaximized={isWindowMaximized}
         onMinimize={onMinimizeWindow}
         onToggleMaximize={onToggleMaximizeWindow}
@@ -913,13 +933,41 @@ export function ClassicShell({
                 />
               </section>
             ) : activeRoute === "settings" ? (
-              <GitHubAuthenticationPanel
-                githubAuth={githubAuth}
-                onBeginDeviceFlow={onBeginGitHubDeviceFlow}
-                onCheckDeviceFlow={onCheckGitHubDeviceFlow}
-                onStorePersonalAccessToken={onStoreGitHubPersonalAccessToken}
-                onDisconnect={onDisconnectGitHub}
-              />
+              <>
+                <section className="appearance-settings" aria-label="Appearance">
+                  <h2>Appearance</h2>
+                  <div className="appearance-settings__themes" role="radiogroup" aria-label="Theme">
+                    {themes.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        role="radio"
+                        aria-checked={theme === option}
+                        className={
+                          theme === option
+                            ? "appearance-settings__theme appearance-settings__theme--active"
+                            : "appearance-settings__theme"
+                        }
+                        onClick={() => onAppThemeChange(option)}
+                      >
+                        <span className="appearance-settings__swatches" data-theme-preview={option} aria-hidden="true">
+                          <span className="appearance-settings__swatch appearance-settings__swatch--surface" />
+                          <span className="appearance-settings__swatch appearance-settings__swatch--accent" />
+                          <span className="appearance-settings__swatch appearance-settings__swatch--detail" />
+                        </span>
+                        {themeLabels[option]}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+                <GitHubAuthenticationPanel
+                  githubAuth={githubAuth}
+                  onBeginDeviceFlow={onBeginGitHubDeviceFlow}
+                  onCheckDeviceFlow={onCheckGitHubDeviceFlow}
+                  onStorePersonalAccessToken={onStoreGitHubPersonalAccessToken}
+                  onDisconnect={onDisconnectGitHub}
+                />
+              </>
             ) : (
               <>
                 <div className="tree-controls">
@@ -1104,8 +1152,8 @@ export function ClassicShell({
             </button>
             <button
               type="button"
-              title={`Switch to ${nextTheme} theme`}
-              aria-label={`Switch to ${nextTheme} theme`}
+              title={`Switch to ${nextTheme} appearance`}
+              aria-label={`Switch to ${nextTheme} appearance`}
               onClick={() => onThemeChange(nextTheme)}
             >
               <Icon name={themeMode === "light" ? "moon" : "sun"} />
@@ -1133,6 +1181,7 @@ export function ClassicShell({
                 </p>
               ) : null}
               <MarkdownEditor
+                platform={platform}
                 notePath={activeNotePath}
                 workspacePath={workspacePath}
                 value={noteContent}
@@ -1705,21 +1754,27 @@ function SyncWorkspacePanel({
 }
 
 function TitleBar({
+  platform,
   isMaximized,
   onMinimize,
   onToggleMaximize,
   onClose,
 }: {
+  platform: Platform;
   isMaximized: boolean;
   onMinimize: () => void;
   onToggleMaximize: () => void;
   onClose: () => void;
 }) {
   return (
-    <header className="titlebar" data-tauri-drag-region>
+    <header className="titlebar" data-platform={platform} data-tauri-drag-region>
       <span className="titlebar__title" data-tauri-drag-region>
         Simpler
       </span>
+      {/* On macOS the native traffic lights (titleBarStyle: "Overlay", ADR 0014)
+          do this job; these buttons are hidden via [data-platform="macos"] in
+          styles.css rather than not rendered, so the drag region layout stays
+          the same shape on both platforms. */}
       <div className="titlebar__controls">
         <button type="button" title="Minimizar" aria-label="Minimizar" onClick={onMinimize}>
           <Icon name="window-minimize" size={12} />

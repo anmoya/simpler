@@ -436,7 +436,7 @@ export function disconnectGitHub() {
   return invokeNativeCommand<GitHubAuthStatus>({ domain: "auth", action: "disconnect", payload: {} });
 }
 
-export type InstallKind = "appimage" | "packaged";
+export type InstallKind = "appimage" | "packaged" | "macos-app";
 
 export interface InstallKindResponse {
   installKind: InstallKind;
@@ -445,6 +445,21 @@ export interface InstallKindResponse {
 /** Reports whether this build can self-update (AppImage) or only link out to the GitHub Release page (deb/rpm). */
 export function getInstallKind() {
   return invokeNativeCommand<InstallKindResponse>({ domain: "update", action: "get-install-kind", payload: {} });
+}
+
+export type Platform = "macos" | "linux";
+
+export interface PlatformResponse {
+  platform: Platform;
+}
+
+/** Reports the running platform. Prefer a capability check like `isMacOS(platform)` at call sites over comparing this string directly. */
+export function getPlatform() {
+  return invokeNativeCommand<PlatformResponse>({ domain: "update", action: "get-platform", payload: {} });
+}
+
+export function isMacOS(platform: Platform): boolean {
+  return platform === "macos";
 }
 
 export interface UpdateCheckResponse {

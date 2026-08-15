@@ -446,12 +446,38 @@ struct GitHubAuthStatus {
 enum InstallKind {
     Appimage,
     Packaged,
+    MacosApp,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InstallKindResponse {
     install_kind: InstallKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Platform {
+    Macos,
+    Linux,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformResponse {
+    platform: Platform,
+}
+
+/// Reports the running platform so the frontend can ask capability
+/// questions ("does this platform need the clipboard workaround?") instead
+/// of sniffing the user agent. Compiled in via `cfg`, not detected at
+/// runtime, since the two are the same thing for a Tauri binary.
+fn get_platform() -> Platform {
+    if cfg!(target_os = "macos") {
+        Platform::Macos
+    } else {
+        Platform::Linux
+    }
 }
 
 #[cfg(not(test))]
@@ -475,11 +501,16 @@ impl EnvLookup for SystemEnvLookup {
     }
 }
 
-/// Reports whether the running binary is an AppImage (which can self-update)
-/// vs. a packaged deb/rpm install (which can only link out to the release
-/// page), by checking for the `APPIMAGE` env var AppImage's runtime sets.
+/// Reports whether the running binary is an AppImage (self-updates), a
+/// macOS .app bundle (also self-updates, ADR 0015), or a packaged deb/rpm
+/// install (can only link out to the release page). The macOS case doesn't
+/// need env-var detection the way AppImage does: every macOS build is a
+/// `.app`, whether freshly installed from the `.dmg` or already replaced
+/// in place by a previous self-update, so the platform alone decides it.
 fn get_install_kind(env: &impl EnvLookup) -> InstallKind {
-    if env.var("APPIMAGE").is_some() {
+    if cfg!(target_os = "macos") {
+        InstallKind::MacosApp
+    } else if env.var("APPIMAGE").is_some() {
         InstallKind::Appimage
     } else {
         InstallKind::Packaged
@@ -494,6 +525,13 @@ trait GitHubCredentialStore {
 
 struct SystemCredentialStore;
 
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 impl GitHubCredentialStore for SystemCredentialStore {
     fn access_token(&self) -> Result<Option<String>, String> {
         let output = Command::new("secret-tool")
@@ -552,6 +590,74 @@ impl GitHubCredentialStore for SystemCredentialStore {
     fn clear_access_token(&self) -> Result<(), String> {
         let status = Command::new("secret-tool")
             .args(["clear", "service", "simpler", "account", "github"])
+            .status()
+            .map_err(|error| format!("failed to access the system keychain: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("failed to remove the GitHub credential from the system keychain".to_string())
+        }
+    }
+}
+
+// The macOS keychain, via the `security` CLI (ADR 0014) rather than
+// `secret-tool`, which is libsecret/Linux-only.
+#[cfg(target_os = "macos")]
+impl GitHubCredentialStore for SystemCredentialStore {
+    fn access_token(&self) -> Result<Option<String>, String> {
+        let output = Command::new("security")
+            .args(["find-generic-password", "-s", "simpler", "-a", "github", "-w"])
+            .output()
+            .map_err(|error| format!("failed to access the system keychain: {error}"))?;
+
+        // Unlike secret-tool's exit code 1, `security` uses 44
+        // (errSecItemNotFound) for "no credential stored yet" — a Mac with
+        // no GitHub connection made yet, not a broken keychain.
+        if output.status.code() == Some(44) {
+            return Ok(None);
+        }
+        if !output.status.success() {
+            return Err(
+                "failed to read the GitHub credential from the system keychain".to_string(),
+            );
+        }
+
+        Ok(
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|token| !token.is_empty()),
+        )
+    }
+
+    fn store_access_token(&self, token: &str) -> Result<(), String> {
+        // Unlike secret-tool store, `security add-generic-password` has no
+        // stdin form for the password — `-w` takes it directly as an argv
+        // value, which is visible to other processes on this machine via
+        // `ps` for as long as the command runs. There is no CLI flag that
+        // avoids this; accepted here on the standing assumption behind this
+        // whole store (ADR 0014): a single-developer, single-Mac audience.
+        let status = Command::new("security")
+            .args([
+                "add-generic-password",
+                "-s",
+                "simpler",
+                "-a",
+                "github",
+                "-w",
+                token,
+                "-U",
+            ])
+            .status()
+            .map_err(|error| format!("failed to access the system keychain: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("failed to store the GitHub credential in the system keychain".to_string())
+        }
+    }
+
+    fn clear_access_token(&self) -> Result<(), String> {
+        let status = Command::new("security")
+            .args(["delete-generic-password", "-s", "simpler", "-a", "github"])
             .status()
             .map_err(|error| format!("failed to access the system keychain: {error}"))?;
         if status.success() {
@@ -925,6 +1031,10 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
         return native_response(request, get_install_kind_payload);
     }
 
+    if request.domain == NativeDomain::Update && request.action == "get-platform" {
+        return native_response(request, get_platform_payload);
+    }
+
     // "check-for-update" and "download-and-install-update" (Update domain)
     // need an AppHandle for tauri-plugin-updater and are handled in
     // commands::native_command via handle_update_command before reaching
@@ -943,6 +1053,13 @@ fn get_install_kind_payload(_: serde_json::Value) -> Result<serde_json::Value, S
     let install_kind = get_install_kind(&SystemEnvLookup);
     serde_json::to_value(InstallKindResponse { install_kind })
         .map_err(|_| "failed to serialize install kind".to_string())
+}
+
+fn get_platform_payload(_: serde_json::Value) -> Result<serde_json::Value, String> {
+    serde_json::to_value(PlatformResponse {
+        platform: get_platform(),
+    })
+    .map_err(|_| "failed to serialize platform".to_string())
 }
 
 fn github_auth_status_payload(_: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -2973,10 +3090,24 @@ async fn handle_update_command(
 
 #[cfg(not(test))]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![commands::native_command])
+        // macOS only: the default Quit menu item's accelerator (Cmd+Q) is
+        // wired to the native `terminate:` selector, which exits the process
+        // directly and never reaches any Rust or JS code — see ADR 0014. The
+        // custom item below has the same accelerator but a plain click
+        // action instead, routed through here to the frontend's own close
+        // pipeline (Close Sync Prompt included) via a "quit-app" menu id.
+        .on_menu_event(|app_handle, event| {
+            if event.id().as_ref() == "quit-app" {
+                use tauri::{Emitter, Manager};
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.emit("simpler://quit-requested", ());
+                }
+            }
+        })
         .setup(|app| {
             // Root cause of window-close hangs on Linux/Wayland (see
             // .scratch/window-close-reliability): the compositor's
@@ -3034,18 +3165,87 @@ pub fn run() {
                     }
                 }
             }
+
+            // Swap the default menu's predefined Quit item (native
+            // `terminate:`, unreachable from Rust/JS — see the on_menu_event
+            // comment above) for one with the same Cmd+Q accelerator but a
+            // click action we can route through the frontend's close
+            // pipeline instead.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{Menu, MenuItem, MenuItemKind};
+
+                let menu = Menu::default(app.handle())?;
+                if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
+                    if let Some(MenuItemKind::Predefined(default_quit)) =
+                        app_menu.items()?.into_iter().last()
+                    {
+                        app_menu.remove(&default_quit)?;
+                    }
+                    let quit_item = MenuItem::with_id(
+                        app.handle(),
+                        "quit-app",
+                        "Quit Simpler",
+                        true,
+                        Some("CmdOrCtrl+Q"),
+                    )?;
+                    app_menu.append(&quit_item)?;
+                }
+                app.set_menu(menu)?;
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
             // Defense-in-depth: force the process to exit once the window is
             // actually destroyed, in case the platform's default
-            // exit-on-last-window-closed behavior doesn't fire.
+            // exit-on-last-window-closed behavior doesn't fire. Linux-only
+            // (see ADR 0014): on macOS the window is hidden, not destroyed,
+            // by the red traffic light, and a real quit (Cmd+Q or the in-app
+            // close button) already destroys through the frontend's own
+            // close pipeline, which the platform's default
+            // exit-when-no-windows-remain behavior picks up on its own.
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd"
+            ))]
             if let tauri::WindowEvent::Destroyed = event {
                 tauri::Manager::app_handle(window).exit(0);
             }
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd"
+            )))]
+            let _ = (window, event);
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run Simpler");
+        .build(tauri::generate_context!())
+        .expect("failed to build Simpler");
+
+    app.run(|app_handle, event| {
+        // macOS only: `applicationShouldHandleReopen` (clicking the Dock
+        // icon) with no visible windows — the window was hidden by the red
+        // traffic light (ADR 0014), never destroyed, so this just needs to
+        // show and focus it again rather than recreate anything.
+        if let tauri::RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } = event
+        {
+            if !has_visible_windows {
+                use tauri::Manager;
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -3069,15 +3269,52 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "macos"))]
     fn install_kind_is_appimage_when_appimage_env_var_is_set() {
         let env = StubEnvLookup(Some("/tmp/Simpler.AppImage"));
         assert_eq!(get_install_kind(&env), InstallKind::Appimage);
     }
 
     #[test]
+    #[cfg(not(target_os = "macos"))]
     fn install_kind_is_packaged_when_appimage_env_var_is_absent() {
         let env = StubEnvLookup(None);
         assert_eq!(get_install_kind(&env), InstallKind::Packaged);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn install_kind_is_macos_app_regardless_of_the_appimage_env_var() {
+        // A macOS build has no AppImage-style env-var signal at all; the
+        // platform alone decides it (see the get_install_kind doc comment).
+        assert_eq!(get_install_kind(&StubEnvLookup(None)), InstallKind::MacosApp);
+        assert_eq!(
+            get_install_kind(&StubEnvLookup(Some("/tmp/Simpler.AppImage"))),
+            InstallKind::MacosApp
+        );
+    }
+
+    #[test]
+    fn get_platform_matches_the_compile_target() {
+        let expected = if cfg!(target_os = "macos") {
+            Platform::Macos
+        } else {
+            Platform::Linux
+        };
+        assert_eq!(get_platform(), expected);
+    }
+
+    #[test]
+    fn get_platform_native_command_reports_the_running_platform() {
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Update,
+            action: "get-platform".to_string(),
+            payload: serde_json::Value::Null,
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert_eq!(data["platform"], serde_json::to_value(get_platform()).unwrap());
     }
 
     #[derive(Default)]

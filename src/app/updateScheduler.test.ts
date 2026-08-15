@@ -16,7 +16,7 @@ describe("update scheduler", () => {
   it("checks for an update shortly after the app opens", () => {
     const requestCheck = vi.fn();
     const scheduler = createUpdateScheduler({
-      installKind: "appimage",
+      canSelfUpdate: true,
       checkDelayMs,
       throttleMs,
       requestCheck,
@@ -36,7 +36,7 @@ describe("update scheduler", () => {
   it("throttles repeat checks within the throttle window", () => {
     const requestCheck = vi.fn();
     const scheduler = createUpdateScheduler({
-      installKind: "appimage",
+      canSelfUpdate: true,
       checkDelayMs,
       throttleMs,
       requestCheck,
@@ -56,7 +56,7 @@ describe("update scheduler", () => {
   it("allows a check again once the throttle window has elapsed", () => {
     const requestCheck = vi.fn();
     const scheduler = createUpdateScheduler({
-      installKind: "appimage",
+      canSelfUpdate: true,
       checkDelayMs,
       throttleMs,
       requestCheck,
@@ -77,7 +77,7 @@ describe("update scheduler", () => {
   it("stays idle (no visible notice) when already up to date", () => {
     const requestCheck = vi.fn();
     const scheduler = createUpdateScheduler({
-      installKind: "appimage",
+      canSelfUpdate: true,
       checkDelayMs,
       throttleMs,
       requestCheck,
@@ -94,7 +94,7 @@ describe("update scheduler", () => {
   it("on AppImage installs, automatically downloads in the background when an update is found", () => {
     const requestDownload = vi.fn();
     const scheduler = createUpdateScheduler({
-      installKind: "appimage",
+      canSelfUpdate: true,
       checkDelayMs,
       throttleMs,
       requestCheck: vi.fn(),
@@ -116,7 +116,7 @@ describe("update scheduler", () => {
   it("on packaged (deb/rpm) installs, shows the notice without downloading", () => {
     const requestDownload = vi.fn();
     const scheduler = createUpdateScheduler({
-      installKind: "packaged",
+      canSelfUpdate: false,
       checkDelayMs,
       throttleMs,
       requestCheck: vi.fn(),
@@ -134,7 +134,7 @@ describe("update scheduler", () => {
 
   it("reports install-kind-aware guidance for appimage installs", () => {
     const scheduler = createUpdateScheduler({
-      installKind: "appimage",
+      canSelfUpdate: true,
       checkDelayMs,
       throttleMs,
       requestCheck: vi.fn(),
@@ -146,7 +146,7 @@ describe("update scheduler", () => {
 
   it("a failed check silently returns to idle and produces no visible notice", () => {
     const scheduler = createUpdateScheduler({
-      installKind: "appimage",
+      canSelfUpdate: true,
       checkDelayMs,
       throttleMs,
       requestCheck: vi.fn(),
@@ -162,7 +162,7 @@ describe("update scheduler", () => {
 
   it("a failed download keeps the app usable and reports update-available for retry", () => {
     const scheduler = createUpdateScheduler({
-      installKind: "appimage",
+      canSelfUpdate: true,
       checkDelayMs,
       throttleMs,
       requestCheck: vi.fn(),
@@ -180,7 +180,7 @@ describe("update scheduler", () => {
   it("dispose cancels a pending scheduled check", () => {
     const requestCheck = vi.fn();
     const scheduler = createUpdateScheduler({
-      installKind: "appimage",
+      canSelfUpdate: true,
       checkDelayMs,
       throttleMs,
       requestCheck,

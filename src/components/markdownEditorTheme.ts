@@ -30,6 +30,10 @@ const markdownHighlightStyle = HighlightStyle.define([
     color: "var(--color-text)",
   },
   { tag: tags.quote, fontStyle: "italic", color: "var(--color-muted)" },
+  // The `#`, `**`, `>` and `-` characters themselves. Raw Markdown keeps them
+  // visible (that's the point of the editor), so a Theme gets to tint them
+  // down rather than let them read as body text.
+  { tag: tags.processingInstruction, color: "var(--color-markdown-mark)" },
   { tag: [tags.link, tags.url], color: "var(--color-accent)" },
 ]);
 
@@ -124,6 +128,8 @@ const markdownEditorChrome = EditorView.theme({
     // Set inline by MarkdownEditor from persisted `simpler.editorFontSize`;
     // falls back to the default `--font-size-body` value when unset.
     fontSize: "var(--editor-font-size, 13.5px)",
+    // Prose face, which a Theme may set apart from the UI chrome font.
+    fontFamily: "var(--font-family-prose)",
   },
   ".cm-content": { caretColor: "var(--color-accent)" },
   ".cm-line": { lineHeight: "1.8" },

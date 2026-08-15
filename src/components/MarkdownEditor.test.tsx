@@ -9,6 +9,7 @@ vi.mock("../native/commands", () => ({
   readClipboardImage: vi.fn(),
   readClipboardText: vi.fn(),
   importAttachment: vi.fn(),
+  isMacOS: (platform: string) => platform === "macos",
 }));
 
 
@@ -68,6 +69,27 @@ describe("MarkdownEditor", () => {
       await waitFor(() => {
         expect(editable.textContent).toContain("![](assets/2026-08-08-143022.png)");
       });
+    });
+
+    it("does not intercept Cmd+V on macOS, leaving native paste to CodeMirror", async () => {
+      render(
+        <MarkdownEditor
+          platform="macos"
+          notePath="daily/today.md"
+          workspacePath="/workspace"
+          value="# Today"
+          onChange={() => undefined}
+        />,
+      );
+
+      const editor = screen.getByTestId("markdown-editor");
+      const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+      editable.focus();
+
+      fireEvent.keyDown(editable, { key: "v", metaKey: true });
+
+      expect(readClipboardImage).not.toHaveBeenCalled();
+      expect(readClipboardText).not.toHaveBeenCalled();
     });
 
     it("falls back to the native clipboard text read when there is no clipboard image", async () => {
@@ -379,20 +401,44 @@ describe("MarkdownEditor", () => {
     render(<MarkdownEditor notePath="daily/today.md" value={"# Today"} onChange={() => undefined} />);
 
     const editor = screen.getByTestId("markdown-editor");
-    const headingLine = Array.from(editor.querySelectorAll("span")).find(
-      (span) => span.textContent === "# Today",
+    // The `#` mark is highlighted separately from the heading text (see the
+    // Markdown-mark test below), so the heading spans two elements.
+    const headingText = Array.from(editor.querySelectorAll("span")).find((span) =>
+      span.textContent?.includes("Today"),
     );
 
-    expect(headingLine).toBeDefined();
-    expect(headingLine!.className).not.toBe("");
+    expect(headingText).toBeDefined();
+    expect(headingText!.className).not.toBe("");
 
     const styleRules = Array.from(document.querySelectorAll("style"))
       .map((style) => style.textContent ?? "")
       .join("\n");
-    const headingClass = headingLine!.className;
+    const headingClass = headingText!.className;
 
     expect(styleRules).toMatch(new RegExp(`\\.${headingClass}\\s*\\{[^}]*var\\(--color-heading\\)`));
     expect(styleRules).toMatch(new RegExp(`\\.${headingClass}\\s*\\{[^}]*var\\(--font-family-heading\\)`));
+  });
+
+  it("tints the Markdown syntax marks apart from the text they decorate", () => {
+    render(<MarkdownEditor notePath="daily/today.md" value={"# Today"} onChange={() => undefined} />);
+
+    const editor = screen.getByTestId("markdown-editor");
+    const mark = Array.from(editor.querySelectorAll("span")).find((span) => span.textContent === "#");
+
+    expect(mark).toBeDefined();
+
+    const styleRules = Array.from(document.querySelectorAll("style"))
+      .map((style) => style.textContent ?? "")
+      .join("\n");
+    // The mark carries both the heading class and its own mark class; only the
+    // latter is expected to reference the Markdown-mark token.
+    const markClasses = mark!.className.split(/\s+/).filter(Boolean);
+
+    expect(
+      markClasses.some((markClass) =>
+        new RegExp(`\\.${markClass}\\s*\\{[^}]*var\\(--color-markdown-mark\\)`).test(styleRules),
+      ),
+    ).toBe(true);
   });
 
   it("gives a fenced code block one continuous background, distinct from the inline code pill", () => {

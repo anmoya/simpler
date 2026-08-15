@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   open: vi.fn(),
   destroy: vi.fn(async () => undefined),
+  hide: vi.fn(async () => undefined),
   closeRequestedHandler: null as null | ((event: { preventDefault: () => void }) => unknown),
+  quitRequestedHandler: null as null | (() => unknown),
   appClosingOverride: null as null | (() => void),
 }));
 
@@ -41,6 +43,15 @@ vi.mock("@tauri-apps/api/window", () => ({
     toggleMaximize: async () => undefined,
     close: async () => undefined,
     destroy: mocks.destroy,
+    hide: mocks.hide,
+    listen: async (event: string, handler: () => unknown) => {
+      if (event === "simpler://quit-requested") {
+        mocks.quitRequestedHandler = handler;
+      }
+      return () => {
+        mocks.quitRequestedHandler = null;
+      };
+    },
   }),
 }));
 
@@ -49,7 +60,9 @@ describe("App", () => {
     mocks.invoke.mockReset();
     mocks.open.mockReset();
     mocks.destroy.mockClear();
+    mocks.hide.mockClear();
     mocks.closeRequestedHandler = null;
+    mocks.quitRequestedHandler = null;
     mocks.appClosingOverride = null;
     localStorage.clear();
   });
@@ -1805,7 +1818,7 @@ describe("App", () => {
 
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-mode", "light");
 
-    await user.click(screen.getByRole("button", { name: "Switch to dark theme" }));
+    await user.click(screen.getByRole("button", { name: "Switch to dark appearance" }));
 
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-mode", "dark");
     expect(localStorage.getItem("simpler.themeMode")).toBe("dark");
@@ -1814,6 +1827,25 @@ describe("App", () => {
     render(<App />);
 
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-mode", "dark");
+  });
+
+  it("persists the selected Theme and restores it on the next launch", async () => {
+    const user = userEvent.setup();
+
+    const { unmount } = render(<App />);
+
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-theme", "warm");
+
+    await user.keyboard("{Control>}k{/Control}");
+    await user.click(screen.getByRole("button", { name: "Switch Theme to Mate Cerámico" }));
+
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-theme", "ceramic");
+    expect(localStorage.getItem("simpler.theme")).toBe("ceramic");
+
+    unmount();
+    render(<App />);
+
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-theme", "ceramic");
   });
 
   it("changes UI zoom via keyboard shortcuts, clamps it, and persists it across restarts", async () => {
@@ -1878,5 +1910,42 @@ describe("App", () => {
     render(<App />);
 
     expect(localStorage.getItem("simpler.editorFontSize")).toBe("11");
+  });
+
+  describe("macOS window lifecycle", () => {
+    function mockMacOSPlatform() {
+      mocks.invoke.mockImplementation((_command: string, { request }) => {
+        if (request.domain === "update" && request.action === "get-platform") {
+          return Promise.resolve({ ok: true, domain: "update", action: "get-platform", data: { platform: "macos" }, error: null });
+        }
+        return Promise.resolve({ ok: false, domain: request.domain, action: request.action, data: null, error: "not mocked" });
+      });
+    }
+
+    it("hides rather than syncs-and-destroys when the red traffic light triggers close-requested with no prior decision", async () => {
+      mockMacOSPlatform();
+      render(<App />);
+
+      await waitFor(() => expect(mocks.closeRequestedHandler).not.toBeNull());
+
+      await mocks.closeRequestedHandler!({ preventDefault: vi.fn() });
+
+      await waitFor(() => expect(mocks.hide).toHaveBeenCalledTimes(1));
+      expect(mocks.destroy).not.toHaveBeenCalled();
+    });
+
+    it("routes the Cmd+Q menu event through the same close pipeline as the in-app close button", async () => {
+      mockMacOSPlatform();
+      render(<App />);
+
+      await waitFor(() => expect(mocks.quitRequestedHandler).not.toBeNull());
+
+      mocks.quitRequestedHandler!();
+
+      // No pending changes and no open Workspace: closeWindow() goes straight
+      // to performClose(), which destroys rather than hides.
+      await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(1));
+      expect(mocks.hide).not.toHaveBeenCalled();
+    });
   });
 });
