@@ -2657,6 +2657,10 @@ fn read_workspace_tree(
             .map_err(|error| format!("failed to read workspace entry metadata: {error}"))?;
 
         if metadata.is_dir() {
+            if is_ignored_directory(name) {
+                continue;
+            }
+
             items.push(WorkspaceTreeItem {
                 name: name.to_string(),
                 path: relative_workspace_path(root_path, &path),
@@ -2769,6 +2773,14 @@ fn search_note_file(
 
 fn is_hidden_or_internal(name: &str) -> bool {
     name.starts_with('.')
+}
+
+const IGNORED_DIRECTORY_NAMES: [&str; 5] = ["node_modules", "target", "dist", "build", "vendor"];
+
+fn is_ignored_directory(name: &str) -> bool {
+    IGNORED_DIRECTORY_NAMES
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
 }
 
 fn is_markdown_note(path: &Path) -> bool {
@@ -4271,6 +4283,56 @@ mod tests {
                         {
                             "name": "plan.MD",
                             "path": "ideas/plan.MD",
+                            "kind": "note",
+                            "children": []
+                        }
+                    ]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn opening_workspace_skips_ignored_non_note_directories_without_descending_into_them() {
+        let workspace = test_workspace("ignored_dirs");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::write(workspace.join("daily").join("today.md"), "# Today").unwrap();
+
+        // Build a large/deep fake node_modules tree; if the walk descended into
+        // it, this test would be slow and/or the assertion below would fail.
+        let mut deep_path = workspace.join("node_modules");
+        for index in 0..25 {
+            deep_path = deep_path.join(format!("package-{index}"));
+            fs::create_dir_all(&deep_path).unwrap();
+            for file_index in 0..20 {
+                fs::write(
+                    deep_path.join(format!("file-{file_index}.md")),
+                    "noise",
+                )
+                .unwrap();
+            }
+        }
+        fs::create_dir_all(workspace.join("target").join("debug")).unwrap();
+        fs::write(workspace.join("target").join("debug").join("build.md"), "noise").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+
+        assert!(response.ok);
+        assert_eq!(
+            response.data.unwrap()["tree"],
+            serde_json::json!([
+                {
+                    "name": "daily",
+                    "path": "daily",
+                    "kind": "folder",
+                    "children": [
+                        {
+                            "name": "today.md",
+                            "path": "daily/today.md",
                             "kind": "note",
                             "children": []
                         }

@@ -27,6 +27,7 @@ import {
   type AutomaticSyncTrigger,
 } from "./automaticSyncScheduler";
 import { createUpdateScheduler, type UpdateScheduler } from "./updateScheduler";
+import { createLocalSaveScheduler, type LocalSaveScheduler } from "./localSaveScheduler";
 import {
   createFolder,
   createNote,
@@ -135,6 +136,7 @@ export function App() {
   const globalSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncWorkspaceRef = useRef<(trigger: AutomaticSyncTrigger) => void>(() => undefined);
   const schedulerRef = useRef<AutomaticSyncScheduler | null>(null);
+  const localSaveSchedulerRef = useRef<LocalSaveScheduler | null>(null);
   // Set right before a decided close (via performClose) calls currentWindow.close(),
   // which re-triggers onCloseRequested below — without this, that listener's own
   // appClosing() call would silently re-run Sync after the Close Sync Prompt already
@@ -151,6 +153,14 @@ export function App() {
       requestSync: (trigger) => syncWorkspaceRef.current(trigger),
       markPending: () => {
         setAppState((current) => ({ ...current, syncStatus: "cambios-locales" }));
+      },
+    });
+  }
+
+  if (localSaveSchedulerRef.current === null) {
+    localSaveSchedulerRef.current = createLocalSaveScheduler({
+      write: (content) => {
+        void performLocalSave(content);
       },
     });
   }
@@ -269,6 +279,7 @@ export function App() {
   useEffect(() => {
     const requestCloseSync = () => {
       try {
+        localSaveSchedulerRef.current?.flush();
         schedulerRef.current?.appClosing();
       } catch {
         // A throwing app-closing sync must never block the window from closing.
@@ -280,6 +291,7 @@ export function App() {
     // Bounded so a close request always proceeds even if app-closing sync
     // throws, rejects, or never settles (see .scratch/window-close-reliability).
     const runAppClosingWithFallback = () => {
+      localSaveSchedulerRef.current?.flush();
       if (skipCloseRequestedSyncRef.current) {
         skipCloseRequestedSyncRef.current = false;
         return Promise.resolve();
@@ -734,6 +746,8 @@ export function App() {
     revealInTree = false,
     revealState?: Pick<AppState, "workspaceTree" | "openFolderPaths" | "treeMode">,
   ) => {
+    // Flush any not-yet-saved edit for the note being left, before switching away from it.
+    localSaveSchedulerRef.current?.flush();
     noteHistoryRequestRef.current += 1;
     setNoteHistoryPanel(closedNoteHistoryPanel);
     const response = await readNote(workspacePath, notePath);
@@ -861,15 +875,24 @@ export function App() {
     setAppState((current) => ({ ...current, attachmentError: message }));
   };
 
-  const changeNoteContent = async (content: string) => {
-    const workspace = appState.workspace;
-    const activeNotePath = appState.activeNotePath;
+  // Marks the Workspace as having local changes and advances the automatic
+  // Sync scheduler right away, independent of the debounced disk write below —
+  // Local Save's write timing and Sync's own scheduling are separate concerns.
+  const markLocalChangePending = () => {
+    setAppState((current) => ({
+      ...current,
+      syncStatus: current.syncStatus === "sincronizado" ? "cambios-locales" : current.syncStatus,
+    }));
+    schedulerRef.current?.localSave();
+  };
+
+  const performLocalSave = async (content: string) => {
+    const workspace = appStateRef.current.workspace;
+    const activeNotePath = appStateRef.current.activeNotePath;
 
     if (!workspace || !activeNotePath) {
       return false;
     }
-
-    setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
 
     const response = await writeNote(workspace.path, activeNotePath, content);
 
@@ -881,11 +904,20 @@ export function App() {
       return false;
     }
 
-    setAppState((current) => ({
-      ...current,
-      syncStatus: current.syncStatus === "sincronizado" ? "cambios-locales" : current.syncStatus,
-    }));
-    schedulerRef.current?.localSave();
+    return true;
+  };
+
+  const changeNoteContent = (content: string) => {
+    const workspace = appState.workspace;
+    const activeNotePath = appState.activeNotePath;
+
+    if (!workspace || !activeNotePath) {
+      return false;
+    }
+
+    setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
+    markLocalChangePending();
+    localSaveSchedulerRef.current?.edit(content);
     return true;
   };
 
@@ -949,7 +981,13 @@ export function App() {
     if (noteHistoryPanel.previewContent === null) {
       return;
     }
-    if (await changeNoteContent(noteHistoryPanel.previewContent)) {
+    const content = noteHistoryPanel.previewContent;
+    // Discard any not-yet-flushed edit for the note being replaced, rather than
+    // writing stale content on top of the restored version.
+    localSaveSchedulerRef.current?.dispose();
+    setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
+    if (await performLocalSave(content)) {
+      markLocalChangePending();
       closeNoteHistory();
     }
   };
