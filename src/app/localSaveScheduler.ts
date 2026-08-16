@@ -1,6 +1,6 @@
 export interface LocalSaveSchedulerOptions {
   debounceMs?: number;
-  write: (content: string) => void;
+  write: (content: string) => void | Promise<void>;
   setTimeout?: typeof window.setTimeout;
   clearTimeout?: typeof window.clearTimeout;
 }
@@ -8,8 +8,13 @@ export interface LocalSaveSchedulerOptions {
 export interface LocalSaveScheduler {
   /** Records a content change and schedules a debounced write. */
   edit(content: string): void;
-  /** Immediately writes any pending edit, bypassing the debounce window. */
-  flush(): void;
+  /**
+   * Immediately writes any pending edit, bypassing the debounce window.
+   * Resolves once that write settles (or immediately if nothing was pending),
+   * so callers that need the write to be visible before proceeding — e.g.
+   * checking for pending changes before closing — can await it.
+   */
+  flush(): Promise<void>;
   dispose(): void;
   hasPendingChanges(): boolean;
 }
@@ -36,11 +41,11 @@ export function createLocalSaveScheduler({
   const flush = () => {
     clearDebounce();
     if (pendingContent === null) {
-      return;
+      return Promise.resolve();
     }
     const content = pendingContent;
     pendingContent = null;
-    write(content);
+    return Promise.resolve(write(content));
   };
 
   return {
@@ -49,7 +54,7 @@ export function createLocalSaveScheduler({
       clearDebounce();
       debounceTimer = scheduleTimeout(() => {
         debounceTimer = null;
-        flush();
+        void flush();
       }, debounceMs);
     },
 

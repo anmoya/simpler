@@ -92,6 +92,25 @@ describe("Local Save scheduler", () => {
     expect(scheduler.hasPendingChanges()).toBe(false);
   });
 
+  it("flush resolves only once an async write settles", async () => {
+    let resolveWrite!: () => void;
+    const write = vi.fn(() => new Promise<void>((resolve) => (resolveWrite = resolve)));
+    const scheduler = createLocalSaveScheduler({ debounceMs, write });
+
+    scheduler.edit("in flight");
+    let flushed = false;
+    const flushPromise = scheduler.flush().then(() => {
+      flushed = true;
+    });
+
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    resolveWrite();
+    await flushPromise;
+    expect(flushed).toBe(true);
+  });
+
   it("dispose cancels a pending debounce without writing", () => {
     const write = vi.fn<(content: string) => void>();
     const scheduler = createLocalSaveScheduler({ debounceMs, write });

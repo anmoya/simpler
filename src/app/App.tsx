@@ -150,7 +150,7 @@ export function App() {
   const skipCloseRequestedSyncRef = useRef(false);
   // Read through a ref by the mount-once "simpler://quit-requested" listener
   // below, which would otherwise close over the first render's closeWindow.
-  const closeWindowRef = useRef<() => void>(() => undefined);
+  const closeWindowRef = useRef<() => void | Promise<void>>(() => undefined);
 
   appStateRef.current = appState;
 
@@ -165,9 +165,7 @@ export function App() {
 
   if (localSaveSchedulerRef.current === null) {
     localSaveSchedulerRef.current = createLocalSaveScheduler({
-      write: (content) => {
-        void performLocalSave(content);
-      },
+      write: (content) => flushLocalSave(content),
     });
   }
 
@@ -285,8 +283,11 @@ export function App() {
   useEffect(() => {
     const requestCloseSync = () => {
       try {
-        localSaveSchedulerRef.current?.flush();
-        schedulerRef.current?.appClosing();
+        // Best-effort: `beforeunload` can't block on this, so the flush and
+        // the resulting appClosing() request are fired without awaiting them.
+        void (localSaveSchedulerRef.current?.flush() ?? Promise.resolve()).then(() => {
+          schedulerRef.current?.appClosing();
+        });
       } catch {
         // A throwing app-closing sync must never block the window from closing.
       }
@@ -297,20 +298,22 @@ export function App() {
     // Bounded so a close request always proceeds even if app-closing sync
     // throws, rejects, or never settles (see .scratch/window-close-reliability).
     const runAppClosingWithFallback = () => {
-      localSaveSchedulerRef.current?.flush();
       if (skipCloseRequestedSyncRef.current) {
         skipCloseRequestedSyncRef.current = false;
         return Promise.resolve();
       }
 
       return waitOrTimeout(
-        new Promise<void>((resolve, reject) => {
-          try {
-            Promise.resolve(schedulerRef.current?.appClosing()).then(() => resolve(), reject);
-          } catch (error) {
-            reject(error);
-          }
-        }),
+        (localSaveSchedulerRef.current?.flush() ?? Promise.resolve()).then(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              try {
+                Promise.resolve(schedulerRef.current?.appClosing()).then(() => resolve(), reject);
+              } catch (error) {
+                reject(error);
+              }
+            }),
+        ),
         closeFallbackMs,
       );
     };
@@ -430,7 +433,12 @@ export function App() {
     }
   };
 
-  const closeWindow = () => {
+  const closeWindow = async () => {
+    // Local Save's write is debounced, so an edit made just before closing
+    // may not have reached the automatic Sync scheduler's pending-changes
+    // tracking yet — flush it first so the close decision below sees it.
+    await localSaveSchedulerRef.current?.flush();
+
     if (!(schedulerRef.current?.hasPendingChanges() ?? false)) {
       performClose();
       return;
@@ -753,7 +761,7 @@ export function App() {
     revealState?: Pick<AppState, "workspaceTree" | "openFolderPaths" | "treeMode">,
   ) => {
     // Flush any not-yet-saved edit for the note being left, before switching away from it.
-    localSaveSchedulerRef.current?.flush();
+    await localSaveSchedulerRef.current?.flush();
     noteHistoryRequestRef.current += 1;
     setNoteHistoryPanel(closedNoteHistoryPanel);
     const response = await readNote(workspacePath, notePath);
@@ -913,16 +921,22 @@ export function App() {
     return true;
   };
 
-  const changeNoteContent = (content: string) => {
-    const workspace = appState.workspace;
-    const activeNotePath = appState.activeNotePath;
+  // The Local Save debounce module's flush target: only here — once a save
+  // is actually due, not on every keystroke — does the editor's content get
+  // reported into AppState, so typing itself never re-renders the sidebar,
+  // Workspace Tree, or Command Palette (ticket 05).
+  const flushLocalSave = async (content: string) => {
+    if (await performLocalSave(content)) {
+      setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
+      markLocalChangePending();
+    }
+  };
 
-    if (!workspace || !activeNotePath) {
+  const changeNoteContent = (content: string) => {
+    if (!appState.workspace || !appState.activeNotePath) {
       return false;
     }
 
-    setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
-    markLocalChangePending();
     localSaveSchedulerRef.current?.edit(content);
     return true;
   };

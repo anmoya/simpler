@@ -1035,7 +1035,104 @@ describe("App", () => {
     editable.focus();
     await user.type(editable, "{End}\nChanged");
 
-    expect(screen.getByRole("contentinfo", { name: "Workspace status" })).toHaveTextContent("Cambios locales");
+    // Local Save is debounced, so the status only flips once the pending
+    // edit actually flushes to disk — not synchronously on each keystroke.
+    await waitFor(
+      () =>
+        expect(screen.getByRole("contentinfo", { name: "Workspace status" })).toHaveTextContent("Cambios locales"),
+      { timeout: 2000 },
+    );
+  });
+
+  it("does not touch the sidebar's Workspace Tree DOM while typing, only once a save flushes", async () => {
+    const user = userEvent.setup();
+    const writes: string[] = [];
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      if (request.domain === "workspace" && request.action === "open") {
+        return Promise.resolve({
+          ok: true,
+          domain: "workspace",
+          action: "open",
+          data: {
+            name: "notes",
+            path: "/tmp/notes",
+            tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }],
+            metadata: { lastNotePath: "today.md" },
+          },
+          error: null,
+        });
+      }
+
+      if (request.domain === "filesystem" && request.action === "read-note") {
+        return Promise.resolve({
+          ok: true,
+          domain: "filesystem",
+          action: "read-note",
+          data: { content: "# Today" },
+          error: null,
+        });
+      }
+
+      if (request.domain === "filesystem" && request.action === "write-note") {
+        writes.push(request.payload.content);
+        return Promise.resolve({
+          ok: true,
+          domain: "filesystem",
+          action: "write-note",
+          data: { content: request.payload.content },
+          error: null,
+        });
+      }
+
+      if (request.domain === "workspace" && request.action === "remember-note") {
+        return Promise.resolve({
+          ok: true,
+          domain: "workspace",
+          action: "remember-note",
+          data: { lastNotePath: request.payload.notePath },
+          error: null,
+        });
+      }
+
+      if (request.domain === "git" && request.action === "status") {
+        return Promise.resolve({
+          ok: true,
+          domain: "git",
+          action: "status",
+          data: { isRepository: true, hasRemote: true, syncStatus: "sincronizado" },
+          error: null,
+        });
+      }
+
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    const editable = await findEditableElement();
+
+    const sidebarTree = document.querySelector(".note-tree");
+    expect(sidebarTree).not.toBeNull();
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(sidebarTree!, { childList: true, subtree: true, attributes: true, characterData: true });
+
+    editable.focus();
+    await user.type(editable, "{End}\nMore typing here");
+
+    // The debounced write hasn't flushed yet, so AppState (and therefore the
+    // sidebar) must not have been touched — only the editor's own DOM changed.
+    expect(mutations).toHaveLength(0);
+    expect(screen.getByTestId("markdown-editor").textContent).toContain("More typing here");
+    expect(writes).toHaveLength(0);
+
+    // Once the debounce flushes, the content reaches disk (and AppState).
+    await waitFor(() => expect(writes).toEqual(["# Today\nMore typing here"]));
+
+    observer.disconnect();
   });
 
   it("previews note history and restores a version through Local Save before normal Sync", async () => {
