@@ -5244,6 +5244,91 @@ mod tests {
     }
 
     #[test]
+    fn moving_a_note_patches_the_tree_and_matches_a_full_rebuild() {
+        let workspace = test_workspace("move_note_patch");
+        fs::create_dir_all(workspace.join("archive")).unwrap();
+        fs::write(workspace.join("today.md"), "# Today").unwrap();
+        fs::write(workspace.join("keep.md"), "# Keep").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "move-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "today.md",
+                "targetFolderPath": "archive",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({
+                "removedPaths": ["today.md"],
+                "upsertedItem": { "name": "today.md", "path": "archive/today.md", "kind": "note", "children": [] }
+            })
+        );
+
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "archive", "path": "archive", "kind": "folder", "children": [
+                    { "name": "today.md", "path": "archive/today.md", "kind": "note", "children": [] }
+                ] },
+                { "name": "keep.md", "path": "keep.md", "kind": "note", "children": [] },
+            ])
+        );
+    }
+
+    #[test]
+    fn moving_a_folder_via_move_item_patches_the_tree_and_matches_a_full_rebuild() {
+        let workspace = test_workspace("move_item_patch");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::create_dir_all(workspace.join("archive")).unwrap();
+        fs::write(workspace.join("daily").join("today.md"), "# Today").unwrap();
+        fs::write(workspace.join("keep.md"), "# Keep").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "move-item".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "itemPath": "daily",
+                "targetFolderPath": "archive",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({
+                "removedPaths": ["daily"],
+                "upsertedItem": { "name": "daily", "path": "archive/daily", "kind": "folder", "children": [
+                    { "name": "today.md", "path": "archive/daily/today.md", "kind": "note", "children": [] }
+                ] }
+            })
+        );
+
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "archive", "path": "archive", "kind": "folder", "children": [
+                    { "name": "daily", "path": "archive/daily", "kind": "folder", "children": [
+                        { "name": "today.md", "path": "archive/daily/today.md", "kind": "note", "children": [] }
+                    ] }
+                ] },
+                { "name": "keep.md", "path": "keep.md", "kind": "note", "children": [] },
+            ])
+        );
+    }
+
+    #[test]
     fn moves_notes_between_folders_without_changing_the_note_identity_to_a_heading() {
         let workspace = test_workspace("move_note");
         fs::create_dir_all(workspace.join("daily")).unwrap();
