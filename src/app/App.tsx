@@ -724,14 +724,9 @@ export function App() {
   };
 
   const selectFolder = (folderPath: string) => {
-    noteHistoryRequestRef.current += 1;
-    setNoteHistoryPanel(closedNoteHistoryPanel);
     setAppState((current) => ({
       ...current,
       activeFolderPath: folderPath,
-      activeNotePath: null,
-      noteContent: "",
-      editorError: null,
       workspaceError: null,
       fileSearchJump: null,
     }));

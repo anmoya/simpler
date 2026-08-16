@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:ital,wght@0,300;0,400;0,500;1,300&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; -webkit-font-smoothing: antialiased; background: #D9D2C6; }
+    a { color: #3F7A44; text-decoration-color: #B9793B; text-underline-offset: 3px; }
+    a:hover { color: #4F8F54; }
+    ::selection { background: #C6CDBD; color: #2D1B12; }
+  </style>
+</helmet>
+<div style="background:#D9D2C6; padding:72px 0 96px; font-family:'Instrument Sans',sans-serif; color:#2D1B12;">
+  <div style="width:1120px; margin:0 auto; display:flex; flex-direction:column; gap:64px;">
+
+    <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:48px;">
+      <div style="max-width:620px;">
+        <div style="font-size:11px; letter-spacing:2.4px; text-transform:uppercase; color:#736A62; font-weight:500;">Tema visual · App de notas y escritura</div>
+        <div style="font-family:'Newsreader',serif; font-weight:300; font-size:58px; line-height:1.05; margin-top:18px; color:#2D1B12;">Mate Cerámico</div>
+        <div style="font-size:15px; line-height:1.65; color:#5A473B; margin-top:16px; text-wrap:pretty;">Cerámica cruda como superficie principal, ahora un paso más luminosa. La yerba dejó el olivo casi negro por un verde vivo y saturado — el acento que da vida a títulos, activos y enlaces. Madera y acero siguen como contrapuntos de temperatura, con la madera más pigmentada en citas y marcas. Un vidriado frío — esmalte de horno — es el quiebre sorpresa: búsqueda, pestaña activa y el remache junto al logotipo.</div>
+      </div>
+      <div style="display:flex; gap:10px; flex:none;">
+        <div style="width:74px; height:74px; border-radius:4px; background:#D9D2C6; border:1px solid #BEBFBD;"></div>
+        <div style="width:74px; height:74px; border-radius:4px; background:#3F7A44;"></div>
+        <div style="width:74px; height:74px; border-radius:4px; background:#B9793B;"></div>
+        <div style="width:74px; height:74px; border-radius:4px; background:#9DA1A3;"></div>
+        <div style="width:74px; height:74px; border-radius:4px; background:#1F6E5C;"></div>
+      </div>
+    </div>
+
+    <div style="height:1px; background:#C9C8C4;"></div>
+
+    <div>
+      <div style="font-size:11px; letter-spacing:2.4px; text-transform:uppercase; color:#736A62; font-weight:500; margin-bottom:22px;">Materiales de origen</div>
+      <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:20px;">
+        <div style="background:#E6E2DC; border:1px solid #BEBFBD; border-radius:6px; overflow:hidden;">
+          <div style="height:96px; background:#D9D2C6;"></div>
+          <div style="padding:14px 16px 16px; border-top:1px solid #C9C8C4;">
+            <div style="font-size:14px; font-weight:500;">Cerámica cruda</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#736A62; margin-top:4px;">#D9D2C6</div>
+            <div style="font-size:12.5px; line-height:1.5; color:#5A473B; margin-top:8px;">Blanco cálido greige, un paso más luminoso. Lienzo, barras, tarjetas.</div>
+          </div>
+        </div>
+        <div style="background:#E6E2DC; border:1px solid #BEBFBD; border-radius:6px; overflow:hidden;">
+          <div style="height:96px; background:#3F7A44;"></div>
+          <div style="padding:14px 16px 16px; border-top:1px solid #C9C8C4;">
+            <div style="font-size:14px; font-weight:500;">Yerba</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#736A62; margin-top:4px;">#3F7A44</div>
+            <div style="font-size:12.5px; line-height:1.5; color:#5A473B; margin-top:8px;">Verde vivo y saturado. Acento, cursor, foco — la nota que enciende la interfaz.</div>
+          </div>
+        </div>
+        <div style="background:#E6E2DC; border:1px solid #BEBFBD; border-radius:6px; overflow:hidden;">
+          <div style="height:96px; background:#B9793B;"></div>
+          <div style="padding:14px 16px 16px; border-top:1px solid #C9C8C4;">
+            <div style="font-size:14px; font-weight:500;">Madera</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#736A62; margin-top:4px;">#B9793B</div>
+            <div style="font-size:12.5px; line-height:1.5; color:#5A473B; margin-top:8px;">Café cálido, más pigmentado. Citas, marcas, bordes vivos.</div>
+          </div>
+        </div>
+        <div style="background:#E6E2DC; border:1px solid #BEBFBD; border-radius:6px; overflow:hidden;">
+          <div style="height:96px; background:#9DA1A3;"></div>
+          <div style="padding:14px 16px 16px; border-top:1px solid #C9C8C4;">
+            <div style="font-size:14px; font-weight:500;">Acero cepillado</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#736A62; margin-top:4px;">#9DA1A3</div>
+            <div style="font-size:12.5px; line-height:1.5; color:#5A473B; margin-top:8px;">Neutro frío. Metadatos, estados informativos.</div>
+          </div>
+        </div>
+        <div style="background:#E6E2DC; border:1px solid #BEBFBD; border-radius:6px; overflow:hidden;">
+          <div style="height:96px; background:#1F6E5C;"></div>
+          <div style="padding:14px 16px 16px; border-top:1px solid #C9C8C4;">
+            <div style="font-size:14px; font-weight:500;">Esmalte</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#736A62; margin-top:4px;">#1F6E5C</div>
+            <div style="font-size:12.5px; line-height:1.5; color:#5A473B; margin-top:8px;">Vidriado cerámico frío. El único acento sorpresa: búsqueda, pestaña activa.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div style="font-size:11px; letter-spacing:2.4px; text-transform:uppercase; color:#736A62; font-weight:500; margin-bottom:22px;">Espécimen</div>
+      <div style="background:#EFE9DC; border:1px solid #BEBFBD; border-radius:8px; box-shadow:0 1px 2px rgba(45,27,18,0.06), 0 6px 18px rgba(45,27,18,0.07); overflow:hidden; display:flex; height:520px;">
+
+        <div style="width:236px; flex:none; background:#D3CBBE; border-right:1px solid #BEBFBD; display:flex; flex-direction:column;">
+          <div style="padding:18px 18px 14px;">
+            <div style="font-family:'Newsreader',serif; font-size:19px; font-weight:400; color:#2D1B12;">Notas</div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:#736A62; margin-top:3px;">32 documentos</div>
+          </div>
+          <div style="height:1px; background:#BEBFBD;"></div>
+          <div style="padding:10px 10px; display:flex; flex-direction:column; gap:2px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 11px; border-radius:5px; background:#DCEBDA; color:#3F7A44; font-size:13.5px; font-weight:500;">
+              <span>Mate de la mañana</span>
+              <span style="width:5px; height:5px; border-radius:999px; background:#3F7A44;"></span>
+            </div>
+            <div style="padding:9px 11px; border-radius:5px; color:#5A473B; font-size:13.5px; cursor:pointer;" style-hover="background:#E2DED8;">Cuaderno de taller</div>
+            <div style="padding:9px 11px; border-radius:5px; color:#5A473B; font-size:13.5px; cursor:pointer;" style-hover="background:#E2DED8;">Cerámica — apuntes</div>
+            <div style="padding:9px 11px; border-radius:5px; color:#5A473B; font-size:13.5px; cursor:pointer;" style-hover="background:#E2DED8;">Lista de la semana</div>
+            <div style="padding:9px 11px; border-radius:5px; color:#9C948C; font-size:13.5px;">Archivados</div>
+          </div>
+          <div style="margin-top:auto; padding:14px;">
+            <input value="" placeholder="Buscar…" style="width:100%; box-sizing:border-box; background:#EFE9DC; border:1px solid #BEBFBD; border-radius:5px; padding:9px 11px; font-family:'Instrument Sans',sans-serif; font-size:13px; color:#2D1B12; outline:none;" style-hover="border-color:#B9793B;" style-focus="border-color:#5C7A5E; box-shadow:0 0 0 3px rgba(92,122,94,0.30);"></input>
+          </div>
+        </div>
+
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column;">
+          <div style="flex:none; display:flex; align-items:center; justify-content:space-between; padding:14px 28px; border-bottom:1px solid #C9C8C4;">
+            <span style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#736A62;">Diario / mate-de-la-mañana.md</span>
+            <div style="display:flex; gap:8px;">
+              <button style="background:transparent; border:1px solid #BEBFBD; border-radius:5px; padding:6px 12px; font-family:'Instrument Sans',sans-serif; font-size:12.5px; color:#2D1B12; cursor:pointer;" style-hover="background:#E2DED8; border-color:#B9793B;">Vista previa</button>
+              <button style="background:#3F7A44; border:none; border-radius:5px; padding:7px 14px; font-family:'Instrument Sans',sans-serif; font-size:12.5px; font-weight:500; color:#F4F0E6; cursor:pointer;" style-hover="background:#4F8F54;">Guardar</button>
+            </div>
+          </div>
+
+          <div style="flex:1; overflow-y:auto; padding:28px 28px 32px;">
+            <div style="font-family:'Newsreader',serif; font-weight:400; font-size:30px; line-height:1.2; color:#2D1B12;">Mate de la mañana</div>
+            <div style="font-family:'Newsreader',serif; font-weight:300; font-size:17px; line-height:1.75; color:#2D1B12; margin-top:16px; text-wrap:pretty;">La cerámica todavía tibia. Escribo antes de que la casa despierte, con la ventana abierta y el olor a madera húmeda entrando desde el patio. Las <a href="#">notas de ayer</a> siguen abiertas en el otro escritorio.<span style="display:inline-block; width:1.5px; height:19px; background:#3F7A44; vertical-align:-3px; margin-left:2px;"></span></div>
+
+            <div style="margin-top:22px; background:#E2DED8; border-left:2px solid #B9793B; border-radius:0 5px 5px 0; padding:14px 18px;">
+              <div style="font-family:'Newsreader',serif; font-style:italic; font-weight:300; font-size:16px; line-height:1.6; color:#5A473B;">Lo que se hace con calma queda mejor hecho.</div>
+            </div>
+
+            <div style="margin-top:22px; background:#E1D8C7; border:1px solid #CFC9C1; border-radius:5px; padding:14px 16px; font-family:'IBM Plex Mono',monospace; font-size:12.5px; line-height:1.85;">
+              <div><span style="color:#8A7F76;"># preparar el espacio</span></div>
+              <div><span style="color:#3F7A44;">const</span> <span style="color:#3A2A1E;">taza</span> = <span style="color:#9C6B34;">"cerámica cruda"</span>;</div>
+              <div><span style="color:#3F7A44;">return</span> <span style="color:#3A2A1E;">escribir</span>(<span style="color:#6E7477;">taza</span>);</div>
+            </div>
+
+            <div style="margin-top:24px; display:flex; gap:10px; flex-wrap:wrap;">
+              <span style="display:inline-flex; align-items:center; gap:7px; background:#DCEBDA; color:#3F7A44; border-radius:999px; padding:6px 13px; font-size:12px; font-weight:500;"><span style="width:5px; height:5px; border-radius:999px; background:#3F7A44;"></span>Guardado</span>
+              <span style="display:inline-flex; align-items:center; gap:7px; background:#E3D9C9; color:#5C4527; border-radius:999px; padding:6px 13px; font-size:12px; font-weight:500;"><span style="width:5px; height:5px; border-radius:999px; background:#8A6A3C;"></span>Sin sincronizar</span>
+              <span style="display:inline-flex; align-items:center; gap:7px; background:#E0D2CB; color:#5A2C23; border-radius:999px; padding:6px 13px; font-size:12px; font-weight:500;"><span style="width:5px; height:5px; border-radius:999px; background:#7A4034;"></span>Conflicto de versión</span>
+              <span style="display:inline-flex; align-items:center; gap:7px; background:#D7D8D9; color:#484E51; border-radius:999px; padding:6px 13px; font-size:12px; font-weight:500;"><span style="width:5px; height:5px; border-radius:999px; background:#6E7477;"></span>Solo lectura</span>
+            </div>
+          </div>
+
+          <div style="flex:none; padding:9px 28px; border-top:1px solid #C9C8C4; background:#D3CBBE; display:flex; justify-content:space-between; font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:#736A62;">
+            <span>412 palabras</span>
+            <span>Guardado hace 2 min</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="height:1px; background:#C9C8C4;"></div>
+
+    <sc-for list="{{ groups }}" as="g" hint-placeholder-count="8">
+      <div style="display:grid; grid-template-columns:220px 1fr; gap:40px; padding:6px 0 30px;">
+        <div>
+          <div style="font-size:11px; letter-spacing:2.4px; text-transform:uppercase; color:#736A62; font-weight:500;">{{ g.title }}</div>
+          <div style="font-size:12.5px; line-height:1.6; color:#5A473B; margin-top:10px; text-wrap:pretty;">{{ g.note }}</div>
+        </div>
+        <div style="display:flex; flex-direction:column;">
+          <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="5">
+            <div style="display:grid; grid-template-columns:26px 260px 190px 1fr; align-items:center; gap:16px; padding:9px 0; border-bottom:1px solid #C9C8C4;">
+              <span style="{{ r.chipStyle }}"></span>
+              <span style="font-family:'IBM Plex Mono',monospace; font-size:12px; color:#2D1B12;">{{ r.name }}</span>
+              <span style="font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:#736A62;">{{ r.value }}</span>
+              <span style="font-size:12.5px; color:#5A473B;">{{ r.note }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-for>
+
+    <div style="display:grid; grid-template-columns:220px 1fr; gap:40px;">
+      <div>
+        <div style="font-size:11px; letter-spacing:2.4px; text-transform:uppercase; color:#736A62; font-weight:500;">Tipografía y geometría</div>
+        <div style="font-size:12.5px; line-height:1.6; color:#5A473B; margin-top:10px;">Serif editorial para la prosa, sans neutro para la interfaz, mono para código y metadatos.</div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+        <div style="background:#E6E2DC; border:1px solid #BEBFBD; border-radius:6px; padding:20px;">
+          <div style="font-family:'Newsreader',serif; font-weight:300; font-size:34px; color:#2D1B12;">Newsreader</div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#736A62; margin-top:6px;">--font-prose · 300/400 · títulos y cuerpo del editor</div>
+          <div style="height:1px; background:#C9C8C4; margin:16px 0;"></div>
+          <div style="font-size:22px; font-weight:500;">Instrument Sans</div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#736A62; margin-top:6px;">--font-ui · 400/500/600 · interfaz, botones, etiquetas</div>
+          <div style="height:1px; background:#C9C8C4; margin:16px 0;"></div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:19px;">IBM Plex Mono</div>
+          <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#736A62; margin-top:6px;">--font-mono · 400/500 · código, rutas, metadatos</div>
+        </div>
+        <div style="background:#E6E2DC; border:1px solid #BEBFBD; border-radius:6px; padding:20px; display:flex; flex-direction:column; gap:14px;">
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#736A62;">Escala de texto</div>
+            <div style="font-size:12.5px; color:#5A473B; margin-top:6px; line-height:1.6;">42 / 30 / 22 / 17 / 15 / 13.5 / 12 / 11 — prosa a 17px con altura de línea 1.75.</div>
+          </div>
+          <div style="height:1px; background:#C9C8C4;"></div>
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#736A62;">Radios</div>
+            <div style="display:flex; align-items:flex-end; gap:12px; margin-top:10px;">
+              <div style="width:44px; height:44px; background:#D2CEC8; border:1px solid #BEBFBD; border-radius:4px;"></div>
+              <div style="width:44px; height:44px; background:#D2CEC8; border:1px solid #BEBFBD; border-radius:5px;"></div>
+              <div style="width:44px; height:44px; background:#D2CEC8; border:1px solid #BEBFBD; border-radius:8px;"></div>
+              <div style="width:66px; height:28px; background:#D2CEC8; border:1px solid #BEBFBD; border-radius:999px;"></div>
+            </div>
+            <div style="font-size:12.5px; color:#5A473B; margin-top:10px; line-height:1.6;">4 controles · 5 filas y campos · 8 tarjetas y paneles · 999 solo píldoras de estado.</div>
+          </div>
+          <div style="height:1px; background:#C9C8C4;"></div>
+          <div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-size:11px; color:#736A62;">Elevación</div>
+            <div style="font-size:12.5px; color:#5A473B; margin-top:6px; line-height:1.6;">Dos niveles, ambos muy bajos y cálidos: <span style="font-family:'IBM Plex Mono',monospace; font-size:11.5px;">0 1px 2px rgba(45,27,18,.05)</span> para filas y <span style="font-family:'IBM Plex Mono',monospace; font-size:11.5px;">0 6px 18px rgba(45,27,18,.05)</span> para paneles flotantes. Sin gradientes.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <sc-if value="{{ showCss }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid; grid-template-columns:220px 1fr; gap:40px;">
+        <div>
+          <div style="font-size:11px; letter-spacing:2.4px; text-transform:uppercase; color:#736A62; font-weight:500;">Entrega</div>
+          <div style="font-size:12.5px; line-height:1.6; color:#5A473B; margin-top:10px;">Variables CSS listas para pegar en la raíz del documento.</div>
+        </div>
+        <pre style="margin:0; background:#DFDAD3; border:1px solid #CFC9C1; border-radius:6px; padding:20px 22px; font-family:'IBM Plex Mono',monospace; font-size:11.5px; line-height:1.85; color:#3A2A1E; overflow-x:auto; white-space:pre;">{{ cssText }}</pre>
+      </div>
+    </sc-if>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showCss&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Hoja&quot;}}">
+class Component extends DCLogic {
+  groupData() {
+    return [
+      { key: 'surfaces', title: 'Superficies', note: 'Cálidas y algo más luminosas que la primera versión — el greige se inclina hacia el kraft para dar aire al acento.', rows: [
+        ['--app-bg', '#D9D2C6', 'Lienzo de la aplicación'],
+        ['--sidebar-bg', '#D3CBBE', 'Barra lateral, barra superior y de estado'],
+        ['--editor-bg', '#E8E1D3', 'Superficie de escritura'],
+        ['--surface-raised', '#EFE9DC', 'Campos, popovers, menús, diálogos'],
+        ['--surface-sunken', '#E1D8C7', 'Zonas hundidas, pistas de scroll'],
+        ['--overlay', 'rgba(45,27,18,0.32)', 'Velo detrás de diálogos'],
+      ]},
+      { key: 'text', title: 'Texto', note: 'Café muy oscuro en lugar de negro; los grises son cafés desaturados, nunca fríos.', rows: [
+        ['--text-primary', '#2D1B12', 'Prosa, títulos'],
+        ['--text-secondary', '#5A473B', 'Subtítulos, listas, etiquetas'],
+        ['--text-muted', '#736A62', 'Metadatos, rutas, barra de estado'],
+        ['--text-placeholder', '#8A7F76', 'Texto guía en campos vacíos'],
+        ['--text-disabled', '#9C948C', 'Elementos inactivos'],
+        ['--text-on-accent', '#ECE7E1', 'Texto sobre verde yerba'],
+      ]},
+      { key: 'lines', title: 'Bordes y separadores', note: 'Un solo píxel, siempre a un paso de luminosidad del fondo. Ningún borde de color.', rows: [
+        ['--border', '#BEBFBD', 'Tarjetas, campos, paneles (acero velado)'],
+        ['--border-strong', '#B9793B', 'Hover de campos, bordes vivos (madera, más viva)'],
+        ['--steel', '#9DA1A3', 'Iconos inactivos, controles técnicos'],
+        ['--separator', '#C9C8C4', 'Divisores internos y filas'],
+        ['--focus-ring', '#5C7A5E', 'Anillo de 2px, verde secundario'],
+      ]},
+      { key: 'accent', title: 'Acento e interacción', note: 'La yerba pasa de un olivo casi negro a un verde vivo y saturado — el mismo material, servido con más luz. Sigue en dosis pequeñas, pero ahora invita.', rows: [
+        ['--accent', '#3F7A44', 'Estado activo, controles, énfasis'],
+        ['--accent-hover', '#4F8F54', 'Un paso más claro'],
+        ['--accent-pressed', '#2C5A31', 'Un paso más oscuro'],
+        ['--accent-soft', '#DCEBDA', 'Cerámica con velo verde'],
+        ['--accent-secondary', '#5C7A5E', 'Verde apagado, foco y bordes'],
+        ['--hover-bg', '#E2DED8', 'Filas y botones al pasar el cursor'],
+        ['--selected-bg', '#DCEBDA', 'Fila seleccionada'],
+        ['--selected-text', '#3F7A44', 'Texto e icono de la fila seleccionada'],
+        ['--link', '#3F7A44', 'Enlaces en la prosa'],
+        ['--link-hover', '#4F8F54', 'Enlace al pasar el cursor'],
+        ['--caret', '#3F7A44', 'Cursor de escritura'],
+        ['--selection-bg', '#C6CDBD', 'Selección de texto'],
+        ['--selection-text', '#2D1B12', 'Texto seleccionado'],
+      ]},
+      { key: 'buttons', title: 'Botones', note: 'Un solo botón sólido por pantalla. El resto vive en contorno o en fantasma.', rows: [
+        ['--btn-primary-bg', '#3F7A44', 'Acción principal'],
+        ['--btn-primary-bg-hover', '#4F8F54', 'Hover del botón principal'],
+        ['--btn-primary-text', '#F4F0E6', 'Etiqueta cerámica'],
+        ['--btn-secondary-bg', '#EFE9DC', 'Acción secundaria'],
+        ['--btn-secondary-border', '#BEBFBD', 'Contorno del secundario'],
+        ['--btn-ghost-text', '#5A473B', 'Botón fantasma'],
+        ['--btn-disabled-bg', '#DCD8D2', 'Botón inactivo'],
+        ['--btn-disabled-text', '#9C948C', 'Etiqueta inactiva'],
+      ]},
+      { key: 'inputs', title: 'Campos', note: 'El campo es un rectángulo un poco más claro que su contenedor; el foco lo tiñe de verde.', rows: [
+        ['--input-bg', '#EFE9DC', 'Fondo del campo'],
+        ['--input-border', '#BEBFBD', 'Borde en reposo'],
+        ['--input-border-hover', '#B9793B', 'Borde al pasar el cursor (madera viva)'],
+        ['--input-border-focus', '#5C7A5E', 'Borde enfocado'],
+        ['--input-text', '#2D1B12', 'Texto escrito'],
+        ['--input-placeholder', '#8A7F76', 'Texto guía'],
+      ]},
+      { key: 'code', title: 'Código y citas', note: 'La sintaxis usa los mismos cuatro materiales: verde, madera, café y acero — ahora con más pigmento.', rows: [
+        ['--code-bg', '#E1D8C7', 'Bloque de código'],
+        ['--code-border', '#CFC9C1', 'Contorno del bloque'],
+        ['--code-text', '#3A2A1E', 'Texto y símbolos'],
+        ['--code-keyword', '#3F7A44', 'Palabras clave (yerba)'],
+        ['--code-string', '#9C6B34', 'Cadenas (madera)'],
+        ['--code-comment', '#8A7F76', 'Comentarios'],
+        ['--code-meta', '#6E7477', 'Variables y tipos (acero)'],
+        ['--quote-bg', '#E2DED8', 'Fondo de la cita'],
+        ['--quote-bar', '#B9793B', 'Marca de madera, 2px'],
+        ['--quote-text', '#5A473B', 'Cita en cursiva'],
+        ['--markdown-mark', '#B9793B', 'Marcas de sintaxis Markdown'],
+      ]},
+      { key: 'glaze', title: 'Esmalte — acento sorpresa', note: 'Un vidriado de horno frío que rompe la calma cálida a propósito. Nunca en superficies grandes: solo remaches y comandos.', rows: [
+        ['--search-accent', '#1F6E5C', 'Comando "/", borde del campo, subrayado de pestaña activa'],
+        ['--search-bg', '#CFE3DB', 'Fondo de coincidencia resaltada en el texto'],
+        ['--search-border', '#1F6E5C', 'Borde de la coincidencia resaltada'],
+        ['--title-accent', '#1F6E5C', 'Remache decorativo junto al logotipo'],
+      ]},
+      { key: 'semantic', title: 'Semánticos', note: 'El éxito comparte la yerba viva; advertencia y error se quedan apagados a propósito, para que solo el verde y el esmalte destaquen.', rows: [
+        ['--success', '#3F7A44', 'Guardado, sincronizado'],
+        ['--success-bg', '#DCEBDA', 'Fondo de la píldora'],
+        ['--success-text', '#3F7A44', 'Texto sobre el fondo'],
+        ['--warning', '#8A6A3C', 'Cambios sin guardar'],
+        ['--warning-bg', '#E3D9C9', 'Fondo de la píldora'],
+        ['--warning-text', '#5C4527', 'Texto sobre el fondo'],
+        ['--error', '#7A4034', 'Conflicto, fallo de guardado'],
+        ['--error-bg', '#E0D2CB', 'Fondo de la píldora'],
+        ['--error-text', '#5A2C23', 'Texto sobre el fondo'],
+        ['--info', '#6E7477', 'Solo lectura, avisos neutros'],
+        ['--info-bg', '#D7D8D9', 'Fondo de la píldora'],
+        ['--info-text', '#484E51', 'Texto sobre el fondo'],
+      ]},
+    ];
+  }
+
+  renderVals() {
+    const data = this.groupData();
+    const chip = (v) => ({
+      width: 22, height: 22, borderRadius: 4, display: 'block',
+      background: v, border: '1px solid rgba(45,27,18,0.12)',
+    });
+    const groups = data.map(g => ({
+      title: g.title, note: g.note,
+      rows: g.rows.map(r => ({ name: r[0], value: r[1], note: r[2], chipStyle: chip(r[1]) })),
+    }));
+
+    const lines = [':root {', "  --font-prose: 'Newsreader', Georgia, serif;", "  --font-ui: 'Instrument Sans', system-ui, sans-serif;", "  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;", ''];
+    data.forEach(g => {
+      lines.push('  /* ' + g.title + ' */');
+      g.rows.forEach(r => lines.push('  ' + r[0] + ': ' + r[1] + ';'));
+      lines.push('');
+    });
+    lines.push('  --radius-control: 4px;');
+    lines.push('  --radius-field: 5px;');
+    lines.push('  --radius-panel: 8px;');
+    lines.push('  --radius-pill: 999px;');
+    lines.push('  --shadow-row: 0 1px 2px rgba(45,27,18,0.05);');
+    lines.push('  --shadow-panel: 0 6px 18px rgba(45,27,18,0.05);');
+    lines.push('}');
+
+    return {
+      groups,
+      showCss: this.props.showCss !== false,
+      cssText: lines.join('\n'),
+    };
+  }
+}
+</script>
+</body>
+</html>

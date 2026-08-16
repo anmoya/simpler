@@ -895,6 +895,7 @@ export function ClassicShell({
                   </button>
                   <button
                     type="button"
+                    className="sidebar-tab"
                     title="Collapse sidebar"
                     aria-label="Collapse sidebar"
                     onClick={handleToggleSidebarCollapse}
@@ -1518,8 +1519,8 @@ function WorkspaceMenu({
     <div className="command-popover workspace-menu" role="menu" aria-label="Workspace menu">
       <div className="command-popover__header">
         <h2>Workspaces</h2>
-        <button type="button" aria-label="Close Workspace menu" onClick={onClose}>
-          <Icon name="close" />
+        <button type="button" className="command-popover__close" aria-label="Close Workspace menu" onClick={onClose}>
+          <Icon name="close" size={16} />
         </button>
       </div>
       {recentWorkspaces.length > 0 ? (
@@ -1556,20 +1557,28 @@ function CommandPalette({
   onClose: () => void;
 }) {
   return (
-    <div className="command-popover command-palette" role="dialog" aria-modal="false" aria-labelledby="command-palette-title">
-      <div className="command-popover__header">
-        <h2 id="command-palette-title">Command Palette</h2>
-        <button type="button" aria-label="Close Command Palette" onClick={onClose}>
-          Close
-        </button>
-      </div>
-      <div className="command-list">
-        {commands.map((command) => (
-          <button key={command.id} type="button" aria-label={command.label} onClick={() => onRunCommand(command)}>
-            <span>{command.label}</span>
-            <kbd>{command.shortcut}</kbd>
+    <div className="dialog-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="command-popover command-palette"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="command-palette-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="command-popover__header">
+          <h2 id="command-palette-title">Command Palette</h2>
+          <button type="button" className="command-popover__close" aria-label="Close Command Palette" onClick={onClose}>
+            <Icon name="close" size={16} />
           </button>
-        ))}
+        </div>
+        <div className="command-list">
+          {commands.map((command) => (
+            <button key={command.id} type="button" aria-label={command.label} onClick={() => onRunCommand(command)}>
+              <span>{command.label}</span>
+              <kbd>{command.shortcut}</kbd>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1580,8 +1589,8 @@ function CommandHelp({ commands, onClose }: { commands: ShellCommand[]; onClose:
     <aside className="command-popover command-help" role="dialog" aria-modal="false" aria-labelledby="command-help-title">
       <div className="command-popover__header">
         <h2 id="command-help-title">Command Help</h2>
-        <button type="button" aria-label="Close Command Help" onClick={onClose}>
-          Close
+        <button type="button" className="command-popover__close" aria-label="Close Command Help" onClick={onClose}>
+          <Icon name="close" size={16} />
         </button>
       </div>
       <dl className="command-help__list">
@@ -1777,10 +1786,17 @@ function TitleBar({
   onClose: () => void;
 }) {
   return (
-    <header className="titlebar" data-platform={platform} data-tauri-drag-region>
+    <header className="titlebar" data-platform={platform}>
+      {/* data-tauri-drag-region lives on the title and this spacer, not on
+          the header itself: on macOS the header's own padding-left reserves
+          space for the native traffic lights (titleBarStyle: "Overlay", ADR
+          0014), and a drag region covering that space swallows the click
+          before the native close/minimize/maximize buttons see it. Keeping
+          the attribute off the header keeps that strip plain background. */}
       <span className="titlebar__title" data-tauri-drag-region>
         Simpler
       </span>
+      <div className="titlebar__drag-spacer" data-tauri-drag-region />
       {/* On macOS the native traffic lights (titleBarStyle: "Overlay", ADR 0014)
           do this job; these buttons are hidden via [data-platform="macos"] in
           styles.css rather than not rendered, so the drag region layout stays
@@ -1975,7 +1991,10 @@ function WorkspaceTree({
                 }
                 title={item.path}
                 draggable
-                onClick={() => onSelectFolder(item.path)}
+                onClick={() => {
+                  onSelectFolder(item.path);
+                  onToggleFolder(item.path);
+                }}
                 onContextMenu={(event) => onItemContextMenu(event, "folder", item.path)}
                 onDragStart={(event) => {
                   event.stopPropagation();

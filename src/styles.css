@@ -144,11 +144,14 @@ button {
 }
 
 /*
- * Mate Cerámico. Four materials only: raw ceramic (the surfaces), yerba green
- * (accent, caret, focus, selection), wood (quote bars, live borders, strings)
- * and brushed steel (metadata, informational states). Nothing else introduces
- * a hue. Typography splits prose (serif) from UI chrome (sans), which is why
- * `--font-family-prose` exists as a token separate from `--font-family-body`.
+ * Mate Cerámico. Four materials plus one accent: raw ceramic (the surfaces),
+ * yerba green (accent, caret, focus, selection, headings), wood (quote bars,
+ * live borders, markdown marks), brushed steel (metadata, informational
+ * states) and a ceramic-glaze teal reserved for Global Search — the find
+ * highlight is deliberately teal, never green, so search results read as
+ * distinct from navigation/selection state. Typography splits prose (serif)
+ * from UI chrome (sans), which is why `--font-family-prose` exists as a
+ * token separate from `--font-family-body`.
  */
 .app-shell[data-theme="ceramic"] {
   --font-family-body: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
@@ -158,35 +161,47 @@ button {
 }
 
 .app-shell[data-theme="ceramic"][data-mode="light"] {
-  --color-background: #d8d4cf;
-  --color-sidebar: #d2cec8;
-  --color-sidebar-selected: #dbe0d3;
-  --color-editor: #e6e2dc;
-  --color-status: #d2cec8;
+  --color-background: #d9d2c6;
+  --color-sidebar: #d3cbbe;
+  --color-sidebar-selected: #dcebda;
+  --color-editor: #e8e1d3;
+  --color-status: #d9d2c6;
   --color-border: #bebfbd;
   --color-border-subtle: rgb(45 27 18 / 8%);
+  --color-border-strong: #b9793b;
   --color-divider: #c9c8c4;
   --color-text: #2d1b12;
   --color-muted: #736a62;
   --color-muted-light: #9c948c;
-  --color-subtle: #ece7e1;
-  --color-control: #ece7e1;
-  --color-active: #dbe0d3;
-  --color-accent: #2c3a26;
-  --color-accent-strong: #232e1e;
-  --color-accent-ring: rgb(91 103 87 / 30%);
+  --color-subtle: #efe9dc;
+  --color-control: #efe9dc;
+  --color-active: #dcebda;
+  --color-accent: #3f7a44;
+  --color-accent-hover: #4f8f54;
+  --color-accent-strong: #2c5a31;
+  --color-accent-soft: #dcebda;
+  --color-accent-ring: rgb(92 122 94 / 30%);
   --color-error: #7a4034;
-  --color-heading: #2d1b12;
+  --color-heading: #3f7a44;
   --color-heading-text: #5a473b;
   --color-amber: #8a6a3c;
-  --color-code-bg: #dfdad3;
-  --color-find-highlight-bg: #e3d9c9;
-  --color-find-highlight-border: #8a6a3c;
-  --color-line-highlight-bg: rgb(44 58 38 / 10%);
-  --color-quote-border: #a98b76;
-  --color-markdown-mark: #a98b76;
-  --shadow-float: 0 1px 2px rgb(45 27 18 / 5%);
-  --shadow-pop: 0 1px 2px rgb(45 27 18 / 5%), 0 6px 18px rgb(45 27 18 / 5%);
+  --color-code-bg: #e1d8c7;
+  --color-search-accent: #1f6e5c;
+  --color-search-bg: #cfe3db;
+  --color-find-highlight-bg: #cfe3db;
+  --color-find-highlight-border: #1f6e5c;
+  --color-line-highlight-bg: rgb(63 122 68 / 12%);
+  --color-quote-border: #b9793b;
+  --color-markdown-mark: #b9793b;
+  --color-text-placeholder: #8a7f76;
+  --color-text-on-accent: #f4f0e6;
+  --color-steel: #9da1a3;
+  --color-success: #3f7a44;
+  --color-warning: #8a6a3c;
+  --color-info: #6e7477;
+  --color-hover-bg: #e2ded8;
+  --shadow-float: 0 1px 2px rgb(45 27 18 / 6%);
+  --shadow-pop: 0 1px 2px rgb(45 27 18 / 6%), 0 6px 18px rgb(45 27 18 / 7%);
 }
 
 /*
@@ -231,7 +246,6 @@ button {
   grid-row: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 0 0 0 14px;
   border-bottom: 1px solid var(--color-border-subtle);
@@ -244,6 +258,11 @@ button {
 
 .titlebar__title {
   font-weight: 600;
+}
+
+.titlebar__drag-spacer {
+  flex: 1;
+  height: 100%;
 }
 
 .titlebar__controls {
@@ -397,6 +416,16 @@ button {
   position: relative;
 }
 
+/*
+ * Icon/toolbar button rule: any bare-icon button (sidebar rail, sidebar tabs,
+ * tree row, toolbar action, popover header, etc.) must join this selector
+ * group instead of being left unstyled or getting one-off CSS. Never ship a
+ * plain <button> with no className here — unstyled buttons pick up the
+ * browser's default border/background and visually clash with the rest of
+ * the toolbar. Add your new selector to all three lists below (base, hover,
+ * focus-visible) so it gets the shared transparent border, hover fill, and
+ * focus ring.
+ */
 .workspace-trigger,
 .sidebar-tab,
 .note-tree__item,
@@ -923,11 +952,11 @@ button {
 }
 
 [data-theme-preview="ceramic"] .appearance-settings__swatch--accent {
-  background: #2c3a26;
+  background: #3f7a44;
 }
 
 [data-theme-preview="ceramic"] .appearance-settings__swatch--detail {
-  background: #a98b76;
+  background: #b9793b;
 }
 
 [data-mode="dark"] [data-theme-preview="ceramic"] .appearance-settings__swatch--surface {
@@ -1342,10 +1371,9 @@ button {
 }
 
 .command-palette {
-  top: 72px;
-  left: 50%;
-  transform: translateX(-50%);
-  transform-origin: top center;
+  position: static;
+  transform: none;
+  width: min(560px, calc(100vw - 48px));
 }
 
 .command-help {
@@ -1448,14 +1476,29 @@ button {
   text-transform: uppercase;
 }
 
-.command-popover__header button {
-  padding: 6px;
-  color: var(--color-muted);
+.command-popover__close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-subtle);
+  color: var(--color-text);
+}
+
+.command-popover__close:hover {
+  border-color: var(--color-accent);
+  background: var(--color-active);
+  color: var(--color-accent);
 }
 
 .command-list {
   display: grid;
   gap: 2px;
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
 }
 
 .command-list button,
