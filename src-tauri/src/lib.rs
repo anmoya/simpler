@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1181,6 +1182,11 @@ fn write_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, S
     let note_path = resolve_note_path(&payload.workspace_path, &payload.note_path)?;
     fs::write(&note_path, &payload.content)
         .map_err(|error| format!("failed to save note: {error}"))?;
+    update_search_index(
+        &PathBuf::from(&payload.workspace_path),
+        &[],
+        Some(&note_path),
+    );
     serde_json::to_value(NoteContent {
         content: payload.content,
     })
@@ -1601,8 +1607,25 @@ fn global_search_payload(payload: serde_json::Value) -> Result<serde_json::Value
         .map_err(|_| "failed to serialize search results".to_string());
     }
 
+    let query = query.to_lowercase();
+    let key = search_index_key(&workspace_path);
+    let mut indexes = search_indexes()
+        .lock()
+        .map_err(|_| "failed to access search index".to_string())?;
+    if !indexes.contains_key(&key) {
+        let index = build_search_index(&workspace_path)?;
+        indexes.insert(key.clone(), index);
+    }
+    let index = indexes.get(&key).expect("index was just inserted");
+
+    let mut note_paths: Vec<&String> = index.keys().collect();
+    note_paths.sort();
+
     let mut results = Vec::new();
-    search_markdown_files(&workspace_path, &workspace_path, query, &mut results)?;
+    for note_path in note_paths {
+        search_indexed_content(note_path, &index[note_path], &query, &mut results);
+    }
+
     serde_json::to_value(GlobalSearchResults { results })
         .map_err(|_| "failed to serialize search results".to_string())
 }
@@ -1633,6 +1656,9 @@ fn git_sync_payload(payload: serde_json::Value) -> Result<serde_json::Value, Str
     let workspace_path = PathBuf::from(&payload.workspace_path);
     ensure_workspace_folder(&workspace_path)?;
     let result = sync_git_workspace(&workspace_path, &SystemGitCommandRunner)?;
+    // Sync can touch an unbounded set of files (pull/rebase), so the index
+    // is rebuilt from scratch rather than patched incrementally.
+    refresh_search_index(&workspace_path);
 
     serde_json::to_value(result).map_err(|_| "failed to serialize git sync result".to_string())
 }
@@ -1716,6 +1742,9 @@ fn resolve_git_conflict_payload(payload: serde_json::Value) -> Result<serde_json
         payload.resolution,
         &SystemGitCommandRunner,
     )?;
+    // Conflict resolution can rewrite arbitrary files via rebase --continue,
+    // so the index is rebuilt from scratch rather than patched incrementally.
+    refresh_search_index(&workspace_path);
 
     serde_json::to_value(result).map_err(|_| "failed to serialize conflict resolution".to_string())
 }
@@ -2434,10 +2463,13 @@ fn open_workspace(workspace_path: &Path) -> Result<OpenedWorkspace, String> {
         .unwrap_or("Workspace")
         .to_string();
 
+    let tree = read_workspace_tree(workspace_path, workspace_path)?;
+    refresh_search_index(workspace_path);
+
     Ok(OpenedWorkspace {
         name,
         path: workspace_path.to_string_lossy().to_string(),
-        tree: read_workspace_tree(workspace_path, workspace_path)?,
+        tree,
         metadata: read_workspace_metadata(workspace_path)?,
     })
 }
@@ -2555,10 +2587,11 @@ fn workspace_operation_result(
     removed_paths: Vec<PathBuf>,
     upsert_path: Option<&Path>,
 ) -> Result<serde_json::Value, String> {
-    let removed_paths = removed_paths
+    let removed_paths: Vec<String> = removed_paths
         .iter()
         .map(|path| relative_workspace_path(workspace_path, path))
         .collect();
+    update_search_index(workspace_path, &removed_paths, upsert_path);
     let upserted_item = match upsert_path {
         Some(path) => Some(build_workspace_tree_item(workspace_path, path)?),
         None => None,
@@ -2740,16 +2773,75 @@ fn read_workspace_tree(
     Ok(items)
 }
 
-fn search_markdown_files(
+// Global Search's in-memory index: workspace path -> (relative note path ->
+// content). Built once on Workspace open and kept correct incrementally by
+// Local Save flushes and single-file create/rename/move/delete/restore
+// (via `workspace_operation_result`), with a full rebuild after Sync/conflict
+// resolution, since those can touch an unbounded set of files. A query reads
+// straight from this map instead of re-walking and re-reading the Workspace.
+type SearchIndex = HashMap<String, String>;
+
+static SEARCH_INDEXES: OnceLock<Mutex<HashMap<String, SearchIndex>>> = OnceLock::new();
+
+fn search_indexes() -> &'static Mutex<HashMap<String, SearchIndex>> {
+    SEARCH_INDEXES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn search_index_key(workspace_path: &Path) -> String {
+    workspace_path.to_string_lossy().to_string()
+}
+
+fn build_search_index(workspace_path: &Path) -> Result<SearchIndex, String> {
+    let mut entries = Vec::new();
+    collect_searchable_entries(workspace_path, workspace_path, &mut entries)?;
+    Ok(entries.into_iter().collect())
+}
+
+/// (Re)builds and stores the index for `workspace_path` from scratch. Used
+/// on Workspace open and after Sync/conflict resolution. Best-effort: a
+/// failure here must never fail the operation that triggered it — a later
+/// search simply rebuilds the index lazily instead.
+fn refresh_search_index(workspace_path: &Path) {
+    if let Ok(index) = build_search_index(workspace_path) {
+        if let Ok(mut indexes) = search_indexes().lock() {
+            indexes.insert(search_index_key(workspace_path), index);
+        }
+    }
+}
+
+/// Applies an incremental update to `workspace_path`'s index, if one exists
+/// yet (a workspace that was never opened/searched has none to update).
+fn update_search_index(workspace_path: &Path, removed_paths: &[String], upsert_path: Option<&Path>) {
+    let Ok(mut indexes) = search_indexes().lock() else {
+        return;
+    };
+    let Some(index) = indexes.get_mut(&search_index_key(workspace_path)) else {
+        return;
+    };
+
+    for removed_path in removed_paths {
+        let prefix = format!("{removed_path}/");
+        index.retain(|path, _| path != removed_path && !path.starts_with(&prefix));
+    }
+
+    if let Some(upsert_path) = upsert_path {
+        if let Ok(entries) = index_entries_for_item(workspace_path, upsert_path) {
+            for (path, content) in entries {
+                index.insert(path, content);
+            }
+        }
+    }
+}
+
+fn collect_searchable_entries(
     root_path: &Path,
     current_path: &Path,
-    query: &str,
-    results: &mut Vec<GlobalSearchResult>,
+    out: &mut Vec<(String, String)>,
 ) -> Result<(), String> {
     let mut entries = fs::read_dir(current_path)
-        .map_err(|error| format!("failed to search workspace: {error}"))?
+        .map_err(|error| format!("failed to index workspace: {error}"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to read workspace search entry: {error}"))?;
+        .map_err(|error| format!("failed to read workspace index entry: {error}"))?;
 
     entries.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
 
@@ -2766,16 +2858,41 @@ fn search_markdown_files(
 
         let metadata = entry
             .metadata()
-            .map_err(|error| format!("failed to read workspace search metadata: {error}"))?;
+            .map_err(|error| format!("failed to read workspace index metadata: {error}"))?;
 
         if metadata.is_dir() {
-            search_markdown_files(root_path, &path, query, results)?;
+            if is_ignored_directory(name) {
+                continue;
+            }
+            collect_searchable_entries(root_path, &path, out)?;
         } else if metadata.is_file() && is_searchable_text_file(&path) {
-            search_note_file(root_path, &path, query, results)?;
+            let content = fs::read_to_string(&path)
+                .map_err(|error| format!("failed to index note: {error}"))?;
+            out.push((relative_workspace_path(root_path, &path), content));
         }
     }
 
     Ok(())
+}
+
+/// Collects index entries for a single upserted path: one entry if it's a
+/// searchable file, or a scoped walk of its contents if it's a folder —
+/// mirroring `build_workspace_tree_item`'s scoped-subtree approach so a
+/// single-file operation never re-walks the whole Workspace.
+fn index_entries_for_item(root_path: &Path, item_path: &Path) -> Result<Vec<(String, String)>, String> {
+    let metadata = fs::metadata(item_path)
+        .map_err(|error| format!("failed to read workspace entry metadata: {error}"))?;
+    let mut out = Vec::new();
+
+    if metadata.is_dir() {
+        collect_searchable_entries(root_path, item_path, &mut out)?;
+    } else if is_searchable_text_file(item_path) {
+        let content = fs::read_to_string(item_path)
+            .map_err(|error| format!("failed to index note: {error}"))?;
+        out.push((relative_workspace_path(root_path, item_path), content));
+    }
+
+    Ok(out)
 }
 
 const SEARCHABLE_TEXT_EXTENSIONS: [&str; 3] = ["md", "txt", "csv"];
@@ -2790,28 +2907,24 @@ fn is_searchable_text_file(path: &Path) -> bool {
         })
 }
 
-fn search_note_file(
-    root_path: &Path,
-    note_path: &Path,
+fn search_indexed_content(
+    note_path: &str,
+    content: &str,
     query: &str,
     results: &mut Vec<GlobalSearchResult>,
-) -> Result<(), String> {
-    let content =
-        fs::read_to_string(note_path).map_err(|error| format!("failed to search note: {error}"))?;
-    let query = query.to_lowercase();
-
+) {
     for (line_index, line_text) in content.lines().enumerate() {
         let normalized_line = line_text.to_lowercase();
         let mut from_index = 0;
 
         while from_index <= normalized_line.len() {
-            let Some(match_start) = normalized_line[from_index..].find(&query) else {
+            let Some(match_start) = normalized_line[from_index..].find(query) else {
                 break;
             };
             let match_start = from_index + match_start;
 
             results.push(GlobalSearchResult {
-                note_path: relative_workspace_path(root_path, note_path),
+                note_path: note_path.to_string(),
                 line_number: line_index + 1,
                 line_text: line_text.to_string(),
                 match_start,
@@ -2821,8 +2934,6 @@ fn search_note_file(
             from_index = match_start + query.len();
         }
     }
-
-    Ok(())
 }
 
 fn is_hidden_or_internal(name: &str) -> bool {
@@ -5591,6 +5702,133 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn opening_a_workspace_builds_the_search_index_used_by_later_queries() {
+        let workspace = test_workspace("search_index_open");
+        fs::write(workspace.join("today.md"), "# Today\n\nneedle here").unwrap();
+
+        let open_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert!(open_response.ok);
+
+        let search_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "global-search".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "query": "needle" }),
+        });
+
+        assert!(search_response.ok);
+        assert_eq!(
+            search_response.data.unwrap()["results"],
+            serde_json::json!([
+                { "notePath": "today.md", "lineNumber": 3, "lineText": "needle here", "matchStart": 0, "matchEnd": 6 }
+            ])
+        );
+    }
+
+    #[test]
+    fn search_index_stays_correct_after_create_edit_delete_and_move_matching_a_full_rebuild() {
+        let workspace = test_workspace("search_index_incremental");
+        fs::write(workspace.join("keep.md"), "keep needle").unwrap();
+        fs::write(workspace.join("stale.md"), "needle to delete").unwrap();
+
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        })
+        .ok);
+
+        let search = |query: &str| -> serde_json::Value {
+            let response = dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Filesystem,
+                action: "global-search".to_string(),
+                payload: serde_json::json!({ "workspacePath": workspace, "query": query }),
+            });
+            assert!(response.ok);
+            response.data.unwrap()["results"].clone()
+        };
+
+        // create: a newly-created note isn't indexed until it has content, but
+        // the write-note flush that gives it content must be picked up.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "create-note".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "noteName": "fresh" }),
+        })
+        .ok);
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "write-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "fresh.md",
+                "content": "brand new needle",
+            }),
+        })
+        .ok);
+
+        // edit: overwriting an indexed note's content must replace, not append to, its entry.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "write-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "keep.md",
+                "content": "keep needle, edited",
+            }),
+        })
+        .ok);
+
+        // delete: a deleted note's content must no longer be searchable.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "delete-item".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "itemPath": "stale.md" }),
+        })
+        .ok);
+
+        // move: a moved note's results must report its new path, not the old one.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "create-folder".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "folderName": "archive" }),
+        })
+        .ok);
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "move-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "fresh.md",
+                "targetFolderPath": "archive",
+            }),
+        })
+        .ok);
+
+        let incremental_results = search("needle");
+        assert_eq!(
+            incremental_results,
+            serde_json::json!([
+                { "notePath": "archive/fresh.md", "lineNumber": 1, "lineText": "brand new needle", "matchStart": 10, "matchEnd": 16 },
+                { "notePath": "keep.md", "lineNumber": 1, "lineText": "keep needle, edited", "matchStart": 5, "matchEnd": 11 },
+            ])
+        );
+
+        // A from-scratch rebuild (forced by reopening the Workspace) must
+        // agree exactly with the incrementally-updated index.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        })
+        .ok);
+        assert_eq!(search("needle"), incremental_results);
     }
 
     fn test_workspace(name: &str) -> PathBuf {
