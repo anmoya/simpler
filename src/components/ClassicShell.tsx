@@ -1,4 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type DragEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import type { AppRoute } from "../app/routes";
 import type {
   CloseSyncPromptState,
@@ -1815,6 +1825,76 @@ function activeNoteAncestorFolderPaths(activeNotePath: string | null): ReadonlyS
   return paths;
 }
 
+// Matches the `.note-tree__folder-children` CSS grid-rows transition
+// duration in styles.css, so a collapsed subtree stays mounted just long
+// enough for the collapse animation to finish before it's removed from the DOM.
+const FOLDER_COLLAPSE_TRANSITION_MS = 180;
+
+/**
+ * Lazily mounts a folder's descendant DOM nodes on expand, and unmounts them
+ * after the collapse transition finishes — rather than mounting everything
+ * up front and hiding collapsed subtrees via `inert`/`aria-hidden`, so a
+ * large Workspace doesn't pay DOM cost for content the user can't see.
+ * Still preserves the existing grid-rows collapse/expand transition: a
+ * newly-mounted subtree paints one frame at the collapsed row size before
+ * switching to the open size, so expanding animates in instead of popping open.
+ */
+function CollapsibleFolderChildren({ isOpen, children }: { isOpen: boolean; children: ReactNode }) {
+  const [isMounted, setIsMounted] = useState(isOpen);
+  const [isAnimatingOpen, setIsAnimatingOpen] = useState(isOpen);
+  const collapseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // A layout effect (rather than a passive effect) so a newly-expanded
+  // folder mounts synchronously within the same commit — tests and
+  // synchronous callers that read the DOM right after triggering an
+  // expand (e.g. revealing a note from Global Search) must not need to
+  // wait an extra tick for a deferred passive-effect flush.
+  useLayoutEffect(() => {
+    if (isOpen) {
+      if (collapseTimeoutRef.current !== null) {
+        clearTimeout(collapseTimeoutRef.current);
+        collapseTimeoutRef.current = null;
+      }
+      setIsMounted(true);
+      const frame = requestAnimationFrame(() => setIsAnimatingOpen(true));
+      return () => cancelAnimationFrame(frame);
+    }
+
+    setIsAnimatingOpen(false);
+    collapseTimeoutRef.current = setTimeout(() => {
+      collapseTimeoutRef.current = null;
+      setIsMounted(false);
+    }, FOLDER_COLLAPSE_TRANSITION_MS);
+
+    return () => {
+      if (collapseTimeoutRef.current !== null) {
+        clearTimeout(collapseTimeoutRef.current);
+        collapseTimeoutRef.current = null;
+      }
+    };
+  }, [isOpen]);
+
+  if (!isMounted) {
+    return null;
+  }
+
+  return (
+    <div
+      className={
+        isAnimatingOpen
+          ? "note-tree__folder-children note-tree__folder-children--open"
+          : "note-tree__folder-children"
+      }
+      aria-hidden={!isOpen}
+      // Keeps an in-transition folder's descendants out of tab order and the
+      // a11y tree while still letting the CSS grid-rows transition animate them.
+      inert={!isOpen || undefined}
+    >
+      <div className="note-tree__folder-children-inner">{children}</div>
+    </div>
+  );
+}
+
 function WorkspaceTree({
   items,
   activeNotePath,
@@ -1950,34 +2030,21 @@ function WorkspaceTree({
             </button>
           )}
           {item.kind === "folder" && item.children.length > 0 ? (
-            <div
-              className={
-                isOpen
-                  ? "note-tree__folder-children note-tree__folder-children--open"
-                  : "note-tree__folder-children"
-              }
-              aria-hidden={!isOpen}
-              // Keeps a collapsed folder's descendants out of tab order and the
-              // a11y tree while still letting the CSS grid-rows transition
-              // animate them, instead of unmounting (which would jump-cut).
-              inert={!isOpen || undefined}
-            >
-              <div className="note-tree__folder-children-inner">
-                <WorkspaceTree
-                  items={item.children}
-                  activeNotePath={activeNotePath}
-                  activeFolderPath={activeFolderPath}
-                  openFolderPaths={openFolderPaths}
-                  onToggleFolder={onToggleFolder}
-                  onSelectFolder={onSelectFolder}
-                  onSelectNote={onSelectNote}
-                  onItemContextMenu={onItemContextMenu}
-                  onMoveItem={onMoveItem}
-                  dragOverFolder={dragOverFolder}
-                  onDragOverFolder={onDragOverFolder}
-                />
-              </div>
-            </div>
+            <CollapsibleFolderChildren isOpen={isOpen}>
+              <WorkspaceTree
+                items={item.children}
+                activeNotePath={activeNotePath}
+                activeFolderPath={activeFolderPath}
+                openFolderPaths={openFolderPaths}
+                onToggleFolder={onToggleFolder}
+                onSelectFolder={onSelectFolder}
+                onSelectNote={onSelectNote}
+                onItemContextMenu={onItemContextMenu}
+                onMoveItem={onMoveItem}
+                dragOverFolder={dragOverFolder}
+                onDragOverFolder={onDragOverFolder}
+              />
+            </CollapsibleFolderChildren>
           ) : null}
         </li>
         );

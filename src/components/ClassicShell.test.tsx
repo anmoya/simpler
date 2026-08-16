@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClassicShell } from "./ClassicShell";
@@ -339,6 +339,45 @@ describe("ClassicShell", () => {
     const childrenWrapper = document.querySelector(".note-tree__folder-children");
     expect(childrenWrapper).not.toHaveClass("note-tree__folder-children--open");
     expect(childrenWrapper).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("does not mount a collapsed folder's descendant DOM nodes, and mounts them on expand", async () => {
+    const workspaceTree = [
+      {
+        name: "daily",
+        path: "daily",
+        kind: "folder" as const,
+        children: [{ name: "today.md", path: "daily/today.md", kind: "note" as const, children: [] }],
+      },
+    ];
+    const { rerender } = renderShell({ workspaceTree, openFolderPaths: new Set() });
+
+    expect(document.querySelector(".note-tree__folder-children")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /today.md/ })).not.toBeInTheDocument();
+
+    rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={new Set(["daily"])} />);
+
+    expect(document.querySelector(".note-tree__folder-children")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /today.md/ })).toBeInTheDocument();
+  });
+
+  it("removes a collapsed folder's descendant DOM nodes once the collapse transition finishes", async () => {
+    const workspaceTree = [
+      {
+        name: "daily",
+        path: "daily",
+        kind: "folder" as const,
+        children: [{ name: "today.md", path: "daily/today.md", kind: "note" as const, children: [] }],
+      },
+    ];
+    const { rerender } = renderShell({ workspaceTree, openFolderPaths: new Set(["daily"]) });
+    expect(document.querySelector(".note-tree__folder-children")).toBeInTheDocument();
+
+    rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={new Set()} />);
+
+    await waitFor(() => {
+      expect(document.querySelector(".note-tree__folder-children")).not.toBeInTheDocument();
+    });
   });
 
   it("highlights the folder path down to the active note, and clears it with no note open", () => {
