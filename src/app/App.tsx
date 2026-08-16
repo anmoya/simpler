@@ -19,7 +19,13 @@ import {
   editorFontSizeSteps,
   defaultEditorFontSize,
 } from "./appState";
-import { expandPathToNote, focusActiveNote, restoreOpenFolderPaths, toggleFolder } from "./workspaceTreeState";
+import {
+  applyWorkspaceTreePatch,
+  expandPathToNote,
+  focusActiveNote,
+  restoreOpenFolderPaths,
+  toggleFolder,
+} from "./workspaceTreeState";
 import type { AppRoute } from "./routes";
 import {
   createAutomaticSyncScheduler,
@@ -1121,7 +1127,7 @@ export function App() {
     }
     setAppState((current) => ({
       ...current,
-      workspaceTree: response.data!.tree,
+      workspaceTree: applyWorkspaceTreePatch(current.workspaceTree, response.data!.patch),
       trashEntries: current.trashEntries.filter((entry) => entry.id !== id),
       workspaceError: null,
     }));
@@ -1333,7 +1339,7 @@ export function App() {
 
     setAppState((current) => ({
       ...current,
-      workspaceTree: response.data!.tree,
+      workspaceTree: applyWorkspaceTreePatch(current.workspaceTree, response.data!.patch),
       workspaceError: null,
       syncStatus: "cambios-locales",
       ...selection(response.data!.itemPath),

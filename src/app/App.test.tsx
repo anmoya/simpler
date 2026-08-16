@@ -230,7 +230,13 @@ describe("App", () => {
           ok: true,
           domain: "filesystem",
           action: "restore-trash-item",
-          data: { tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], itemPath: "today.md" },
+          data: {
+            patch: {
+              removedPaths: [],
+              upsertedItem: { name: "today.md", path: "today.md", kind: "note", children: [] },
+            },
+            itemPath: "today.md",
+          },
           error: null,
         });
       }

@@ -111,8 +111,13 @@ export interface NoteContent {
   content: string;
 }
 
+export interface WorkspaceTreePatch {
+  removedPaths: string[];
+  upsertedItem: WorkspaceTreeItem | null;
+}
+
 export interface FilesystemOperationResult {
-  tree: WorkspaceTreeItem[];
+  patch: WorkspaceTreePatch;
   itemPath: string;
 }
 

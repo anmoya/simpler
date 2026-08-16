@@ -38,7 +38,7 @@ describe("MarkdownEditor", () => {
         domain: "filesystem",
         action: "save-attachment",
         error: null,
-        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+        data: { patch: { removedPaths: [], upsertedItem: null }, itemPath: "daily/assets/2026-08-08-143022.png" },
       });
 
       render(
@@ -276,7 +276,7 @@ describe("MarkdownEditor", () => {
           domain: "filesystem",
           action: "save-attachment",
           error: null,
-          data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+          data: { patch: { removedPaths: [], upsertedItem: null }, itemPath: "daily/assets/2026-08-08-143022.png" },
         });
       const onAttachmentError = vi.fn();
 
@@ -309,7 +309,7 @@ describe("MarkdownEditor", () => {
         domain: "filesystem",
         action: "save-attachment",
         error: null,
-        data: { tree: [], itemPath: "daily/assets/2026-08-08-143022.png" },
+        data: { patch: { removedPaths: [], upsertedItem: null }, itemPath: "daily/assets/2026-08-08-143022.png" },
       });
 
       render(

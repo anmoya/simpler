@@ -302,8 +302,18 @@ struct LocalWorkspaceMetadata {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FilesystemOperationResult {
-    tree: Vec<WorkspaceTreeItem>,
+    patch: WorkspaceTreePatch,
     item_path: String,
+}
+
+/// Describes how a single-file create/delete/move/rename operation changed
+/// the Workspace Tree, so the frontend can patch its in-memory tree instead
+/// of re-fetching and swapping in a full rebuild (see `read_workspace_tree`).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceTreePatch {
+    removed_paths: Vec<String>,
+    upserted_item: Option<WorkspaceTreeItem>,
 }
 
 #[cfg(not(test))]
@@ -1191,7 +1201,7 @@ fn create_folder_payload(payload: serde_json::Value) -> Result<serde_json::Value
     }
 
     fs::create_dir(&folder_path).map_err(|error| format!("failed to create folder: {error}"))?;
-    workspace_operation_result(&workspace_path, &folder_path)
+    workspace_operation_result(&workspace_path, &folder_path, Vec::new(), Some(&folder_path))
 }
 
 fn create_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1208,7 +1218,7 @@ fn create_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
     }
 
     fs::write(&note_path, "").map_err(|error| format!("failed to create note: {error}"))?;
-    workspace_operation_result(&workspace_path, &note_path)
+    workspace_operation_result(&workspace_path, &note_path, Vec::new(), Some(&note_path))
 }
 
 fn save_attachment_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1232,11 +1242,9 @@ fn save_attachment_payload(payload: serde_json::Value) -> Result<serde_json::Val
     fs::write(&attachment_path, &bytes)
         .map_err(|error| format!("failed to save attachment: {error}"))?;
 
-    serde_json::to_value(FilesystemOperationResult {
-        tree: read_workspace_tree(&workspace_path, &workspace_path)?,
-        item_path: relative_workspace_path(&workspace_path, &attachment_path),
-    })
-    .map_err(|_| "failed to serialize filesystem response".to_string())
+    // Attachments never appear in the Workspace Tree (only Markdown notes do,
+    // per `is_markdown_note`), so this never changes the tree.
+    workspace_operation_result(&workspace_path, &attachment_path, Vec::new(), None)
 }
 
 const IMPORTABLE_IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
@@ -1276,11 +1284,9 @@ fn import_attachment_payload(payload: serde_json::Value) -> Result<serde_json::V
     fs::copy(&source_path, &attachment_path)
         .map_err(|error| format!("failed to import attachment: {error}"))?;
 
-    serde_json::to_value(FilesystemOperationResult {
-        tree: read_workspace_tree(&workspace_path, &workspace_path)?,
-        item_path: relative_workspace_path(&workspace_path, &attachment_path),
-    })
-    .map_err(|_| "failed to serialize filesystem response".to_string())
+    // Attachments never appear in the Workspace Tree (only Markdown notes do,
+    // per `is_markdown_note`), so this never changes the tree.
+    workspace_operation_result(&workspace_path, &attachment_path, Vec::new(), None)
 }
 
 fn attachment_timestamp() -> String {
@@ -1340,7 +1346,7 @@ fn rename_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
 
     fs::rename(&item_path, &target_path)
         .map_err(|error| format!("failed to rename item: {error}"))?;
-    workspace_operation_result(&workspace_path, &target_path)
+    workspace_operation_result(&workspace_path, &target_path, vec![item_path], Some(&target_path))
 }
 
 fn move_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1364,7 +1370,7 @@ fn move_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, St
 
     fs::rename(&note_path, &target_path)
         .map_err(|error| format!("failed to move note: {error}"))?;
-    workspace_operation_result(&workspace_path, &target_path)
+    workspace_operation_result(&workspace_path, &target_path, vec![note_path], Some(&target_path))
 }
 
 fn delete_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1414,7 +1420,7 @@ fn delete_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
         return Err(error);
     }
 
-    workspace_operation_result(&workspace_path, &parent_path)
+    workspace_operation_result(&workspace_path, &parent_path, vec![item_path], None)
 }
 
 static TRASH_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -1495,7 +1501,7 @@ fn restore_trash_item_payload(payload: serde_json::Value) -> Result<serde_json::
         let _ = fs::rename(&original_path, &trashed_path);
         return Err(error);
     }
-    workspace_operation_result(&workspace_path, &original_path)
+    workspace_operation_result(&workspace_path, &original_path, Vec::new(), Some(&original_path))
 }
 
 fn resolve_trash_entry_path(workspace_path: &Path, relative_path: &str) -> Result<PathBuf, String> {
@@ -1569,7 +1575,7 @@ fn move_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, St
     let target_path = target_folder.join(file_name);
 
     if target_path == item_path {
-        return workspace_operation_result(&workspace_path, &item_path);
+        return workspace_operation_result(&workspace_path, &item_path, Vec::new(), Some(&item_path));
     }
 
     if target_path.exists() {
@@ -1578,7 +1584,7 @@ fn move_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, St
 
     fs::rename(&item_path, &target_path)
         .map_err(|error| format!("failed to move item: {error}"))?;
-    workspace_operation_result(&workspace_path, &target_path)
+    workspace_operation_result(&workspace_path, &target_path, vec![item_path], Some(&target_path))
 }
 
 fn global_search_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -2538,15 +2544,63 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
         .map_err(|error| format!("failed to write workspace metadata: {error}"))
 }
 
+/// Builds a `FilesystemOperationResult` carrying only the delta a single-file
+/// operation made to the Workspace Tree (paths removed, plus the resulting
+/// node to upsert), rather than a full `read_workspace_tree` of the whole
+/// Workspace — `upsert_path`, when a folder, is walked to pick up its
+/// children, but nothing outside that subtree is touched.
 fn workspace_operation_result(
     workspace_path: &Path,
     item_path: &Path,
+    removed_paths: Vec<PathBuf>,
+    upsert_path: Option<&Path>,
 ) -> Result<serde_json::Value, String> {
+    let removed_paths = removed_paths
+        .iter()
+        .map(|path| relative_workspace_path(workspace_path, path))
+        .collect();
+    let upserted_item = match upsert_path {
+        Some(path) => Some(build_workspace_tree_item(workspace_path, path)?),
+        None => None,
+    };
+
     serde_json::to_value(FilesystemOperationResult {
-        tree: read_workspace_tree(workspace_path, workspace_path)?,
         item_path: relative_workspace_path(workspace_path, item_path),
+        patch: WorkspaceTreePatch {
+            removed_paths,
+            upserted_item,
+        },
     })
     .map_err(|_| "failed to serialize filesystem response".to_string())
+}
+
+/// Builds a single Workspace Tree node for `item_path` (its `children`,
+/// scoped to that subtree, if it's a folder), for patching an existing tree
+/// without rebuilding it from the Workspace root.
+fn build_workspace_tree_item(root_path: &Path, item_path: &Path) -> Result<WorkspaceTreeItem, String> {
+    let name = item_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "item path must include a valid name".to_string())?
+        .to_string();
+    let metadata = fs::metadata(item_path)
+        .map_err(|error| format!("failed to read workspace entry metadata: {error}"))?;
+
+    if metadata.is_dir() {
+        Ok(WorkspaceTreeItem {
+            name,
+            path: relative_workspace_path(root_path, item_path),
+            kind: WorkspaceTreeItemKind::Folder,
+            children: read_workspace_tree(root_path, item_path)?,
+        })
+    } else {
+        Ok(WorkspaceTreeItem {
+            name,
+            path: relative_workspace_path(root_path, item_path),
+            kind: WorkspaceTreeItemKind::Note,
+            children: Vec::new(),
+        })
+    }
 }
 
 fn ensure_workspace_folder(workspace_path: &Path) -> Result<(), String> {
@@ -4853,6 +4907,48 @@ mod tests {
     }
 
     #[test]
+    fn create_folder_patches_the_tree_incrementally_instead_of_a_full_rebuild() {
+        let workspace = test_workspace("create_folder_patch");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "create-folder".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "parentPath": "",
+                "folderName": "ideas",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({
+                "removedPaths": [],
+                "upsertedItem": {
+                    "name": "ideas",
+                    "path": "ideas",
+                    "kind": "folder",
+                    "children": []
+                }
+            })
+        );
+
+        // The patch must match what a full rebuild would have produced.
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "daily", "path": "daily", "kind": "folder", "children": [] },
+                { "name": "ideas", "path": "ideas", "kind": "folder", "children": [] },
+            ])
+        );
+    }
+
+    #[test]
     fn creates_markdown_notes_and_normalizes_missing_extension() {
         let workspace = test_workspace("create_note");
         fs::create_dir_all(workspace.join("daily")).unwrap();
@@ -4955,6 +5051,85 @@ mod tests {
         assert!(folder_response.ok);
         assert!(!workspace.join("daily").exists());
         assert!(workspace.join("journal").join("morning.md").exists());
+    }
+
+    #[test]
+    fn renaming_a_folder_patches_the_tree_with_the_renamed_subtree_and_no_full_rebuild() {
+        let workspace = test_workspace("rename_folder_patch");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::write(workspace.join("daily").join("today.md"), "# Today").unwrap();
+        fs::write(workspace.join("keep.md"), "# Keep").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "rename-item".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "itemPath": "daily",
+                "newName": "journal",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({
+                "removedPaths": ["daily"],
+                "upsertedItem": {
+                    "name": "journal",
+                    "path": "journal",
+                    "kind": "folder",
+                    "children": [
+                        { "name": "today.md", "path": "journal/today.md", "kind": "note", "children": [] }
+                    ]
+                }
+            })
+        );
+
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "journal", "path": "journal", "kind": "folder", "children": [
+                    { "name": "today.md", "path": "journal/today.md", "kind": "note", "children": [] }
+                ] },
+                { "name": "keep.md", "path": "keep.md", "kind": "note", "children": [] },
+            ])
+        );
+    }
+
+    #[test]
+    fn deleting_a_note_patches_the_tree_by_removing_only_the_deleted_path() {
+        let workspace = test_workspace("delete_note_patch");
+        fs::write(workspace.join("today.md"), "# Today").unwrap();
+        fs::write(workspace.join("keep.md"), "# Keep").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "delete-item".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "itemPath": "today.md",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({ "removedPaths": ["today.md"], "upsertedItem": null })
+        );
+
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "keep.md", "path": "keep.md", "kind": "note", "children": [] },
+            ])
+        );
     }
 
     #[test]

@@ -1,4 +1,82 @@
 import type { TreeMode, WorkspaceTreeItem } from "./appState";
+import type { WorkspaceTreePatch } from "../native/commands";
+
+/**
+ * Applies a single-file create/rename/move/delete patch to an existing
+ * Workspace Tree in place of a full rebuild-and-swap, producing a tree
+ * equivalent to what `read_workspace_tree` would return from scratch.
+ */
+export function applyWorkspaceTreePatch(
+  tree: WorkspaceTreeItem[],
+  patch: WorkspaceTreePatch,
+): WorkspaceTreeItem[] {
+  let next = tree;
+
+  for (const removedPath of patch.removedPaths) {
+    next = removeTreeItem(next, removedPath);
+  }
+
+  if (patch.upsertedItem) {
+    next = upsertTreeItem(next, patch.upsertedItem);
+  }
+
+  return next;
+}
+
+function removeTreeItem(items: WorkspaceTreeItem[], path: string): WorkspaceTreeItem[] {
+  return items
+    .filter((item) => item.path !== path)
+    .map((item) =>
+      item.kind === "folder" && item.children.length > 0
+        ? { ...item, children: removeTreeItem(item.children, path) }
+        : item,
+    );
+}
+
+function upsertTreeItem(items: WorkspaceTreeItem[], upserted: WorkspaceTreeItem): WorkspaceTreeItem[] {
+  const parentPath = parentFolderPath(upserted.path);
+
+  if (parentPath === "") {
+    return sortTreeItems(replaceOrInsert(items, upserted));
+  }
+
+  return items.map((item) => {
+    if (item.kind !== "folder") {
+      return item;
+    }
+    if (item.path === parentPath) {
+      return { ...item, children: sortTreeItems(replaceOrInsert(item.children, upserted)) };
+    }
+    if (parentPath.startsWith(`${item.path}/`)) {
+      return { ...item, children: upsertTreeItem(item.children, upserted) };
+    }
+    return item;
+  });
+}
+
+function replaceOrInsert(items: WorkspaceTreeItem[], upserted: WorkspaceTreeItem): WorkspaceTreeItem[] {
+  const withoutExisting = items.filter((item) => item.path !== upserted.path);
+  return [...withoutExisting, upserted];
+}
+
+function sortTreeItems(items: WorkspaceTreeItem[]): WorkspaceTreeItem[] {
+  return [...items].sort((left, right) => {
+    const rankDifference = folderRank(left) - folderRank(right);
+    if (rankDifference !== 0) {
+      return rankDifference;
+    }
+    return left.name.toLowerCase().localeCompare(right.name.toLowerCase());
+  });
+}
+
+function folderRank(item: WorkspaceTreeItem): number {
+  return item.kind === "folder" ? 0 : 1;
+}
+
+function parentFolderPath(path: string): string {
+  const lastSlash = path.lastIndexOf("/");
+  return lastSlash === -1 ? "" : path.slice(0, lastSlash);
+}
 
 export function toggleFolder(
   current: ReadonlySet<string>,
