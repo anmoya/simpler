@@ -16,6 +16,7 @@ import type {
 import { uiZoomSteps, defaultUiZoom, editorFontSizeSteps, defaultEditorFontSize } from "../app/appState";
 import type { RemoteAwareness, AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
+import { SettingsDialog } from "./SettingsDialog";
 import { ImagePreviewDialog } from "./ImagePreviewDialog";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { NoteHistoryPanel } from "./NoteHistoryPanel";
@@ -236,10 +237,25 @@ export function ClassicShell({
   updateNotice,
   onInstallAndRestart,
 }: ClassicShellProps) {
-  const [imagePreviewPath, setImagePreviewPath] = useState<string | null>(null);
-  useEffect(() => { setImagePreviewPath(null); }, [workspacePath]);
+  const [imagePreview, setImagePreview] = useState<{ workspacePath: string; imagePath: string } | null>(null);
+  const imagePreviewPath = imagePreview?.workspacePath === workspacePath ? imagePreview.imagePath : null;
+  const setImagePreviewPath = (imagePath: string | null) => {
+    setImagePreview(imagePath && workspacePath ? { workspacePath, imagePath } : null);
+  };
+  useEffect(() => { setImagePreview(null); }, [workspacePath]);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCommandHelpOpen, setIsCommandHelpOpen] = useState(false);
+  const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const settingsOriginRef = useRef<HTMLElement | null>(null);
+  const settingsReturnRouteRef = useRef<AppRoute>("workspace");
+  const openSettings = () => {
+    if (activeRoute === "settings") return;
+    settingsReturnRouteRef.current = activeRoute;
+    const origin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    settingsOriginRef.current = origin?.closest(".command-palette") ? settingsTriggerRef.current : origin;
+    onRouteChange("settings");
+  };
+  const closeSettings = () => onRouteChange(settingsReturnRouteRef.current);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
   const closeWorkspaceMenu = () => {
@@ -407,7 +423,7 @@ export function ClassicShell({
         label: "Settings",
         shortcut: "Ctrl/Cmd+3",
         available: activeRoute !== "settings",
-        run: () => onRouteChange("settings"),
+        run: openSettings,
       },
       {
         id: "theme",
@@ -579,6 +595,7 @@ export function ClassicShell({
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (activeRoute === "settings") return;
       const hasCommandModifier = event.ctrlKey || event.metaKey;
 
       if (hasCommandModifier && event.key.toLowerCase() === "k") {
@@ -816,6 +833,7 @@ export function ClassicShell({
             >
               <Icon name="sync" size={18} />
             </button>
+            <button type="button" ref={settingsTriggerRef} aria-label="Settings" title="Settings" aria-haspopup="dialog" onClick={openSettings}><Icon name="settings" size={18} /></button>
             <button
               type="button"
               title="Expand sidebar"
@@ -898,12 +916,13 @@ export function ClassicShell({
                   </button>
                   <button
                     type="button"
-                    role="tab"
-                    aria-selected={activeRoute === "settings"}
+                    ref={settingsTriggerRef}
+                    aria-haspopup="dialog"
+                    aria-expanded={activeRoute === "settings"}
                     aria-label="Settings"
                     title="Settings"
                     className={activeRoute === "settings" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
-                    onClick={() => onRouteChange(activeRoute === "settings" ? "workspace" : "settings")}
+                    onClick={openSettings}
                   >
                     <Icon name="settings" />
                   </button>
@@ -954,16 +973,9 @@ export function ClassicShell({
                   conflictedFiles={conflictedFiles}
                   onResolveConflict={onResolveConflict}
                   onEditConflictManually={onEditConflictManually}
+                  onOpenSettings={openSettings}
                 />
               </section>
-            ) : activeRoute === "settings" ? (
-              <GitHubAuthenticationPanel
-                githubAuth={githubAuth}
-                onBeginDeviceFlow={onBeginGitHubDeviceFlow}
-                onCheckDeviceFlow={onCheckGitHubDeviceFlow}
-                onStorePersonalAccessToken={onStoreGitHubPersonalAccessToken}
-                onDisconnect={onDisconnectGitHub}
-              />
             ) : (
               <>
                 <div className="tree-controls">
@@ -1155,6 +1167,7 @@ export function ClassicShell({
                 onChange={onNoteChange}
                 searchJump={currentFileSearchJump}
                 onAttachmentError={onAttachmentError}
+                onPreviewImage={setImagePreviewPath}
                 fontSize={editorFontSize}
               />
             </>
@@ -1179,8 +1192,39 @@ export function ClassicShell({
         </div>
       </main>
 
+      {activeRoute === "settings" ? <SettingsDialog onClose={closeSettings} returnFocusTo={settingsOriginRef.current ?? settingsTriggerRef.current}>
+        <section aria-labelledby="settings-appearance"><h3 id="settings-appearance">Apariencia</h3>
+          <p>Warm conserva sus colores y formas en claro y oscuro.</p>
+          <label>Appearance Mode<select value={themeMode} onChange={(event) => onThemeChange(event.target.value as ThemeMode)}><option value="light">Claro</option><option value="dark">Oscuro</option></select></label>
+          <p>Elige la apariencia de este computador.</p>
+          <label>Escala de interfaz<select value={uiZoom} onChange={(event) => onUiZoomChange(Number(event.target.value) as UiZoom)}>{uiZoomSteps.map((value) => <option key={value} value={value}>{value}%</option>)}</select></label>
+          <p>Cambia el tamaño de toda la interfaz sin modificar las notas.</p>
+        </section>
+        <section aria-labelledby="settings-editor"><h3 id="settings-editor">Editor</h3>
+          <label>Tamaño de letra<select value={editorFontSize} onChange={(event) => onEditorFontSizeChange(Number(event.target.value) as EditorFontSize)}>{editorFontSizeSteps.map((value) => <option key={value} value={value}>{value} px</option>)}</select></label>
+          <p>Ajusta solo el texto del editor de Raw Markdown.</p>
+        </section>
+        <section aria-labelledby="settings-workspace"><h3 id="settings-workspace">Workspace</h3>
+          <p className="settings-dialog__path">{workspacePath ?? "Abre una carpeta para configurar su árbol."}</p>
+          <label>Workspace Tree Mode<select value={treeMode} disabled={!canManageWorkspace} onChange={(event) => onTreeModeChange(event.target.value as TreeMode)}><option value="free">Free Tree Mode</option><option value="accordion">Accordion Tree Mode</option></select></label>
+          <p>Free mantiene abiertas otras carpetas; Accordion cierra las carpetas hermanas al abrir una.</p>
+        </section>
+        <section aria-labelledby="settings-sync"><h3 id="settings-sync">Sync</h3>
+          <p>Sync usa las credenciales Git del sistema. La conexión GitHub de abajo es opcional.</p>
+          <SyncWorkspacePanel canManageWorkspace={canManageWorkspace} statusLabel={statusLabel} workspaceName={workspaceName}
+            onSyncWorkspace={onSyncWorkspace} githubRemote={githubRemote} advancedGit={advancedGit} syncEvents={syncEvents}
+            githubAuth={githubAuth} onRefreshAdvancedGit={onRefreshAdvancedGit}
+            onConnectGitHubRemote={() => { closeSettings(); onConnectGitHubRemote(); }}
+            conflictedFiles={[]} onResolveConflict={onResolveConflict} onEditConflictManually={onEditConflictManually}
+            showConfiguration />
+          <GitHubAuthenticationPanel githubAuth={githubAuth} onBeginDeviceFlow={onBeginGitHubDeviceFlow}
+            onCheckDeviceFlow={onCheckGitHubDeviceFlow} onStorePersonalAccessToken={onStoreGitHubPersonalAccessToken} onDisconnect={onDisconnectGitHub} />
+        </section>
+      </SettingsDialog> : null}
+
       <footer className="status-bar" aria-label="Workspace status">
         <span>{statusLabel}</span>
+        {conflictedFiles.length > 0 ? <button type="button" className="remote-sync-control" onClick={() => onRouteChange("sync")}>Resolver conflictos</button> : null}
         {remoteAwareness ? (
           <RemoteSyncControl awareness={remoteAwareness} localChanges={statusLabel === "Cambios locales"} syncing={statusLabel === "Sincronizando"} onSync={onSyncWorkspace} onRetry={onCheckRemote} />
         ) : null}
@@ -1637,7 +1681,11 @@ function SyncWorkspacePanel({
   conflictedFiles,
   onResolveConflict,
   onEditConflictManually,
+  showConfiguration = false,
+  onOpenSettings,
 }: {
+  showConfiguration?: boolean;
+  onOpenSettings?: () => void;
   canManageWorkspace: boolean;
   statusLabel: string;
   workspaceName: string;
@@ -1664,7 +1712,7 @@ function SyncWorkspacePanel({
         <span>Sync status</span>
         <strong>{statusLabel}</strong>
       </div>
-      {githubRemote ? (
+      {showConfiguration ? (githubRemote ? (
         <div>
           <span>GitHub remote</span>
           <strong>{githubRemote.url}</strong>
@@ -1673,7 +1721,7 @@ function SyncWorkspacePanel({
         <button type="button" onClick={onConnectGitHubRemote} disabled={!canManageWorkspace}>
           Conectar remoto GitHub
         </button>
-      )}
+      )) : <button type="button" onClick={onOpenSettings}>Configurar Sync</button>}
       <button
         type="button"
         onClick={onSyncWorkspace}
@@ -1699,7 +1747,7 @@ function SyncWorkspacePanel({
           </ul>
         </div>
       ) : null}
-      <details
+      {showConfiguration ? <details
         className="advanced-git"
         open={isAdvancedGitOpen}
         onToggle={(event) => {
@@ -1751,7 +1799,7 @@ function SyncWorkspacePanel({
           </div>
           <button type="button" onClick={onRefreshAdvancedGit} disabled={!canManageWorkspace}>Refresh Git details</button>
         </section> : null}
-      </details>
+      </details> : null}
     </div>
   );
 }

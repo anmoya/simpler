@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { EditorView, basicSetup } from "codemirror";
 import { EditorState } from "@codemirror/state";
 import { markdown } from "@codemirror/lang-markdown";
@@ -6,6 +6,8 @@ import type { EditorFontSize, FileSearchJump } from "../app/appState";
 import { defaultEditorFontSize } from "../app/appState";
 import { markdownEditorTheme } from "./markdownEditorTheme";
 import { listContinuationKeymap } from "./listContinuation";
+import { selectedImageReference, resolveMarkdownImagePath, type MarkdownImageReference } from "./markdownImageReference";
+import { Icon } from "./icons";
 import { findDroppedImagePath } from "../attachments/droppedImagePath";
 import { nativeDropClientPoint, subscribeToNativeImageDrop } from "../attachments/nativeDropChannel";
 import { importAttachment, readClipboardImage, readClipboardText, saveAttachment } from "../native/commands";
@@ -19,6 +21,7 @@ export interface MarkdownEditorProps {
   focusRequest?: number;
   searchJump?: FileSearchJump | null;
   onAttachmentError?: (message: string | null) => void;
+  onPreviewImage?: (imagePath: string) => void;
   // Editor-only font size, independent of the whole-app-shell UI zoom.
   // Applied as a CSS variable read by `markdownEditorTheme()`, never by
   // rebuilding the CodeMirror view or touching `basicSetup`.
@@ -225,11 +228,15 @@ export function MarkdownEditor({
   onChange,
   searchJump = null,
   onAttachmentError,
+  onPreviewImage,
   fontSize = defaultEditorFontSize,
   focusRequest = 0,
 }: MarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [imageReference, setImageReference] = useState<MarkdownImageReference | null>(null);
+  const onPreviewImageRef = useRef(onPreviewImage);
+  onPreviewImageRef.current = onPreviewImage;
   const applyingExternalValueRef = useRef(false);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -244,6 +251,18 @@ export function MarkdownEditor({
   const reportAttachmentErrorRef = useRef<AttachmentErrorReporter>((message) => {
     onAttachmentErrorRef.current?.(message);
   });
+  const previewSelectedImage = () => {
+    const view = viewRef.current;
+    if (!view || !onPreviewImageRef.current) return false;
+    const reference = selectedImageReference(view.state);
+    if (!reference) return false;
+    try {
+      const imagePath = resolveMarkdownImagePath(notePathRef.current, reference.destination);
+      reportAttachmentErrorRef.current(null);
+      onPreviewImageRef.current(imagePath);
+    } catch (reason) { reportAttachmentErrorRef.current(reason instanceof Error ? reason.message : String(reason)); }
+    return true;
+  };
 
   // Drags from the file manager arrive on Tauri's window-level channel, never
   // as a DOM `drop`, so the import is driven from here rather than from the
@@ -324,6 +343,10 @@ export function MarkdownEditor({
           markdownEditorTheme(),
           EditorView.domEventHandlers({
             keydown: (event, view) => {
+              if (event.altKey && event.key === "Enter" && previewSelectedImage()) {
+                event.preventDefault();
+                return true;
+              }
               const isPasteShortcut =
                 (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v";
               const currentWorkspacePath = workspacePathRef.current;
@@ -371,6 +394,7 @@ export function MarkdownEditor({
             },
           }),
           EditorView.updateListener.of((update) => {
+            if (update.docChanged || update.selectionSet) setImageReference(selectedImageReference(update.state));
             if (update.docChanged && !applyingExternalValueRef.current) {
               onChangeRef.current(update.state.doc.toString());
             }
@@ -381,6 +405,7 @@ export function MarkdownEditor({
     });
 
     viewRef.current = view;
+    setImageReference(selectedImageReference(view.state));
 
     return () => {
       view.destroy();
@@ -438,8 +463,14 @@ export function MarkdownEditor({
     <div
       className="markdown-editor"
       data-testid="markdown-editor"
-      ref={containerRef}
       style={{ "--editor-font-size": `${fontSize}px` } as CSSProperties}
-    />
+    >
+      {onPreviewImage ? <div className="image-reference-toolbar">
+        {imageReference ? <button type="button" onClick={previewSelectedImage} title="Previsualizar imagen (Alt+Enter)">
+          <Icon name="image" size={14} /> Previsualizar imagen (Alt+Enter)
+        </button> : null}
+      </div> : null}
+      <div ref={containerRef} className="markdown-editor__content" />
+    </div>
   );
 }

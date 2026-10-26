@@ -4588,15 +4588,19 @@ mod tests {
     #[test]
     fn manual_tree_order_travels_through_sync_between_two_local_copies() {
         let (workspace, remote) = test_git_workspace_with_remote("manual_order_sync");
+        assert!(dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "open".into(), payload: serde_json::json!({ "workspacePath": workspace }) }).ok);
+        assert!(dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Git, action: "sync".into(), payload: serde_json::json!({ "workspacePath": workspace }) }).ok);
+        let second = workspace.parent().unwrap().join("second");
+        git_ok(workspace.parent().unwrap(), &["clone", remote.to_str().unwrap(), "second"]);
+        configure_git_identity(&second);
         fs::write(workspace.join("a.md"), "A").unwrap();
         fs::write(workspace.join("z.png"), "image").unwrap();
         let ordered = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "set-tree-order".into(), payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "orderedPaths": ["z.png", "a.md", "README.md"] }) });
         assert!(ordered.ok, "{:?}", ordered.error);
         let synced = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Git, action: "sync".into(), payload: serde_json::json!({ "workspacePath": workspace }) });
         assert!(synced.ok, "{:?}", synced.error);
-        let second = workspace.parent().unwrap().join("second");
-        git_ok(workspace.parent().unwrap(), &["clone", remote.to_str().unwrap(), "second"]);
-        configure_git_identity(&second);
+        let received = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Git, action: "sync".into(), payload: serde_json::json!({ "workspacePath": second }) });
+        assert!(received.ok, "{:?}", received.error);
         let opened = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "open".into(), payload: serde_json::json!({ "workspacePath": second }) });
         assert_eq!(opened.data.unwrap()["tree"][0]["path"], "z.png");
         assert!(!second.join(".simpler/local/tree-order.pending.json").exists());
@@ -4643,8 +4647,8 @@ mod tests {
                 let workspace = &workspace;
                 let start = &start;
                 scope.spawn(move || {
+                    start.wait();
                     for _ in 0..8 {
-                        start.wait();
                         let response = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "set-tree-order".into(), payload: serde_json::json!({ "workspacePath": workspace, "parentPath": folder, "orderedPaths": [format!("{folder}/b.md"), format!("{folder}/a.md")] }) });
                         assert!(response.ok, "{:?}", response.error);
                     }

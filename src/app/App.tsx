@@ -428,7 +428,10 @@ export function App() {
     }));
   };
 
-  const refreshGitHubAuth = async () => updateGitHubAuth(await githubAuthStatus());
+  const refreshGitHubAuth = async () => {
+    try { updateGitHubAuth(await githubAuthStatus()); }
+    catch { updateGitHubAuth({ ok: false, data: null, error: "No se pudo consultar la conexión opcional de GitHub" }); }
+  };
 
   const beginGitHubDeviceFlow = async () => {
     const response = await startGitHubDeviceFlow();
