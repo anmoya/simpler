@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, cloneElement } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, cloneElement } from "react";
 import type { AppRoute } from "../app/routes";
 import type {
   CloseSyncPromptState,
@@ -16,6 +16,8 @@ import type {
 import { uiZoomSteps, defaultUiZoom, editorFontSizeSteps, defaultEditorFontSize } from "../app/appState";
 import type { RemoteAwareness, AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
+import { WelcomeScreen } from "./WelcomeScreen";
+import type { RecentNote } from "../app/recentNotes";
 import { SettingsDialog } from "./SettingsDialog";
 import { ImagePreviewDialog } from "./ImagePreviewDialog";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -54,6 +56,17 @@ export interface ClassicShellProps {
   workspaceName: string;
   workspacePath: string | null;
   recentWorkspaces: Array<{ name: string; path: string }>;
+  recentNotes?: RecentNote[];
+  isWelcomeOpen?: boolean;
+  showWelcome?: boolean;
+  onShowWelcomeChange?: (show: boolean) => void;
+  onOpenRecentNotes?: () => void;
+  onCloseRecentNotes?: () => void;
+  onSelectRecentNote?: (note: RecentNote) => void;
+  onRemoveRecentNote?: (note: RecentNote) => void;
+  onWelcomeCreateNote?: () => void;
+  onWelcomeOpenFolder?: () => void;
+  welcomeNotice?: ReactNode;
   activeNotePath: string | null;
   activeFolderPath: string;
   noteContent: string;
@@ -152,6 +165,11 @@ export function ClassicShell({
   workspaceName,
   workspacePath,
   recentWorkspaces,
+  recentNotes = [], isWelcomeOpen = false, showWelcome = true,
+  onShowWelcomeChange = () => undefined, onOpenRecentNotes = () => undefined,
+  onCloseRecentNotes = () => undefined, onSelectRecentNote = () => undefined,
+  onRemoveRecentNote = () => undefined, onWelcomeCreateNote = () => undefined,
+  onWelcomeOpenFolder = () => undefined, welcomeNotice,
   activeNotePath,
   activeFolderPath,
   noteContent,
@@ -415,6 +433,9 @@ export function ClassicShell({
         run: () => onRouteChange("sync"),
       },
       {
+        id: "recent-notes", label: "Recientes", shortcut: "", available: true, run: onOpenRecentNotes,
+      },
+      {
         id: "settings",
         label: "Settings",
         shortcut: "Ctrl/Cmd+3",
@@ -506,6 +527,7 @@ export function ClassicShell({
       onCreateNote,
       onMoveActiveNote,
       onOpenWorkspace,
+      onOpenRecentNotes,
       onNavigateToNote,
       onRenameSelection,
       onRouteChange,
@@ -882,6 +904,7 @@ export function ClassicShell({
                       onCloneGitHubRepository();
                     }}
                     onClose={closeWorkspaceMenu}
+                    onRecentNotes={() => { closeWorkspaceMenu(); onOpenRecentNotes(); }}
                   />
                 ) : null}
               </div>
@@ -1077,7 +1100,9 @@ export function ClassicShell({
       </aside>
 
       <main className="editor-pane" aria-label="Markdown editor area">
-        <div className="editor-toolbar">
+        {isWelcomeOpen ? <WelcomeScreen notes={recentNotes} canCreate={canManageWorkspace} onOpen={onSelectRecentNote}
+          onRemove={onRemoveRecentNote} onContinue={onCloseRecentNotes} onCreate={onWelcomeCreateNote} onOpenFolder={onWelcomeOpenFolder} notice={welcomeNotice} /> : null}
+        <div className="editor-toolbar" inert={isWelcomeOpen || undefined} style={isWelcomeOpen ? { visibility: "hidden" } : undefined}>
           <Breadcrumb folderPath={activeFolderPath} notePath={activeNotePath} />
           {isFileSearchOpen ? (
           <div className="file-search" role="search" aria-label="Current note search">
@@ -1144,7 +1169,7 @@ export function ClassicShell({
           </div>
         </div>
 
-        <div className={noteHistoryOpen ? "editor-body editor-body--history" : "editor-body"}>
+        <div className={noteHistoryOpen ? "editor-body editor-body--history" : "editor-body"} inert={isWelcomeOpen || undefined} style={isWelcomeOpen ? { visibility: "hidden" } : undefined}>
         <section className="editor-surface" aria-label="Raw Markdown editor" ref={editorContainerRef}>
           {editorError ? (
             <EditorErrorState error={editorError} notePath={activeNotePath} />
@@ -1201,6 +1226,8 @@ export function ClassicShell({
           <p>Ajusta solo el texto del editor de Raw Markdown.</p>
         </section>
         <section aria-labelledby="settings-workspace"><h3 id="settings-workspace">Workspace</h3>
+          <label className="settings-dialog__checkbox"><input type="checkbox" checked={showWelcome} onChange={(event) => onShowWelcomeChange(event.target.checked)} />Mostrar bienvenida al iniciar</label>
+          <p>La bienvenida y Recientes se guardan solo en este computador.</p>
           <p className="settings-dialog__path">{workspacePath ?? "Abre una carpeta para configurar su árbol."}</p>
           <label>Workspace Tree Mode<select value={treeMode} disabled={!canManageWorkspace} onChange={(event) => onTreeModeChange(event.target.value as TreeMode)}><option value="free">Free Tree Mode</option><option value="accordion">Accordion Tree Mode</option></select></label>
           <p>Free mantiene abiertas otras carpetas; Accordion cierra las carpetas hermanas al abrir una.</p>
@@ -1492,12 +1519,13 @@ function GitHubAuthenticationPanel({
   );
 }
 
-function WorkspaceMenu({ recentWorkspaces, onSelectRecent, onOpenWorkspace, onClone, onClose }: {
+function WorkspaceMenu({ recentWorkspaces, onSelectRecent, onOpenWorkspace, onClone, onClose, onRecentNotes }: {
   recentWorkspaces: Array<{ name: string; path: string }>;
   onSelectRecent: (workspacePath: string) => void;
   onOpenWorkspace: () => void;
   onClone: () => void;
   onClose: () => void;
+  onRecentNotes: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => { menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus(); }, []);
@@ -1528,6 +1556,7 @@ function WorkspaceMenu({ recentWorkspaces, onSelectRecent, onOpenWorkspace, onCl
       <button type="button" role="menuitem" className="workspace-menu__open" onClick={onOpenWorkspace}>
         <Icon name="folder" />Abrir carpeta
       </button>
+      <button type="button" role="menuitem" className="workspace-menu__open" onClick={onRecentNotes}>Recientes</button>
       {recentWorkspaces.length > 0 ? (
         <div className="recent-workspaces" aria-label="Recent Workspaces">
           {recentWorkspaces.map((workspace) => (
