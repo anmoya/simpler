@@ -16,6 +16,7 @@ export interface MarkdownEditorProps {
   workspacePath?: string | null;
   value: string;
   onChange: (content: string) => void;
+  focusRequest?: number;
   searchJump?: FileSearchJump | null;
   onAttachmentError?: (message: string | null) => void;
   // Editor-only font size, independent of the whole-app-shell UI zoom.
@@ -225,6 +226,7 @@ export function MarkdownEditor({
   searchJump = null,
   onAttachmentError,
   fontSize = defaultEditorFontSize,
+  focusRequest = 0,
 }: MarkdownEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -386,6 +388,12 @@ export function MarkdownEditor({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notePath]);
+
+  useEffect(() => {
+    if (focusRequest > 0) {
+      viewRef.current?.focus();
+    }
+  }, [focusRequest]);
 
   useEffect(() => {
     const view = viewRef.current;
