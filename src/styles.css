@@ -719,18 +719,6 @@ button {
   cursor: grab;
 }
 
-.note-tree__folder--drop-target {
-  border-color: var(--color-accent);
-  background: var(--color-active);
-  box-shadow: var(--shadow-float);
-}
-
-.note-tree--drop-target {
-  outline: 1px dashed var(--color-accent);
-  outline-offset: -4px;
-  border-radius: var(--radius-sm);
-}
-
 .note-tree__folder-children {
   display: grid;
   grid-template-rows: 0fr;
@@ -1449,3 +1437,9 @@ button {
 .welcome-screen__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .settings-dialog .settings-dialog__checkbox { display: flex; align-items: center; gap: 8px; }
 .settings-dialog__checkbox input { width: auto; }
+
+.note-tree > li { position: relative; }
+[data-reorder-position="before"]::before, [data-reorder-position="after"]::after { content: ""; position: absolute; left: 4px; right: 4px; height: 3px; z-index: 2; border-radius: 2px; background: var(--color-accent); pointer-events: none; }
+[data-reorder-position="before"]::before { top: -2px; }
+[data-reorder-position="after"]::after { bottom: -2px; }
+.tree-order-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

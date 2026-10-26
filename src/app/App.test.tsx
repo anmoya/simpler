@@ -60,6 +60,83 @@ describe("App", () => {
     vi.restoreAllMocks();
   });
 
+  it("persists a mixed sibling drag order without moving files or changing the active note", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    let tree = [
+      { name: "folder", path: "folder", kind: "folder", children: [{ name: "nested.md", path: "folder/nested.md", kind: "note", children: [] }] },
+      { name: "a.md", path: "a.md", kind: "note", children: [] },
+      { name: "z.png", path: "z.png", kind: "image", children: [] },
+    ];
+    const orders: string[][] = [];
+    let failNextOrder = false;
+    let physicalMoves = 0;
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree, metadata: { lastNotePath: "a.md", openFolderPaths: ["folder"], githubWizardPostponed: true } });
+      if (request.action === "read-note") return reply({ content: "Keep writing" });
+      if (request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      if (request.action === "write-note") return new Promise(() => {});
+      if (request.action === "set-tree-order") {
+        orders.push(request.payload.orderedPaths);
+        if (failNextOrder) return Promise.resolve({ ok: false, domain: "workspace", action: "set-tree-order", data: null, error: "Tree order could not be saved" });
+        tree = request.payload.orderedPaths.map((path: string) => tree.find((item) => item.path === path)!);
+        return reply({ tree, itemPath: "" });
+      }
+      if (request.action === "move-item") physicalMoves++;
+      return reply({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editor = await screen.findByTestId("markdown-editor");
+    (editor.querySelector("[contenteditable=true]") as HTMLElement).focus();
+    await user.keyboard("X");
+    const editedContent = editor.textContent;
+    const values = new Map<string, string>();
+    const transfer = { setData: (type: string, value: string) => values.set(type, value), getData: (type: string) => values.get(type) ?? "", get types() { return [...values.keys()]; }, effectAllowed: "", dropEffect: "" };
+    const source = screen.getByRole("button", { name: "z.png" });
+    const target = screen.getByRole("button", { name: "folder" });
+    vi.spyOn(target.parentElement!, "getBoundingClientRect").mockReturnValue({ top: 20, height: 24 } as DOMRect);
+    const dragAt = (element: HTMLElement, type: string, clientY: number) => fireEvent(element, Object.assign(new Event(type, { bubbles: true, cancelable: true }), { dataTransfer: transfer, clientY }));
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    dragAt(target, "dragover", 20);
+    expect(screen.getByRole("status", { name: "Destino de orden" })).toHaveTextContent("antes de folder");
+    dragAt(target, "drop", 20);
+    await waitFor(() => expect(orders).toEqual([["z.png", "folder", "a.md"]]));
+    expect(screen.getAllByRole("button", { name: /^(folder|a.md|z.png)$/ }).map((button) => button.textContent)).toEqual(["z.png", "folder", "a.md"]);
+    expect(editor.textContent).toBe(editedContent);
+    expect(physicalMoves).toBe(0);
+    // Another parent's child is not a valid reorder destination.
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    const nested = screen.getByRole("button", { name: "nested.md" });
+    fireEvent.dragOver(nested, { dataTransfer: transfer });
+    fireEvent.drop(nested, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+    expect(orders).toHaveLength(1);
+    expect(physicalMoves).toBe(0);
+    expect(screen.queryByRole("status", { name: "Destino de orden" })).not.toBeInTheDocument();
+    // External text/file drags have no tree-origin token and cannot reorder.
+    fireEvent.dragOver(target, { dataTransfer: { types: ["text/plain"], getData: () => "a.md" } });
+    fireEvent.drop(target, { dataTransfer: { types: ["text/plain"], getData: () => "a.md" } });
+    expect(orders).toHaveLength(1);
+    expect(physicalMoves).toBe(0);
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    dragAt(target, "dragover", 44);
+    expect(screen.getByRole("status", { name: "Destino de orden" })).toHaveTextContent("después de folder");
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+    expect(screen.queryByRole("status", { name: "Destino de orden" })).not.toBeInTheDocument();
+    expect(orders).toHaveLength(1);
+    failNextOrder = true;
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    dragAt(target, "dragover", 44);
+    dragAt(target, "drop", 44);
+    expect(await screen.findByText("Tree order could not be saved")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^(folder|a.md|z.png)$/ }).map((button) => button.textContent)).toEqual(["z.png", "folder", "a.md"]);
+    expect(editor.textContent).toBe(editedContent);
+  });
+
   it("previews a relative Markdown image from the keyboard and preserves the editing selection", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValueOnce("/tmp/notes").mockResolvedValueOnce("/tmp/other");

@@ -1123,28 +1123,6 @@ export function App() {
     };
   };
 
-  const moveItemToFolder = async (itemPath: string, targetFolderPath: string) => {
-    if (!appState.workspace || itemPath === targetFolderPath) {
-      return;
-    }
-
-    if (!(await awaitLocalSave())) return;
-    const wasActiveNote = itemPath === appState.activeNotePath;
-    const wasActiveFolder = itemPath === appState.activeFolderPath;
-    const response = await moveItem(appState.workspace.path, itemPath, targetFolderPath);
-    if (response.ok && response.data) relocateRecentNotes(appState.workspace.path, itemPath, response.data.itemPath);
-    applyFilesystemOperation(response, (resultItemPath) => ({
-      activeFolderPath: wasActiveNote
-        ? parentFolderPath(resultItemPath)
-        : wasActiveFolder
-          ? resultItemPath
-          : appState.activeFolderPath,
-      activeNotePath: wasActiveNote ? resultItemPath : appState.activeNotePath,
-      noteContent: appState.noteContent,
-      editorError: null,
-    }));
-  };
-
   const deleteSelection = async (target?: TreeActionTarget) => {
     const selectedPath = target?.path ?? appState.activeNotePath ?? appState.activeFolderPath;
 
@@ -1567,7 +1545,6 @@ export function App() {
       onDeleteSelection={deleteSelection}
       trashEntries={appState.trashEntries}
       onRestoreTrashItem={(id) => void restoreFromTrash(id)}
-      onMoveItem={moveItemToFolder}
       isWindowMaximized={isWindowMaximized}
       onMinimizeWindow={minimizeWindow}
       onToggleMaximizeWindow={toggleMaximizeWindow}

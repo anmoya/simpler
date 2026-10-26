@@ -113,7 +113,6 @@ export interface ClassicShellProps {
   onDeleteSelection: (target?: TreeActionTarget) => void;
   trashEntries: TrashEntry[];
   onRestoreTrashItem: (id: string) => void;
-  onMoveItem: (itemPath: string, targetFolderPath: string) => void;
   onSyncWorkspace: () => void;
   githubRemote: GitHubRemote | null;
   advancedGit: AdvancedGitStatus | null;
@@ -217,7 +216,6 @@ export function ClassicShell({
   onDeleteSelection,
   trashEntries,
   onRestoreTrashItem,
-  onMoveItem,
   onSyncWorkspace,
   githubRemote,
   advancedGit,
@@ -289,7 +287,57 @@ export function ClassicShell({
   const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; target: TreeActionTarget; trigger: HTMLElement } | null>(
     null,
   );
-  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const treeDragSourceRef = useRef<{ path: string; workspace: string | null } | null>(null);
+  const [treeInsertion, setTreeInsertion] = useState<{ path: string; name: string; side: "before" | "after" } | null>(null);
+  const finishTreeDrag = () => { treeDragSourceRef.current = null; setTreeInsertion(null); };
+  useEffect(finishTreeDrag, [workspacePath]);
+  const siblingDrag = (targetPath: string) => {
+    const source = treeDragSourceRef.current;
+    if (!source || source.workspace !== workspacePath || treeOrderPending || !onSetTreeOrder) return null;
+    const siblings = treeSiblings(workspaceTree, targetPath);
+    return siblings.some((item) => item.path === source.path) ? { source, siblings } : null;
+  };
+  const insertionSide = (event: DragEvent): "before" | "after" => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+  };
+  const startTreeDrag = (event: DragEvent, path: string) => {
+    if (!onSetTreeOrder || treeOrderPending) { event.preventDefault(); return; }
+    event.stopPropagation();
+    event.dataTransfer.setData("application/x-simpler-tree-item", path);
+    event.dataTransfer.effectAllowed = "move";
+    treeDragSourceRef.current = { path, workspace: workspacePath };
+    setTreeInsertion(null);
+  };
+  const hoverTreeItem = (event: DragEvent, item: WorkspaceTreeItem) => {
+    if (!treeDragSourceRef.current) return;
+    event.stopPropagation();
+    const drag = siblingDrag(item.path);
+    if (!drag || drag.source.path === item.path || !Array.from(event.dataTransfer.types).includes("application/x-simpler-tree-item")) {
+      event.dataTransfer.dropEffect = "none";
+      setTreeInsertion(null);
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const side = insertionSide(event);
+    setTreeInsertion((current) => current?.path === item.path && current.side === side ? current : { path: item.path, name: item.name, side });
+  };
+  const dropTreeItem = (event: DragEvent, item: WorkspaceTreeItem) => {
+    if (!treeDragSourceRef.current) return;
+    event.preventDefault(); event.stopPropagation();
+    const drag = siblingDrag(item.path);
+    if (drag && event.dataTransfer.getData("application/x-simpler-tree-item") === drag.source.path && drag.source.path !== item.path) {
+      const paths = drag.siblings.map((sibling) => sibling.path);
+      const reordered = paths.filter((path) => path !== drag.source.path);
+      const destination = reordered.indexOf(item.path) + (insertionSide(event) === "after" ? 1 : 0);
+      reordered.splice(destination, 0, drag.source.path);
+      if (paths.some((path, index) => path !== reordered[index])) {
+        onSetTreeOrder?.(item.path.split("/").slice(0, -1).join("/"), reordered);
+      }
+    }
+    finishTreeDrag();
+  };
   const openTreeItemMenu = (event: MouseEvent | ReactKeyboardEvent, kind: WorkspaceTreeItem["kind"], path: string) => {
     event.preventDefault();
     event.stopPropagation();
@@ -617,6 +665,7 @@ export function ClassicShell({
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && treeDragSourceRef.current) finishTreeDrag();
       if (activeRoute === "settings") return;
       const hasCommandModifier = event.ctrlKey || event.metaKey;
 
@@ -1074,6 +1123,7 @@ export function ClassicShell({
                     <Icon name="folder-plus" /><span>Nueva carpeta</span>
                   </button>
                 </div>
+                {treeInsertion ? <p className="tree-order-status" role="status" aria-label="Destino de orden">Soltar {treeInsertion.side === "before" ? "antes" : "después"} de {treeInsertion.name}</p> : null}
                 {workspaceTree.length > 0 ? (
                   <WorkspaceTree
                     items={workspaceTree}
@@ -1085,10 +1135,13 @@ export function ClassicShell({
                     onSelectNote={onSelectNote}
                     onSelectImage={setImagePreviewPath}
                     onItemContextMenu={openTreeItemMenu}
-                    onMoveItem={onMoveItem}
-                    dragOverFolder={dragOverFolder}
-                    onDragOverFolder={setDragOverFolder}
-                    isRoot
+                    onTreeDragStart={startTreeDrag}
+                    onTreeDragOver={hoverTreeItem}
+                    onTreeDrop={dropTreeItem}
+                    onTreeDragEnd={finishTreeDrag}
+                    onTreeDragLeave={() => setTreeInsertion(null)}
+                    insertion={treeInsertion}
+                    dragEnabled={!!onSetTreeOrder && !treeOrderPending}
                   />
                 ) : (
                   <p className="empty-tree">
@@ -1899,10 +1952,13 @@ function WorkspaceTree({
   onSelectNote,
   onSelectImage,
   onItemContextMenu,
-  onMoveItem,
-  dragOverFolder,
-  onDragOverFolder,
-  isRoot = false,
+  onTreeDragStart,
+  onTreeDragOver,
+  onTreeDrop,
+  onTreeDragEnd,
+  onTreeDragLeave,
+  insertion,
+  dragEnabled,
 }: {
   items: WorkspaceTreeItem[];
   activeNotePath: string | null;
@@ -1913,40 +1969,38 @@ function WorkspaceTree({
   onSelectNote: (notePath: string) => void;
   onSelectImage: (imagePath: string) => void;
   onItemContextMenu: (event: MouseEvent | ReactKeyboardEvent, kind: WorkspaceTreeItem["kind"], path: string) => void;
-  onMoveItem: (itemPath: string, targetFolderPath: string) => void;
-  dragOverFolder: string | null;
-  onDragOverFolder: (folderPath: string | null) => void;
-  isRoot?: boolean;
+  onTreeDragStart: (event: DragEvent, path: string) => void;
+  onTreeDragOver: (event: DragEvent, item: WorkspaceTreeItem) => void;
+  onTreeDrop: (event: DragEvent, item: WorkspaceTreeItem) => void;
+  onTreeDragEnd: () => void;
+  onTreeDragLeave: () => void;
+  insertion: { path: string; side: "before" | "after" } | null;
+  dragEnabled: boolean;
 }) {
-  const readDraggedPath = (event: DragEvent) => event.dataTransfer.getData("text/plain");
   const activePathFolders = activeNoteAncestorFolderPaths(activeNotePath);
-
-  const rootDropProps = isRoot
-    ? {
-        onDragOver: (event: DragEvent) => {
-          event.preventDefault();
-          onDragOverFolder("");
-        },
-        onDragLeave: () => onDragOverFolder(null),
-        onDrop: (event: DragEvent) => {
-          event.preventDefault();
-          const draggedPath = readDraggedPath(event);
-          onDragOverFolder(null);
-          if (draggedPath) {
-            onMoveItem(draggedPath, "");
-          }
-        },
-      }
-    : {};
-
+  const rowDragProps = (item: WorkspaceTreeItem) => ({
+    onDragOver: (event: DragEvent) => onTreeDragOver(event, item),
+    onDrop: (event: DragEvent) => onTreeDrop(event, item),
+    onDragLeave: (event: DragEvent) => {
+      if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) onTreeDragLeave();
+    },
+  });
   return (
-    <ul className={isRoot && dragOverFolder === "" ? "note-tree note-tree--drop-target" : "note-tree"} {...rootDropProps}>
+    <ul className="note-tree" onDragOver={(event) => {
+      if (Array.from(event.dataTransfer.types).includes("application/x-simpler-tree-item")) {
+        event.stopPropagation(); onTreeDragLeave();
+      }
+    }} onDrop={(event) => {
+      if (Array.from(event.dataTransfer.types).includes("application/x-simpler-tree-item")) {
+        event.preventDefault(); event.stopPropagation(); onTreeDragEnd();
+      }
+    }}>
       {items.map((item) => {
         const isOpen = openFolderPaths.has(item.path);
         return (
-        <li key={item.path}>
+        <li key={item.path} data-reorder-position={insertion?.path === item.path ? insertion.side : undefined}>
           {item.kind === "folder" ? (
-            <div
+            <div {...rowDragProps(item)}
               className={
                 activePathFolders.has(item.path)
                   ? "note-tree__folder-row note-tree__folder-row--active-path"
@@ -1964,41 +2018,16 @@ function WorkspaceTree({
               </button>
               <button
                 type="button"
-                className={
-                  dragOverFolder === item.path
-                    ? "note-tree__folder note-tree__folder--drop-target"
-                    : "note-tree__folder"
-                }
+                className="note-tree__folder"
                 title={item.path}
-                draggable
+                draggable={dragEnabled}
                 onClick={() => onSelectFolder(item.path)}
                 onContextMenu={(event) => onItemContextMenu(event, "folder", item.path)}
                 onKeyDown={(event) => {
                   if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) onItemContextMenu(event, "folder", item.path);
                 }}
-                onDragStart={(event) => {
-                  event.stopPropagation();
-                  event.dataTransfer.setData("text/plain", item.path);
-                  event.dataTransfer.effectAllowed = "move";
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onDragOverFolder(item.path);
-                }}
-                onDragLeave={(event) => {
-                  event.stopPropagation();
-                  onDragOverFolder(null);
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  const draggedPath = readDraggedPath(event);
-                  onDragOverFolder(null);
-                  if (draggedPath) {
-                    onMoveItem(draggedPath, item.path);
-                  }
-                }}
+                onDragStart={(event) => onTreeDragStart(event, item.path)}
+                onDragEnd={onTreeDragEnd}
               >
                 <span className="note-tree__label">
                   <Icon name="folder" />
@@ -2009,24 +2038,21 @@ function WorkspaceTree({
                 onClick={(event) => onItemContextMenu(event, item.kind, item.path)}><Icon name="more" size={14} /></button>
             </div>
           ) : (
-            <div className="note-tree__note-row">
+            <div className="note-tree__note-row" {...rowDragProps(item)}>
             <button
               type="button"
               className={
                 item.path === activeNotePath ? "note-tree__item note-tree__item--active" : "note-tree__item"
               }
               title={item.path}
-              draggable
+              draggable={dragEnabled}
               onClick={() => item.kind === "image" ? onSelectImage(item.path) : onSelectNote(item.path)}
               onContextMenu={(event) => onItemContextMenu(event, item.kind, item.path)}
               onKeyDown={(event) => {
                 if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) onItemContextMenu(event, item.kind, item.path);
               }}
-              onDragStart={(event) => {
-                event.stopPropagation();
-                event.dataTransfer.setData("text/plain", item.path);
-                event.dataTransfer.effectAllowed = "move";
-              }}
+              onDragStart={(event) => onTreeDragStart(event, item.path)}
+              onDragEnd={onTreeDragEnd}
             >
               <span className="note-tree__label">
                 <Icon name={item.kind === "image" ? "image" : "note"} size={14} />
@@ -2061,9 +2087,13 @@ function WorkspaceTree({
                   onSelectNote={onSelectNote}
                   onSelectImage={onSelectImage}
                   onItemContextMenu={onItemContextMenu}
-                  onMoveItem={onMoveItem}
-                  dragOverFolder={dragOverFolder}
-                  onDragOverFolder={onDragOverFolder}
+                  onTreeDragStart={onTreeDragStart}
+                  onTreeDragOver={onTreeDragOver}
+                  onTreeDrop={onTreeDrop}
+                  onTreeDragEnd={onTreeDragEnd}
+                  onTreeDragLeave={onTreeDragLeave}
+                  insertion={insertion}
+                  dragEnabled={dragEnabled}
                 />
               </div>
             </div>
