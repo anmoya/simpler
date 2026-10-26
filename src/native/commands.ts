@@ -39,6 +39,20 @@ export interface GitWorkspaceStatus {
   conflictedFiles: string[];
 }
 
+export interface RemoteCheckResult {
+  state: "up-to-date" | "incoming" | "diverged" | "disconnected" | "authentication-error" | "error";
+  ahead: number;
+  behind: number;
+  hasLocalChanges: boolean;
+  message: string | null;
+}
+
+export interface RemoteAwareness {
+  checking: boolean;
+  result: RemoteCheckResult | null;
+  lastSuccessfulCheck: string | null;
+}
+
 export interface GitCommit {
   id: string;
   subject: string;
@@ -342,6 +356,12 @@ export function gitStatus(workspacePath: string) {
     domain: "git",
     action: "status",
     payload: { workspacePath },
+  });
+}
+
+export function checkRemote(workspacePath: string) {
+  return invokeNativeCommand<RemoteCheckResult, { workspacePath: string }>({
+    domain: "git", action: "check-remote", payload: { workspacePath },
   });
 }
 
