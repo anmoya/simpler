@@ -216,6 +216,10 @@ export function postponeGitHubWizard(workspacePath: string) {
   });
 }
 
+export function noteAvailability(workspacePath: string, notePath: string) {
+  return invokeNativeCommand<{ available: boolean }, { workspacePath: string; notePath: string }>({ domain: "filesystem", action: "note-availability", payload: { workspacePath, notePath } });
+}
+
 export function readNote(workspacePath: string, notePath: string) {
   return invokeNativeCommand<NoteContent, { workspacePath: string; notePath: string }>({
     domain: "filesystem",

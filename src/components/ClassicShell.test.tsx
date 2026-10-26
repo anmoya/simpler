@@ -58,7 +58,6 @@ const defaultProps: ClassicShellProps = {
   onDeleteSelection: noop,
   trashEntries: [],
   onRestoreTrashItem: noop,
-  onMoveItem: noop,
   onSyncWorkspace: noop,
   githubRemote: null,
   advancedGit: null,

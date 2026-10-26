@@ -719,18 +719,6 @@ button {
   cursor: grab;
 }
 
-.note-tree__folder--drop-target {
-  border-color: var(--color-accent);
-  background: var(--color-active);
-  box-shadow: var(--shadow-float);
-}
-
-.note-tree--drop-target {
-  outline: 1px dashed var(--color-accent);
-  outline-offset: -4px;
-  border-radius: var(--radius-sm);
-}
-
 .note-tree__folder-children {
   display: grid;
   grid-template-rows: 0fr;
@@ -1432,3 +1420,26 @@ button {
 .tree-controls__icon-button[aria-pressed="true"] { background: var(--color-subtle); color: var(--color-accent); }
 @media (max-width: 560px) { .tree-actions button span { display: none; } }
 @media (prefers-reduced-motion: reduce) { .tree-tooltip__content { transition: none; } }
+
+.editor-pane { position: relative; }
+.welcome-screen { position: absolute; inset: 0; z-index: 5; overflow: auto; padding: clamp(16px, 4vw, 42px); background: var(--color-editor); color: var(--color-text); }
+.welcome-screen > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.welcome-screen h1 { margin: 0; font-family: var(--font-family-heading); }
+.welcome-screen p { color: var(--color-muted); }
+.welcome-screen ol { display: grid; gap: 8px; padding: 0; list-style: none; }
+.welcome-screen li { display: flex; gap: 8px; min-width: 0; }
+.welcome-screen button { background: var(--color-control); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 10px; cursor: pointer; }
+.welcome-screen li > button:first-child { flex: 1; min-width: 0; display: grid; gap: 5px; text-align: left; }
+.welcome-screen span, .welcome-screen small { color: var(--color-muted); overflow-wrap: anywhere; }
+.welcome-screen button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.welcome-screen button:hover { background: var(--color-active); }
+.welcome-screen button:disabled { cursor: default; color: var(--color-muted); }
+.welcome-screen__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.settings-dialog .settings-dialog__checkbox { display: flex; align-items: center; gap: 8px; }
+.settings-dialog__checkbox input { width: auto; }
+
+.note-tree > li { position: relative; }
+[data-reorder-position="before"]::before, [data-reorder-position="after"]::after { content: ""; position: absolute; left: 4px; right: 4px; height: 3px; z-index: 2; border-radius: 2px; background: var(--color-accent); pointer-events: none; }
+[data-reorder-position="before"]::before { top: -2px; }
+[data-reorder-position="after"]::after { bottom: -2px; }
+.tree-order-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

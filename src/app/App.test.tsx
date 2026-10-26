@@ -52,11 +52,89 @@ describe("App", () => {
     mocks.closeRequestedHandler = null;
     mocks.appClosingOverride = null;
     localStorage.clear();
+    localStorage.setItem("simpler.showWelcome", "false");
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("persists a mixed sibling drag order without moving files or changing the active note", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    let tree = [
+      { name: "folder", path: "folder", kind: "folder", children: [{ name: "nested.md", path: "folder/nested.md", kind: "note", children: [] }] },
+      { name: "a.md", path: "a.md", kind: "note", children: [] },
+      { name: "z.png", path: "z.png", kind: "image", children: [] },
+    ];
+    const orders: string[][] = [];
+    let failNextOrder = false;
+    let physicalMoves = 0;
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree, metadata: { lastNotePath: "a.md", openFolderPaths: ["folder"], githubWizardPostponed: true } });
+      if (request.action === "read-note") return reply({ content: "Keep writing" });
+      if (request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      if (request.action === "write-note") return new Promise(() => {});
+      if (request.action === "set-tree-order") {
+        orders.push(request.payload.orderedPaths);
+        if (failNextOrder) return Promise.resolve({ ok: false, domain: "workspace", action: "set-tree-order", data: null, error: "Tree order could not be saved" });
+        tree = request.payload.orderedPaths.map((path: string) => tree.find((item) => item.path === path)!);
+        return reply({ tree, itemPath: "" });
+      }
+      if (request.action === "move-item") physicalMoves++;
+      return reply({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editor = await screen.findByTestId("markdown-editor");
+    (editor.querySelector("[contenteditable=true]") as HTMLElement).focus();
+    await user.keyboard("X");
+    const editedContent = editor.textContent;
+    const values = new Map<string, string>();
+    const transfer = { setData: (type: string, value: string) => values.set(type, value), getData: (type: string) => values.get(type) ?? "", get types() { return [...values.keys()]; }, effectAllowed: "", dropEffect: "" };
+    const source = screen.getByRole("button", { name: "z.png" });
+    const target = screen.getByRole("button", { name: "folder" });
+    vi.spyOn(target.parentElement!, "getBoundingClientRect").mockReturnValue({ top: 20, height: 24 } as DOMRect);
+    const dragAt = (element: HTMLElement, type: string, clientY: number) => fireEvent(element, Object.assign(new Event(type, { bubbles: true, cancelable: true }), { dataTransfer: transfer, clientY }));
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    dragAt(target, "dragover", 20);
+    expect(screen.getByRole("status", { name: "Destino de orden" })).toHaveTextContent("antes de folder");
+    dragAt(target, "drop", 20);
+    await waitFor(() => expect(orders).toEqual([["z.png", "folder", "a.md"]]));
+    expect(screen.getAllByRole("button", { name: /^(folder|a.md|z.png)$/ }).map((button) => button.textContent)).toEqual(["z.png", "folder", "a.md"]);
+    expect(editor.textContent).toBe(editedContent);
+    expect(physicalMoves).toBe(0);
+    // Another parent's child is not a valid reorder destination.
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    const nested = screen.getByRole("button", { name: "nested.md" });
+    fireEvent.dragOver(nested, { dataTransfer: transfer });
+    fireEvent.drop(nested, { dataTransfer: transfer });
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+    expect(orders).toHaveLength(1);
+    expect(physicalMoves).toBe(0);
+    expect(screen.queryByRole("status", { name: "Destino de orden" })).not.toBeInTheDocument();
+    // External text/file drags have no tree-origin token and cannot reorder.
+    fireEvent.dragOver(target, { dataTransfer: { types: ["text/plain"], getData: () => "a.md" } });
+    fireEvent.drop(target, { dataTransfer: { types: ["text/plain"], getData: () => "a.md" } });
+    expect(orders).toHaveLength(1);
+    expect(physicalMoves).toBe(0);
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    dragAt(target, "dragover", 44);
+    expect(screen.getByRole("status", { name: "Destino de orden" })).toHaveTextContent("después de folder");
+    fireEvent.dragEnd(source, { dataTransfer: transfer });
+    expect(screen.queryByRole("status", { name: "Destino de orden" })).not.toBeInTheDocument();
+    expect(orders).toHaveLength(1);
+    failNextOrder = true;
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    dragAt(target, "dragover", 44);
+    dragAt(target, "drop", 44);
+    expect(await screen.findByText("Tree order could not be saved")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^(folder|a.md|z.png)$/ }).map((button) => button.textContent)).toEqual(["z.png", "folder", "a.md"]);
+    expect(editor.textContent).toBe(editedContent);
   });
 
   it("previews a relative Markdown image from the keyboard and preserves the editing selection", async () => {
@@ -157,6 +235,116 @@ describe("App", () => {
     const nativePreviews = mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "preview-image");
     expect(nativePreviews).toHaveLength(content.includes("missing.png") ? 1 : 0);
     expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "write-note")).toBe(false);
+  });
+
+  it("retains seven distinct recent notes, keeps unavailable entries and lets the user remove one", async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem("simpler.showWelcome");
+    const entries = Array.from({ length: 7 }, (_, index) => ({ workspacePath: "/tmp/notes", workspaceName: "notes", notePath: `n${index}.md`, openedAt: new Date(Date.now() - (index + 1) * 60000).toISOString(), available: true }));
+    localStorage.setItem("simpler.recentNotes", JSON.stringify(entries));
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, data, error: null });
+      if (request.action === "note-availability") return reply({ available: request.payload.notePath !== "n0.md" });
+      if (request.domain === "workspace" && request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: Array.from({ length: 8 }, (_, index) => ({ name: `n${index}.md`, path: `n${index}.md`, kind: "note", children: [] })), metadata: { lastNotePath: null, githubWizardPostponed: true } });
+      if (request.action === "read-note") return reply({ content: request.payload.notePath });
+      if (request.domain === "workspace") return reply({});
+      if (request.action === "status" && request.domain === "git") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      throw new Error(`unexpected ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    let welcome = screen.getByRole("region", { name: "Recientes" });
+    expect(await within(welcome).findByRole("button", { name: "n0.md — notes — No disponible" })).toBeInTheDocument();
+    expect(within(welcome).getAllByRole("listitem")).toHaveLength(7);
+    await user.click(within(welcome).getByRole("button", { name: "n2.md — notes" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Recientes" })).not.toBeInTheDocument());
+    expect(JSON.parse(localStorage.getItem("simpler.recentNotes")!)).toHaveLength(7);
+    await user.click(screen.getByRole("button", { name: "n7.md" }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("simpler.recentNotes")!)[0].notePath).toBe("n7.md"));
+    const stored = JSON.parse(localStorage.getItem("simpler.recentNotes")!);
+    expect(stored).toHaveLength(7);
+    expect(stored.some((note: { notePath: string }) => note.notePath === "n6.md")).toBe(false);
+    expect(stored.some((note: { notePath: string }) => note.notePath === "n0.md")).toBe(true);
+    await user.keyboard("{Control>}k{/Control}");
+    await user.click(screen.getByRole("button", { name: "Recientes" }));
+    welcome = screen.getByRole("region", { name: "Recientes" });
+    await user.click(within(welcome).getByRole("button", { name: "Quitar n0.md de Recientes" }));
+    expect(within(welcome).getAllByRole("listitem")).toHaveLength(6);
+    expect(JSON.parse(localStorage.getItem("simpler.recentNotes")!)).toHaveLength(6);
+  });
+
+  it("persists the device Welcome preference across process restarts", async () => {
+    const user = userEvent.setup();
+    mocks.invoke.mockResolvedValue({ ok: false, data: null, error: "Unavailable" });
+    const first = render(<App />);
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const preference = screen.getByRole("checkbox", { name: "Mostrar bienvenida al iniciar" });
+    expect(preference).not.toBeChecked();
+    await user.click(preference);
+    await user.click(screen.getByRole("button", { name: "Cerrar configuración" }));
+    first.unmount();
+    const restarted = render(<App />);
+    expect(screen.getByRole("region", { name: "Recientes" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("checkbox", { name: "Mostrar bienvenida al iniciar" }));
+    await user.click(screen.getByRole("button", { name: "Cerrar configuración" }));
+    expect(screen.queryByRole("region", { name: "Recientes" })).not.toBeInTheDocument();
+    restarted.unmount();
+    render(<App />);
+    expect(screen.queryByRole("region", { name: "Recientes" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the latest recent-note choice when an older Workspace load finishes late", async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem("simpler.showWelcome");
+    localStorage.setItem("simpler.recentNotes", JSON.stringify(["first", "second"].map((name) => ({ workspacePath: `/tmp/${name}`, workspaceName: name, notePath: "today.md", openedAt: new Date().toISOString(), available: true }))));
+    let finishFirst!: (response: unknown) => void;
+    const workspace = (name: string) => ({ name, path: `/tmp/${name}`, tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], metadata: { lastNotePath: null, githubWizardPostponed: true } });
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, data, error: null });
+      if (request.action === "note-availability") return reply({ available: true });
+      if (request.action === "open") return request.payload.workspacePath === "/tmp/first" ? new Promise((resolve) => { finishFirst = resolve; }) : reply(workspace("second"));
+      if (request.action === "read-note") return reply({ content: request.payload.workspacePath });
+      if (request.domain === "workspace") return reply({});
+      if (request.action === "status" && request.domain === "git") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      throw new Error(`unexpected ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "today.md — first" }));
+    await user.click(screen.getByRole("button", { name: "today.md — second" }));
+    await waitFor(() => expect(screen.getByTestId("markdown-editor")).toHaveTextContent("/tmp/second"));
+    finishFirst({ ok: true, data: workspace("first"), error: null });
+    await waitFor(() => expect(screen.getByTestId("markdown-editor")).toHaveTextContent("/tmp/second"));
+    expect(screen.getByRole("button", { name: "second — Abrir o cambiar…" })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("simpler.recentNotes")!)).toHaveLength(2);
+  });
+
+  it("shows Welcome by default, records opened notes locally and reopens Recientes from the Workspace menu", async () => {
+    const user = userEvent.setup();
+    localStorage.removeItem("simpler.showWelcome");
+    localStorage.setItem("simpler.recentWorkspaces", JSON.stringify([{ name: "notes", path: "/tmp/notes" }]));
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], metadata: { lastNotePath: "today.md", githubWizardPostponed: true } });
+      if (request.action === "read-note") return reply({ content: "Last session is ready" });
+      if (request.action === "note-availability") return reply({ available: true });
+      if (request.domain === "workspace") return reply({});
+      if (request.domain === "git" && request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      throw new Error(`unexpected ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    const welcome = screen.getByRole("region", { name: "Recientes" });
+    expect(await within(welcome).findByRole("button", { name: /today.md.*notes/ })).toBeInTheDocument();
+    const entries = JSON.parse(localStorage.getItem("simpler.recentNotes") ?? "[]");
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ workspacePath: "/tmp/notes", notePath: "today.md" });
+    await user.click(within(welcome).getByRole("button", { name: "Continuar" }));
+    expect(screen.getByTestId("markdown-editor")).toHaveTextContent("Last session is ready");
+    await user.click(screen.getByRole("button", { name: "notes — Abrir o cambiar…" }));
+    await user.click(screen.getByRole("menuitem", { name: "Recientes" }));
+    expect(screen.getByRole("region", { name: "Recientes" })).toBeInTheDocument();
   });
 
   it("edits preferences in a contained Settings dialog and restores focus when closed", async () => {
@@ -521,6 +709,7 @@ describe("App", () => {
     expect(editable).toHaveFocus();
     expect(screen.getByRole("button", { name: "Collapse project" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "draft.md" })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("simpler.recentNotes")!)[0]).toMatchObject({ workspacePath: "/tmp/notes", notePath: "project/draft.md" });
     await user.click(screen.getByRole("button", { name: "New folder" }));
     const folderNameInput = within(screen.getByRole("dialog", { name: "Nombre de la carpeta" })).getByRole("textbox");
     finishSave();
@@ -615,6 +804,8 @@ describe("App", () => {
     trigger.focus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "Abrir carpeta" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Recientes" })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "/tmp/archived" })).toHaveFocus();
     await user.keyboard("{End}");
