@@ -865,6 +865,10 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
         return native_response(request, global_search_payload);
     }
 
+    if request.domain == NativeDomain::Git && request.action == "check-remote" {
+        return native_response(request, check_remote_payload);
+    }
+
     if request.domain == NativeDomain::Git && request.action == "status" {
         return native_response(request, git_status_payload);
     }
@@ -1482,6 +1486,134 @@ fn global_search_payload(payload: serde_json::Value) -> Result<serde_json::Value
     search_markdown_files(&workspace_path, &workspace_path, query, &mut results)?;
     serde_json::to_value(GlobalSearchResults { results })
         .map_err(|_| "failed to serialize search results".to_string())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteCheckResult {
+    state: &'static str,
+    ahead: u64,
+    behind: u64,
+    has_local_changes: bool,
+    message: Option<String>,
+}
+
+fn check_remote_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: GitStatusPayload =
+        serde_json::from_value(payload).map_err(|_| "workspacePath is required".to_string())?;
+    let path = PathBuf::from(payload.workspace_path);
+    ensure_workspace_folder(&path)?;
+    serde_json::to_value(check_remote(&path, &SystemGitCommandRunner)?)
+        .map_err(|_| "failed to serialize remote check".to_string())
+}
+
+/// Fetches remote objects for comparison only. Never stages, commits, integrates or pushes.
+fn check_remote(path: &Path, git: &impl GitCommandRunner) -> Result<RemoteCheckResult, String> {
+    let status = read_git_workspace_status(path, git)?;
+    if !status.is_repository || !status.has_remote {
+        return Err("Remote checking requires a Git-backed Workspace with a remote".into());
+    }
+    let branch_output = git.run(path, &["branch", "--show-current"])?;
+    if !git_command_succeeded(&branch_output) || branch_output.stdout.trim().is_empty() {
+        return Err("Remote checking requires a checked-out branch".into());
+    }
+    let remote_output = git.run(path, &["remote"])?;
+    if !git_command_succeeded(&remote_output) {
+        return Err(git_failure("failed to detect Git remote", &remote_output));
+    }
+    let remote = remote_output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| "Remote checking requires a remote".to_string())?;
+    let branch = branch_output.stdout.trim();
+    let mut result = RemoteCheckResult {
+        state: "up-to-date",
+        ahead: 0,
+        behind: 0,
+        has_local_changes: status.sync_status == SyncStatus::CambiosLocales,
+        message: None,
+    };
+    let advertised = git.run(path, &["ls-remote", "--heads", remote, branch])?;
+    if !git_command_succeeded(&advertised) {
+        return Ok(remote_check_failure(result, &advertised));
+    }
+    if advertised.stdout.trim().is_empty() {
+        return Ok(result);
+    }
+    let fetch = git.run(
+        path,
+        &[
+            "fetch",
+            "--no-tags",
+            "--no-recurse-submodules",
+            remote,
+            branch,
+        ],
+    )?;
+    if !git_command_succeeded(&fetch) {
+        return Ok(remote_check_failure(result, &fetch));
+    }
+    let head = git.run(path, &["rev-parse", "--verify", "HEAD"])?;
+    if !git_command_succeeded(&head) {
+        result.behind = 1;
+        result.state = "incoming";
+        return Ok(result);
+    }
+    let counts = git.run(
+        path,
+        &["rev-list", "--left-right", "--count", "HEAD...FETCH_HEAD"],
+    )?;
+    if !git_command_succeeded(&counts) {
+        return Err(git_failure("failed to compare remote changes", &counts));
+    }
+    let mut values = counts.stdout.split_whitespace();
+    result.ahead = values
+        .next()
+        .and_then(|n| n.parse().ok())
+        .ok_or("invalid remote comparison")?;
+    result.behind = values
+        .next()
+        .and_then(|n| n.parse().ok())
+        .ok_or("invalid remote comparison")?;
+    result.state = if result.behind > 0 && result.ahead > 0 {
+        "diverged"
+    } else if result.behind > 0 {
+        "incoming"
+    } else {
+        "up-to-date"
+    };
+    result.has_local_changes |= result.ahead > 0;
+    Ok(result)
+}
+
+fn remote_check_failure(
+    mut result: RemoteCheckResult,
+    output: &GitCommandOutput,
+) -> RemoteCheckResult {
+    let details = output.stderr.to_lowercase();
+    result.state = if git_command_reports_authentication_failure(output) {
+        "authentication-error"
+    } else if [
+        "could not resolve host",
+        "could not resolve hostname",
+        "network is unreachable",
+        "connection timed out",
+        "connection refused",
+        "failed to connect",
+        "temporary failure in name resolution",
+        "no route to host",
+    ]
+    .iter()
+    .any(|needle| details.contains(needle))
+    {
+        "disconnected"
+    } else {
+        "error"
+    };
+    result.message = Some(network_git_failure("failed to check remote", output));
+    result
 }
 
 fn git_status_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -2702,6 +2834,20 @@ mod commands {
         if request.domain == NativeDomain::Filesystem && request.action == "read-clipboard-text" {
             return handle_read_clipboard_text_command(app, request).await;
         }
+        if request.domain == NativeDomain::Git
+            && (request.action == "check-remote" || request.action == "sync")
+        {
+            let action = request.action.clone();
+            return tauri::async_runtime::spawn_blocking(move || dispatch_native_command(request))
+                .await
+                .unwrap_or_else(|error| NativeCommandResponse {
+                    ok: false,
+                    domain: NativeDomain::Git,
+                    action,
+                    data: None,
+                    error: Some(format!("Git task failed: {error}")),
+                });
+        }
         if request.domain == NativeDomain::Filesystem && request.action == "global-search" {
             return tauri::async_runtime::spawn_blocking(move || dispatch_native_command(request))
                 .await
@@ -3387,6 +3533,72 @@ mod tests {
         .unwrap();
 
         assert_eq!(content, "# Before rename\n");
+    }
+
+    #[test]
+    fn remote_check_detects_incoming_changes_without_changing_notes_or_head() {
+        let (workspace, remote) = test_git_workspace_with_remote("remote_check_incoming");
+        commit_remote_change(&remote, "incoming.md", "# Remote\n");
+        fs::write(workspace.join("README.md"), "# Unsaved locally\n").unwrap();
+        let before = git_stdout(&workspace, &["rev-parse", "HEAD"]);
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Git,
+            action: "check-remote".into(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert!(response.ok, "{:?}", response.error);
+        let data = response.data.unwrap();
+        assert_eq!(data["state"], "incoming");
+        assert_eq!(data["behind"], 1);
+        assert_eq!(data["hasLocalChanges"], true);
+        assert_eq!(git_stdout(&workspace, &["rev-parse", "HEAD"]), before);
+        assert_eq!(
+            fs::read_to_string(workspace.join("README.md")).unwrap(),
+            "# Unsaved locally\n"
+        );
+        assert!(!workspace.join("incoming.md").exists());
+    }
+
+    #[test]
+    fn remote_check_reports_divergence_and_a_clean_remote() {
+        let (workspace, remote) = test_git_workspace_with_remote("remote_check_divergence");
+        let initial = check_remote(&workspace, &SystemGitCommandRunner).unwrap();
+        assert_eq!(initial.state, "up-to-date");
+        assert_eq!(initial.behind, 0);
+        commit_remote_change(&remote, "incoming.md", "# Remote\n");
+        fs::write(workspace.join("local.md"), "# Local\n").unwrap();
+        git_ok(&workspace, &["add", "local.md"]);
+        git_ok(&workspace, &["commit", "-m", "Local only"]);
+        let started = std::time::Instant::now();
+        let result = check_remote(&workspace, &SystemGitCommandRunner).unwrap();
+        eprintln!("local remote check elapsed: {:?}", started.elapsed());
+        assert_eq!(result.state, "diverged");
+        assert_eq!(result.ahead, 1);
+        assert_eq!(result.behind, 1);
+        assert!(result.has_local_changes);
+        assert!(!workspace.join("incoming.md").exists());
+    }
+
+    #[test]
+    fn remote_check_distinguishes_connection_authentication_and_other_failures() {
+        for (stderr, expected) in [
+            ("Could not resolve host: example.test", "disconnected"),
+            ("Permission denied (publickey).", "authentication-error"),
+            ("repository not found", "error"),
+        ] {
+            let runner = StubGitRunner::new(vec![
+                Ok(git_output(Some(0), "true\n", "")),
+                Ok(git_output(Some(0), "origin\n", "")),
+                Ok(git_output(Some(0), "", "")),
+                Ok(git_output(Some(0), "", "")),
+                Ok(git_output(Some(0), "main\n", "")),
+                Ok(git_output(Some(0), "origin\n", "")),
+                Ok(git_output(Some(128), "", stderr)),
+            ]);
+            let result = check_remote(&test_workspace("remote_failures"), &runner).unwrap();
+            assert_eq!(result.state, expected);
+            assert!(result.message.unwrap().contains(stderr));
+        }
     }
 
     #[test]
