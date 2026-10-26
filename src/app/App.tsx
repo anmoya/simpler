@@ -59,6 +59,7 @@ import {
   rememberWorkspaceNote,
   rememberWorkspaceTreeState,
   renameItem,
+  setTreeOrder,
   startGitHubDeviceFlow,
   storeGitHubPersonalAccessToken,
   writeNote,
@@ -130,6 +131,8 @@ export function App() {
   const [editorFontSize, setEditorFontSizeState] = useState<EditorFontSize>(() => readEditorFontSize());
   const [noteHistoryPanel, setNoteHistoryPanel] = useState<NoteHistoryPanelState>(closedNoteHistoryPanel);
   const [editorFocusRequest, setEditorFocusRequest] = useState(0);
+  const [treeOrderPending, setTreeOrderPending] = useState(false);
+  const treeOrderRequestRef = useRef(false);
 
   const updateRecentNotes = (update: (notes: RecentNote[]) => RecentNote[]) => setRecentNotes((notes) => {
     const updated = update(notes);
@@ -1047,6 +1050,29 @@ export function App() {
     }
   };
 
+  const reorderWorkspaceTree = async (parentPath: string, orderedPaths: string[] | null) => {
+    const workspacePath = appStateRef.current.workspace?.path;
+    if (!workspacePath || treeOrderRequestRef.current || ["sincronizando", "conflicto"].includes(appStateRef.current.syncStatus)) return;
+    treeOrderRequestRef.current = true;
+    setTreeOrderPending(true);
+    try {
+      const response = await setTreeOrder(workspacePath, parentPath, orderedPaths);
+      if (appStateRef.current.workspace?.path !== workspacePath) return;
+      if (!response.ok || !response.data) {
+        setAppState((current) => ({ ...current, workspaceError: response.error ?? "No se pudo guardar el orden del árbol" }));
+        return;
+      }
+      setAppState((current) => ({ ...current, workspaceTree: response.data!.tree, workspaceError: null, syncStatus: "cambios-locales" }));
+      schedulerRef.current?.localSave();
+    } catch {
+      setAppState((current) => current.workspace?.path === workspacePath
+        ? { ...current, workspaceError: "No se pudo guardar el orden del árbol" } : current);
+    } finally {
+      treeOrderRequestRef.current = false;
+      setTreeOrderPending(false);
+    }
+  };
+
   const renameSelection = async (target?: TreeActionTarget) => {
     const selectedPath = target?.path ?? appState.activeNotePath ?? appState.activeFolderPath;
 
@@ -1059,6 +1085,7 @@ export function App() {
       return;
     }
 
+    if (!(await awaitLocalSave())) return;
     const response = await renameItem(appState.workspace.path, selectedPath, newName);
     applyFilesystemOperation(response, (itemPath) => relocateCurrentSelection(selectedPath, itemPath));
     if (response.ok && response.data) relocateRecentNotes(appState.workspace.path, selectedPath, response.data.itemPath);
@@ -1075,6 +1102,7 @@ export function App() {
       return;
     }
 
+    if (!(await awaitLocalSave())) return;
     const response = target
       ? await moveItem(appState.workspace.path, selectedPath, targetFolderPath)
       : await moveNote(appState.workspace.path, selectedPath, targetFolderPath);
@@ -1100,6 +1128,7 @@ export function App() {
       return;
     }
 
+    if (!(await awaitLocalSave())) return;
     const wasActiveNote = itemPath === appState.activeNotePath;
     const wasActiveFolder = itemPath === appState.activeFolderPath;
     const response = await moveItem(appState.workspace.path, itemPath, targetFolderPath);
@@ -1131,6 +1160,7 @@ export function App() {
       return;
     }
 
+    if (!(await awaitLocalSave())) return;
     const response = await deleteItem(appState.workspace.path, selectedPath);
     applyFilesystemOperation(response, (itemPath) => {
       const current = appStateRef.current;
@@ -1531,6 +1561,8 @@ export function App() {
       onCreateFolder={createFolderInSelection}
       onCreateNote={createNoteInSelection}
       onRenameSelection={renameSelection}
+      onSetTreeOrder={reorderWorkspaceTree}
+      treeOrderPending={treeOrderPending || appState.syncStatus === "sincronizando" || appState.syncStatus === "conflicto"}
       onMoveActiveNote={moveActiveNote}
       onDeleteSelection={deleteSelection}
       trashEntries={appState.trashEntries}
