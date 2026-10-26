@@ -54,6 +54,7 @@ export interface ClassicShellProps {
   activeNotePath: string | null;
   activeFolderPath: string;
   noteContent: string;
+  editorFocusRequest?: number;
   noteHistoryOpen: boolean;
   noteHistoryEntries: NoteHistoryEntry[];
   selectedNoteHistoryCommitId: string | null;
@@ -136,6 +137,7 @@ export interface ClassicShellProps {
 const releasePageUrl = "https://github.com/anmoya/simpler/releases/latest";
 
 export function ClassicShell({
+  editorFocusRequest,
   activeRoute,
   workspaceTree,
   openFolderPaths,
@@ -1140,6 +1142,7 @@ export function ClassicShell({
                 notePath={activeNotePath}
                 workspacePath={workspacePath}
                 value={noteContent}
+                focusRequest={editorFocusRequest}
                 onChange={onNoteChange}
                 searchJump={currentFileSearchJump}
                 onAttachmentError={onAttachmentError}

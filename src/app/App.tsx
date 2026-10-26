@@ -123,6 +123,7 @@ export function App() {
   const [uiZoom, setUiZoomState] = useState<UiZoom>(() => readUiZoom());
   const [editorFontSize, setEditorFontSizeState] = useState<EditorFontSize>(() => readEditorFontSize());
   const [noteHistoryPanel, setNoteHistoryPanel] = useState<NoteHistoryPanelState>(closedNoteHistoryPanel);
+  const [editorFocusRequest, setEditorFocusRequest] = useState(0);
 
   const requestPrompt = (title: string, defaultValue = "") =>
     new Promise<string | null>((resolve) => setDialog({ kind: "prompt", title, defaultValue, resolve }));
@@ -931,6 +932,18 @@ export function App() {
       noteContent: "",
       editorError: null,
     }));
+    if (response.ok && response.data) {
+      const openFolderPaths = expandPathToNote(
+        appState.openFolderPaths,
+        response.data.itemPath,
+        response.data.tree,
+        appState.treeMode,
+      );
+      setAppState((current) => ({ ...current, openFolderPaths, fileSearchJump: null }));
+      persistWorkspaceTreeState(appState.workspace.path, openFolderPaths, appState.treeMode);
+      void rememberWorkspaceNote(appState.workspace.path, response.data.itemPath).catch(() => undefined);
+      setEditorFocusRequest((request) => request + 1);
+    }
   };
 
   const renameSelection = async () => {
@@ -1357,6 +1370,7 @@ export function App() {
       activeNotePath={appState.activeNotePath}
       activeFolderPath={appState.activeFolderPath}
       noteContent={appState.noteContent}
+      editorFocusRequest={editorFocusRequest}
       noteHistoryOpen={noteHistoryPanel.isOpen}
       noteHistoryEntries={noteHistoryPanel.entries}
       selectedNoteHistoryCommitId={noteHistoryPanel.selectedCommitId}

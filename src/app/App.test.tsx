@@ -120,6 +120,87 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Sincronizar — cambios remotos disponibles" })).not.toBeInTheDocument();
   });
 
+  it("creates a visible note in its collapsed folder and accepts typing immediately without refocusing on Local Save", async () => {
+    const user = userEvent.setup();
+    const writes: string[] = [];
+    let finishSave!: () => void;
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      const folder = { name: "project", path: "project", kind: "folder", children: [] as unknown[] };
+      if (request.domain === "workspace" && request.action === "open") {
+        return reply({ name: "notes", path: "/tmp/notes", tree: [folder], metadata: { lastNotePath: null, githubWizardPostponed: true } });
+      }
+      if (request.domain === "git" && request.action === "status") {
+        return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      }
+      if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
+      if (request.domain === "workspace" && ["remember-note", "remember-tree-state"].includes(request.action)) return reply({});
+      if (request.domain === "filesystem" && request.action === "create-note") {
+        return reply({ itemPath: "project/draft.md", tree: [{ ...folder, children: [{ name: "draft.md", path: "project/draft.md", kind: "note", children: [] }] }] });
+      }
+      if (request.domain === "filesystem" && request.action === "write-note") {
+        writes.push(request.payload.content);
+        return new Promise((resolve) => {
+          finishSave = () => resolve({ ok: true, domain: "filesystem", action: "write-note", data: { content: request.payload.content }, error: null });
+        });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("button", { name: "project" }));
+    // Selection and expansion are separate: the selected destination stays collapsed.
+    expect(screen.getByRole("button", { name: "Expand project" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "New note" }));
+    await user.type(within(screen.getByRole("dialog", { name: "Nombre de la nota" })).getByRole("textbox"), "draft{Enter}");
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    expect(editable).toHaveFocus();
+    await user.keyboard("X");
+    await waitFor(() => expect(writes).toContain("X"));
+    expect(editable).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Collapse project" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "draft.md" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "New folder" }));
+    const folderNameInput = within(screen.getByRole("dialog", { name: "Nombre de la carpeta" })).getByRole("textbox");
+    finishSave();
+    await waitFor(() => expect(folderNameInput).toHaveFocus());
+  });
+
+  it.each(["cancel", "failure"])("keeps the current note and its changes when note creation ends in %s", async (outcome) => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], metadata: { lastNotePath: "today.md", githubWizardPostponed: true } });
+      if (request.domain === "filesystem" && request.action === "read-note") return reply({ content: "Existing words" });
+      if (request.domain === "filesystem" && request.action === "write-note") return reply({ content: request.payload.content });
+      if (request.domain === "workspace" && ["remember-note", "remember-tree-state"].includes(request.action)) return reply({});
+      if (request.domain === "git" && request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
+      if (request.domain === "filesystem" && request.action === "create-note") return Promise.resolve({ ok: false, domain: "filesystem", action: "create-note", data: null, error: "A note with that name already exists" });
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("X");
+    const currentText = editable.textContent;
+    await user.click(screen.getByRole("button", { name: "New note" }));
+    const dialog = screen.getByRole("dialog", { name: "Nombre de la nota" });
+    if (outcome === "cancel") await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    else {
+      await user.type(within(dialog).getByRole("textbox"), "today{Enter}");
+      expect(await screen.findByText("A note with that name already exists")).toBeInTheDocument();
+    }
+    expect(screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]")).toBe(editable);
+    expect(editable.textContent).toBe(currentText);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("keeps Abrir carpeta separate while cloning a GitHub repository opens the cloned Workspace", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "prompt")
