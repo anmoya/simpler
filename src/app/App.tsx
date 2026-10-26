@@ -133,6 +133,7 @@ export function App() {
   const appStateRef = useRef(appState);
   const activeWorkspacePathRef = useRef<string | null>(null);
   const startupRestoredRef = useRef(false);
+  const pendingLocalSaveRef = useRef<Promise<boolean>>(Promise.resolve(true));
   const noteHistoryRequestRef = useRef(0);
   const globalSearchRequestRef = useRef(0);
   const globalSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -565,7 +566,18 @@ export function App() {
     closeGitHubConnectionWizard();
   };
 
+  const awaitLocalSave = async () => {
+    // A newer edit can arrive while a preceding write is finishing.
+    while (true) {
+      const pending = pendingLocalSaveRef.current;
+      const saved = await pending;
+      if (pending !== pendingLocalSaveRef.current) continue;
+      return saved;
+    }
+  };
+
   const openWorkspaceAtPath = async (workspacePath: string) => {
+    if (!(await awaitLocalSave())) return false;
     setAppState((current) => ({ ...current, workspaceError: null }));
     const response = await loadWorkspace(workspacePath);
 
@@ -574,19 +586,11 @@ export function App() {
     if (!response.ok || !openedWorkspace) {
       setAppState((current) => ({
         ...current,
-        workspace: null,
-        workspaceTree: [],
-        syncStatus: "desconectado",
-        conflictedFiles: [],
-        githubRemote: null,
-        advancedGit: null,
-        syncEvents: [],
-        editorError: null,
         workspaceError: response.error ?? "No se pudo abrir el Workspace",
       }));
-      activeWorkspacePathRef.current = null;
-      return;
+      return false;
     }
+    if (!(await awaitLocalSave())) return false;
 
     const recentWorkspaces = saveRecentWorkspace({
       name: openedWorkspace.name,
@@ -646,6 +650,7 @@ export function App() {
     ) {
       openGitHubConnectionWizard();
     }
+    return true;
   };
 
   useEffect(() => {
@@ -821,32 +826,39 @@ export function App() {
     setAppState((current) => ({ ...current, attachmentError: message }));
   };
 
-  const changeNoteContent = async (content: string) => {
+  const changeNoteContent = (content: string): Promise<boolean> => {
     const workspace = appState.workspace;
     const activeNotePath = appState.activeNotePath;
-
-    if (!workspace || !activeNotePath) {
-      return false;
-    }
-
+    if (!workspace || !activeNotePath) return Promise.resolve(false);
     setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
 
-    const response = await writeNote(workspace.path, activeNotePath, content);
-
-    if (!response.ok) {
-      setAppState((current) => ({
-        ...current,
-        workspaceError: response.error ?? "No se pudo guardar la nota",
-      }));
-      return false;
-    }
-
-    setAppState((current) => ({
-      ...current,
-      syncStatus: current.syncStatus === "sincronizado" ? "cambios-locales" : current.syncStatus,
-    }));
-    schedulerRef.current?.localSave();
-    return true;
+    // Serialize writes so a slow older save cannot overwrite a later edit.
+    const save = pendingLocalSaveRef.current.then(async () => {
+      try {
+        const response = await writeNote(workspace.path, activeNotePath, content);
+        if (!response.ok) {
+          if (activeWorkspacePathRef.current === workspace.path) {
+            setAppState((current) => ({ ...current, workspaceError: response.error ?? "No se pudo guardar la nota" }));
+          }
+          return false;
+        }
+        if (activeWorkspacePathRef.current === workspace.path) {
+          setAppState((current) => ({
+            ...current,
+            syncStatus: current.syncStatus === "sincronizado" ? "cambios-locales" : current.syncStatus,
+          }));
+          schedulerRef.current?.localSave();
+        }
+        return true;
+      } catch {
+        if (activeWorkspacePathRef.current === workspace.path) {
+          setAppState((current) => ({ ...current, workspaceError: "No se pudo guardar la nota" }));
+        }
+        return false;
+      }
+    });
+    pendingLocalSaveRef.current = save;
+    return save;
   };
 
   const closeNoteHistory = () => {

@@ -1379,3 +1379,7 @@ button {
 .remote-sync-control--incoming { font-weight: 700; border-color: var(--color-accent); background: var(--color-active); color: var(--color-text); }
 .remote-sync-control:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .remote-sync-control:disabled { cursor: default; opacity: .7; }
+
+.workspace-trigger__action { color: var(--color-accent); font-size: var(--font-size-meta); font-weight: 600; }
+.workspace-menu { max-height: calc(100vh - 130px); overflow-y: auto; }
+.workspace-menu .workspace-clone-link { width: 100%; border-top-color: var(--color-border-subtle); }

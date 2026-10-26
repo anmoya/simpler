@@ -233,6 +233,11 @@ export function ClassicShell({
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCommandHelpOpen, setIsCommandHelpOpen] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
+  const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const closeWorkspaceMenu = () => {
+    setIsWorkspaceMenuOpen(false);
+    workspaceTriggerRef.current?.focus();
+  };
   const [fileSearchQuery, setFileSearchQuery] = useState("");
   const [activeFileMatchIndex, setActiveFileMatchIndex] = useState(0);
   const [isFileSearchOpen, setIsFileSearchOpen] = useState(false);
@@ -804,13 +809,22 @@ export function ClassicShell({
                 <button
                   type="button"
                   className="workspace-trigger"
+                  ref={workspaceTriggerRef}
+                  aria-label={workspaceName === "Abrir carpeta" ? "Abrir carpeta" : `${workspaceName} — Abrir o cambiar…`}
                   aria-haspopup="menu"
                   aria-expanded={isWorkspaceMenuOpen}
-                  onClick={() => setIsWorkspaceMenuOpen((current) => !current)}
+                  onClick={() => isWorkspaceMenuOpen ? closeWorkspaceMenu() : setIsWorkspaceMenuOpen(true)}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      event.preventDefault();
+                      setIsWorkspaceMenuOpen(true);
+                    }
+                  }}
                 >
                   <span className="workspace-trigger__text">
                     <strong>{workspaceName}</strong>
-                    {workspacePath ? <small>{workspacePath}</small> : null}
+                    {workspacePath ? <small title={workspacePath}>{workspacePath}</small> : null}
+                    <span className="workspace-trigger__action">Abrir o cambiar…</span>
                   </span>
                   <Icon name="chevron-down" />
                 </button>
@@ -818,22 +832,22 @@ export function ClassicShell({
                   <WorkspaceMenu
                     recentWorkspaces={recentWorkspaces}
                     onSelectRecent={(workspacePath) => {
+                      closeWorkspaceMenu();
                       onOpenRecentWorkspace(workspacePath);
-                      setIsWorkspaceMenuOpen(false);
                     }}
                     onOpenWorkspace={() => {
+                      closeWorkspaceMenu();
                       onOpenWorkspace();
-                      setIsWorkspaceMenuOpen(false);
                     }}
-                    onClose={() => setIsWorkspaceMenuOpen(false)}
+                    onClone={() => {
+                      closeWorkspaceMenu();
+                      onCloneGitHubRepository();
+                    }}
+                    onClose={closeWorkspaceMenu}
                   />
                 ) : null}
               </div>
               <div className="sidebar__header-actions">
-                <button type="button" className="workspace-clone-link" onClick={onCloneGitHubRepository}>
-                  <Icon name="git-branch" />
-                  Clonar desde GitHub
-                </button>
                 <div className="sidebar-tabs" role="tablist" aria-label="Sidebar panels">
                   <button
                     type="button"
@@ -1454,44 +1468,54 @@ function GitHubAuthenticationPanel({
   );
 }
 
-function WorkspaceMenu({
-  recentWorkspaces,
-  onSelectRecent,
-  onOpenWorkspace,
-  onClose,
-}: {
+function WorkspaceMenu({ recentWorkspaces, onSelectRecent, onOpenWorkspace, onClone, onClose }: {
   recentWorkspaces: Array<{ name: string; path: string }>;
   onSelectRecent: (workspacePath: string) => void;
   onOpenWorkspace: () => void;
+  onClone: () => void;
   onClose: () => void;
 }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus(); }, []);
   return (
-    <div className="command-popover workspace-menu" role="menu" aria-label="Workspace menu">
+    <div ref={menuRef} className="command-popover workspace-menu" role="menu" aria-label="Workspace menu"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" || event.key === "Tab") {
+          if (event.key === "Escape") event.preventDefault();
+          event.stopPropagation();
+          onClose();
+          return;
+        }
+        const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+        const index = items.indexOf(document.activeElement as HTMLElement);
+        let next: number;
+        if (event.key === "ArrowDown") next = (index + 1) % items.length;
+        else if (event.key === "ArrowUp") next = (index - 1 + items.length) % items.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = items.length - 1;
+        else return;
+        event.preventDefault();
+        items[next]?.focus();
+      }}>
       <div className="command-popover__header">
         <h2>Workspaces</h2>
-        <button type="button" aria-label="Close Workspace menu" onClick={onClose}>
-          <Icon name="close" />
-        </button>
+        <button type="button" aria-label="Close Workspace menu" onClick={onClose}><Icon name="close" /></button>
       </div>
+      <button type="button" role="menuitem" className="workspace-menu__open" onClick={onOpenWorkspace}>
+        <Icon name="folder" />Abrir carpeta
+      </button>
       {recentWorkspaces.length > 0 ? (
         <div className="recent-workspaces" aria-label="Recent Workspaces">
           {recentWorkspaces.map((workspace) => (
-            <button
-              key={workspace.path}
-              type="button"
-              aria-label={workspace.path}
-              title={workspace.path}
-              onClick={() => onSelectRecent(workspace.path)}
-            >
-              <span>{workspace.name}</span>
-              <small>{workspace.path}</small>
+            <button key={workspace.path} type="button" role="menuitem" aria-label={workspace.path}
+              title={workspace.path} onClick={() => onSelectRecent(workspace.path)}>
+              <span>{workspace.name}</span><small>{workspace.path}</small>
             </button>
           ))}
         </div>
       ) : null}
-      <button type="button" className="workspace-menu__open" onClick={onOpenWorkspace}>
-        <Icon name="folder" />
-        Abrir otra carpeta...
+      <button type="button" role="menuitem" className="workspace-clone-link" onClick={onClone}>
+        <Icon name="git-branch" />Clonar desde GitHub
       </button>
     </div>
   );
