@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 mod image_preview;
+mod tree_order;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -285,6 +287,8 @@ impl Default for TreeMode {
 #[serde(rename_all = "camelCase")]
 struct SharedWorkspaceMetadata {
     schema_version: u8,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    manual_tree_order: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -799,6 +803,9 @@ enum WorkspaceTreeItemKind {
 }
 
 pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandResponse {
+    if request.domain == NativeDomain::Workspace && request.action == "set-tree-order" {
+        return native_response(request, tree_order::set_order_payload);
+    }
     if request.domain == NativeDomain::Workspace && request.action == "open" {
         return native_response(request, open_workspace_payload);
     }
@@ -1218,7 +1225,15 @@ fn rename_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
     let item_path = resolve_workspace_path(&workspace_path, &payload.item_path)?;
     let metadata =
         fs::metadata(&item_path).map_err(|error| format!("failed to read item: {error}"))?;
-    let new_name = if metadata.is_file() {
+    let new_name = if metadata.is_file() && image_preview::is_image(&item_path) {
+        let name = sanitize_child_name(&payload.new_name)?;
+        let extension = item_path.extension().and_then(|value| value.to_str()).unwrap_or_default();
+        match Path::new(&name).extension().and_then(|value| value.to_str()) {
+            None => format!("{name}.{extension}"),
+            Some(target_extension) if target_extension.eq_ignore_ascii_case(extension) => name,
+            _ => return Err(format!("image rename must preserve the .{extension} extension")),
+        }
+    } else if metadata.is_file() {
         normalize_note_name(&payload.new_name)?
     } else if metadata.is_dir() {
         sanitize_child_name(&payload.new_name)?
@@ -1263,7 +1278,8 @@ fn relocate_local_session_paths(
             *path = relocated;
         }
     }
-    write_local_workspace_metadata(workspace_path, &metadata)
+    write_local_workspace_metadata(workspace_path, &metadata)?;
+    tree_order::relocate(workspace_path, old_path, new_path)
 }
 
 fn move_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -2504,7 +2520,7 @@ fn ensure_workspace_metadata(workspace_path: &Path) -> Result<(), String> {
 
     let shared_metadata_path = metadata_path.join("workspace.json");
     if !shared_metadata_path.exists() {
-        let shared_metadata = SharedWorkspaceMetadata { schema_version: 1 };
+        let shared_metadata = SharedWorkspaceMetadata { schema_version: 1, manual_tree_order: BTreeMap::new() };
         write_json_file(&shared_metadata_path, &shared_metadata)?;
     }
 
@@ -2689,6 +2705,15 @@ fn read_workspace_tree(
     root_path: &Path,
     current_path: &Path,
 ) -> Result<Vec<WorkspaceTreeItem>, String> {
+    let mut tree = scan_workspace_tree(root_path, current_path)?;
+    tree_order::apply(root_path, &mut tree)?;
+    Ok(tree)
+}
+
+fn scan_workspace_tree(
+    root_path: &Path,
+    current_path: &Path,
+) -> Result<Vec<WorkspaceTreeItem>, String> {
     let mut items = Vec::new();
     let entries = fs::read_dir(current_path)
         .map_err(|error| format!("failed to read workspace tree: {error}"))?;
@@ -2714,7 +2739,7 @@ fn read_workspace_tree(
                 name: name.to_string(),
                 path: relative_workspace_path(root_path, &path),
                 kind: WorkspaceTreeItemKind::Folder,
-                children: read_workspace_tree(root_path, &path)?,
+                children: scan_workspace_tree(root_path, &path)?,
             });
         } else if metadata.is_file() && (is_markdown_note(&path) || image_preview::is_image(&path))
         {
@@ -4475,6 +4500,162 @@ mod tests {
             reopened_response.data.unwrap()["metadata"]["lastNotePath"],
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn manual_tree_order_mixes_sibling_kinds_and_persists_across_reopen() {
+        let workspace = test_workspace("manual_tree_order");
+        fs::create_dir(workspace.join("folder")).unwrap();
+        fs::write(workspace.join("a.md"), "A").unwrap();
+        fs::write(workspace.join("z.png"), "image").unwrap();
+        let ordered = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "set-tree-order".into(),
+            payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "orderedPaths": ["z.png", "a.md", "folder"] }),
+        });
+        assert!(ordered.ok, "{:?}", ordered.error);
+        let reopened = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace, action: "open".into(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        let data = reopened.data.unwrap();
+        let names: Vec<_> = data["tree"].as_array().unwrap().iter().map(|item| item["path"].as_str().unwrap()).collect();
+        assert_eq!(names, ["z.png", "a.md", "folder"]);
+        assert_eq!(fs::read_to_string(workspace.join("a.md")).unwrap(), "A");
+    }
+
+    #[test]
+    fn manual_tree_order_preserves_app_renames_and_appends_new_and_restored_entries() {
+        let workspace = test_workspace("manual_order_lifecycle");
+        fs::write(workspace.join("a.md"), "A").unwrap();
+        fs::write(workspace.join("b.md"), "B").unwrap();
+        let command = |domain, action: &str, payload| dispatch_native_command(NativeCommandRequest { domain, action: action.into(), payload });
+        assert!(command(NativeDomain::Workspace, "set-tree-order", serde_json::json!({ "workspacePath": workspace, "parentPath": "", "orderedPaths": ["b.md", "a.md"] })).ok);
+        let renamed = command(NativeDomain::Filesystem, "rename-item", serde_json::json!({ "workspacePath": workspace, "itemPath": "b.md", "newName": "z" }));
+        assert!(renamed.ok, "{:?}", renamed.error);
+        assert_eq!(renamed.data.unwrap()["tree"][0]["path"], "z.md");
+        let created = command(NativeDomain::Filesystem, "create-note", serde_json::json!({ "workspacePath": workspace, "parentPath": "", "noteName": "0" }));
+        assert!(created.ok);
+        assert_eq!(created.data.unwrap()["tree"][2]["path"], "0.md");
+        assert!(command(NativeDomain::Filesystem, "delete-item", serde_json::json!({ "workspacePath": workspace, "itemPath": "z.md" })).ok);
+        let trash = command(NativeDomain::Filesystem, "list-trash", serde_json::json!({ "workspacePath": workspace }));
+        let id = trash.data.unwrap()["entries"][0]["id"].clone();
+        let restored = command(NativeDomain::Filesystem, "restore-trash-item", serde_json::json!({ "workspacePath": workspace, "id": id }));
+        assert!(restored.ok);
+        assert_eq!(restored.data.unwrap()["tree"][2]["path"], "z.md");
+    }
+
+    #[test]
+    fn manual_tree_order_reconciles_external_entries_in_observation_order_and_resets_one_folder() {
+        let workspace = test_workspace("manual_order_external");
+        fs::create_dir(workspace.join("folder")).unwrap();
+        for path in ["a.md", "b.md", "folder/a.md", "folder/b.md"] { fs::write(workspace.join(path), path).unwrap(); }
+        let command = |action: &str, payload| dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: action.into(), payload });
+        assert!(command("set-tree-order", serde_json::json!({ "workspacePath": workspace, "parentPath": "", "orderedPaths": ["b.md", "folder", "a.md"] })).ok);
+        assert!(command("set-tree-order", serde_json::json!({ "workspacePath": workspace, "parentPath": "folder", "orderedPaths": ["folder/b.md", "folder/a.md"] })).ok);
+        fs::write(workspace.join("z.md"), "Z").unwrap();
+        let opened = command("open", serde_json::json!({ "workspacePath": workspace }));
+        assert_eq!(opened.data.unwrap()["tree"][3]["path"], "z.md");
+        fs::write(workspace.join("0.md"), "0").unwrap();
+        fs::rename(workspace.join("b.md"), workspace.join("renamed-externally.md")).unwrap();
+        let opened = command("open", serde_json::json!({ "workspacePath": workspace }));
+        let data = opened.data.unwrap();
+        let names: Vec<_> = data["tree"].as_array().unwrap().iter().map(|item| item["path"].as_str().unwrap()).collect();
+        assert_eq!(names, ["folder", "a.md", "z.md", "0.md", "renamed-externally.md"]);
+        let reset = command("set-tree-order", serde_json::json!({ "workspacePath": workspace, "parentPath": "", "orderedPaths": null }));
+        assert!(reset.ok);
+        let reset_data = reset.data.unwrap();
+        assert_eq!(reset_data["tree"][0]["children"][0]["path"], "folder/b.md");
+        assert_eq!(reset_data["tree"][1]["path"], "0.md");
+    }
+
+    #[test]
+    fn manual_tree_order_rejects_invalid_sequences_and_preserves_saved_order_on_write_error() {
+        let workspace = test_workspace("manual_order_errors");
+        fs::write(workspace.join("a.md"), "A").unwrap();
+        fs::write(workspace.join("b.md"), "B").unwrap();
+        for paths in [serde_json::json!(["a.md"]), serde_json::json!(["a.md", "a.md"]), serde_json::json!(["../outside.md", "b.md"])] {
+            let response = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "set-tree-order".into(), payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "orderedPaths": paths }) });
+            assert!(!response.ok);
+        }
+        fs::create_dir(workspace.join(".simpler/local/tree-order.pending.json")).unwrap();
+        let response = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "set-tree-order".into(), payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "orderedPaths": ["b.md", "a.md"] }) });
+        assert!(!response.ok);
+        let opened = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "open".into(), payload: serde_json::json!({ "workspacePath": workspace }) });
+        assert_eq!(opened.data.unwrap()["tree"][0]["path"], "a.md");
+    }
+
+    #[test]
+    fn manual_tree_order_travels_through_sync_between_two_local_copies() {
+        let (workspace, remote) = test_git_workspace_with_remote("manual_order_sync");
+        fs::write(workspace.join("a.md"), "A").unwrap();
+        fs::write(workspace.join("z.png"), "image").unwrap();
+        let ordered = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "set-tree-order".into(), payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "orderedPaths": ["z.png", "a.md", "README.md"] }) });
+        assert!(ordered.ok, "{:?}", ordered.error);
+        let synced = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Git, action: "sync".into(), payload: serde_json::json!({ "workspacePath": workspace }) });
+        assert!(synced.ok, "{:?}", synced.error);
+        let second = workspace.parent().unwrap().join("second");
+        git_ok(workspace.parent().unwrap(), &["clone", remote.to_str().unwrap(), "second"]);
+        configure_git_identity(&second);
+        let opened = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "open".into(), payload: serde_json::json!({ "workspacePath": second }) });
+        assert_eq!(opened.data.unwrap()["tree"][0]["path"], "z.png");
+        assert!(!second.join(".simpler/local/tree-order.pending.json").exists());
+    }
+
+    #[test]
+    fn image_rename_preserves_its_real_extension_and_manual_position() {
+        let workspace = test_workspace("image_rename_order");
+        fs::write(workspace.join("a.md"), "A").unwrap();
+        fs::write(workspace.join("photo.png"), "image").unwrap();
+        assert!(dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "set-tree-order".into(), payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "orderedPaths": ["photo.png", "a.md"] }) }).ok);
+        let renamed = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Filesystem, action: "rename-item".into(), payload: serde_json::json!({ "workspacePath": workspace, "itemPath": "photo.png", "newName": "diagram" }) });
+        assert!(renamed.ok, "{:?}", renamed.error);
+        assert_eq!(renamed.data.unwrap()["tree"][0]["path"], "diagram.png");
+        assert!(!workspace.join("diagram.md").exists());
+    }
+
+    #[test]
+    fn manual_tree_order_follows_parent_folder_renames_and_moves() {
+        let workspace = test_workspace("manual_order_parent");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::create_dir_all(workspace.join("archive")).unwrap();
+        for name in ["a.md", "b.md"] { fs::write(workspace.join("daily").join(name), name).unwrap(); }
+        assert!(dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "set-tree-order".into(), payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "daily", "orderedPaths": ["daily/b.md", "daily/a.md"] }) }).ok);
+        let renamed = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Filesystem, action: "rename-item".into(), payload: serde_json::json!({ "workspacePath": workspace, "itemPath": "daily", "newName": "journal" }) });
+        assert!(renamed.ok);
+        let moved = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Filesystem, action: "move-item".into(), payload: serde_json::json!({ "workspacePath": workspace, "itemPath": "journal", "targetFolderPath": "archive" }) });
+        assert!(moved.ok);
+        let opened = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "open".into(), payload: serde_json::json!({ "workspacePath": workspace }) });
+        assert_eq!(opened.data.unwrap()["tree"][0]["children"][0]["children"][0]["path"], "archive/journal/b.md");
+    }
+
+    #[test]
+    fn manual_tree_order_preserves_concurrent_updates_to_different_folders() {
+        let workspace = test_workspace("manual_order_concurrent");
+        for folder in ["one", "two"] {
+            fs::create_dir(workspace.join(folder)).unwrap();
+            for name in ["a.md", "b.md"] { fs::write(workspace.join(folder).join(name), name).unwrap(); }
+        }
+        assert!(dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "open".into(), payload: serde_json::json!({ "workspacePath": workspace }) }).ok);
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = ["one", "two"].into_iter().map(|folder| {
+                let workspace = &workspace;
+                let start = &start;
+                scope.spawn(move || {
+                    for _ in 0..8 {
+                        start.wait();
+                        let response = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "set-tree-order".into(), payload: serde_json::json!({ "workspacePath": workspace, "parentPath": folder, "orderedPaths": [format!("{folder}/b.md"), format!("{folder}/a.md")] }) });
+                        assert!(response.ok, "{:?}", response.error);
+                    }
+                })
+            }).collect();
+            for handle in handles { handle.join().unwrap(); }
+        });
+        let opened = dispatch_native_command(NativeCommandRequest { domain: NativeDomain::Workspace, action: "open".into(), payload: serde_json::json!({ "workspacePath": workspace }) });
+        let data = opened.data.unwrap();
+        assert_eq!(data["tree"][0]["children"][0]["path"], "one/b.md");
+        assert_eq!(data["tree"][1]["children"][0]["path"], "two/b.md");
     }
 
     #[test]
