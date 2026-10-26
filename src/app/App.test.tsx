@@ -59,6 +59,106 @@ describe("App", () => {
     vi.restoreAllMocks();
   });
 
+  it("previews a relative Markdown image from the keyboard and preserves the editing selection", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValueOnce("/tmp/notes").mockResolvedValueOnce("/tmp/other");
+    const original = "![Photo](<../assets/a b.png>)\n\nDraft";
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const result = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return result({ name: "notes", path: request.payload.workspacePath, tree: [
+        { name: "draft.md", path: "projects/nested/draft.md", kind: "note", children: [] },
+      ], metadata: { lastNotePath: "projects/nested/draft.md", githubWizardPostponed: true } });
+      if (request.action === "status") return result({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return result({ remote: null });
+      if (request.action === "read-note") return result({ content: original });
+      if (request.action === "preview-image") return result({ name: "a b.png", sizeBytes: 80, width: 1, height: 1, dataUrl: "data:image/png;base64,eA==" });
+      if (request.action === "write-note") return result({ content: request.payload.content });
+      return result({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editor = screen.getByTestId("markdown-editor");
+    const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("{Control>}{Home}{/Control}");
+    expect(screen.getByRole("button", { name: "Previsualizar imagen (Alt+Enter)" })).toBeInTheDocument();
+    await user.keyboard("{ArrowRight}{ArrowRight}{Alt>}{Enter}{/Alt}");
+    const preview = await screen.findByRole("dialog", { name: "Vista previa de imagen" });
+    expect(await within(preview).findByRole("img", { name: "a b.png" })).toBeInTheDocument();
+    expect(mocks.invoke).toHaveBeenCalledWith("native_command", { request: { domain: "filesystem", action: "preview-image", payload: { workspacePath: "/tmp/notes", imagePath: "projects/assets/a b.png" } } });
+    expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "write-note")).toBe(false);
+    await user.keyboard("{Escape}");
+    expect(editable).toHaveFocus();
+    await user.keyboard("X");
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("native_command", { request: { domain: "filesystem", action: "write-note", payload: { workspacePath: "/tmp/notes", notePath: "projects/nested/draft.md", content: "![XPhoto](<../assets/a b.png>)\n\nDraft" } } }));
+    await user.keyboard("{Alt>}{Enter}{/Alt}");
+    await screen.findByRole("dialog", { name: "Vista previa de imagen" });
+    await user.keyboard("{Control>}o{/Control}");
+    await screen.findByText("/tmp/other");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Vista previa de imagen" })).not.toBeInTheDocument());
+    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "preview-image").every(([, { request }]) => request.payload.workspacePath === "/tmp/notes")).toBe(true);
+  });
+
+  it("previews a named Markdown image reference through the visible action", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    const original = "![Photo][picture]\n\n[picture]: assets/a%20b.png \"Example\"";
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const result = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return result({ name: "notes", path: "/tmp/notes", tree: [{ name: "draft.md", path: "draft.md", kind: "note", children: [] }], metadata: { lastNotePath: "draft.md", githubWizardPostponed: true } });
+      if (request.action === "status") return result({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return result({ remote: null });
+      if (request.action === "read-note") return result({ content: original });
+      if (request.action === "preview-image") return result({ name: "a b.png", sizeBytes: 80, width: 1, height: 1, dataUrl: "data:image/png;base64,eA==" });
+      return result({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("{Control>}{Home}{/Control}{Shift>}{Tab}{/Shift}");
+    const action = screen.getByRole("button", { name: "Previsualizar imagen (Alt+Enter)" });
+    expect(action).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("dialog", { name: "Vista previa de imagen" })).toBeInTheDocument();
+    expect(mocks.invoke).toHaveBeenCalledWith("native_command", { request: { domain: "filesystem", action: "preview-image", payload: { workspacePath: "/tmp/notes", imagePath: "assets/a b.png" } } });
+  });
+
+  it.each([
+    ["![Photo](https://example.com/a.png)", "Solo se previsualizan imágenes locales"],
+    ["![Photo](file:///tmp/a.png)", "Solo se previsualizan imágenes locales"],
+    ["![Photo](../outside.png)", "La imagen debe estar dentro del Workspace"],
+    ["![Photo](assets/a%zz.png)", "La ruta de la imagen no es válida"],
+    ["![Photo](assets/missing.png)", "Imagen no disponible"],
+  ])("reports an unavailable Markdown image without fetching or changing the note: %s", async (content, message) => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const result = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return result({ name: "notes", path: "/tmp/notes", tree: [{ name: "draft.md", path: "draft.md", kind: "note", children: [] }], metadata: { lastNotePath: "draft.md", githubWizardPostponed: true } });
+      if (request.action === "status") return result({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return result({ remote: null });
+      if (request.action === "read-note") return result({ content });
+      if (request.action === "preview-image") return Promise.resolve({ ok: false, domain: "filesystem", action: "preview-image", data: null, error: "Imagen no disponible" });
+      return result({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("{Control>}{Home}{/Control}");
+    const originalText = editable.textContent;
+    await user.click(screen.getByRole("button", { name: "Previsualizar imagen (Alt+Enter)" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(editable.textContent).toBe(originalText);
+    const nativePreviews = mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "preview-image");
+    expect(nativePreviews).toHaveLength(content.includes("missing.png") ? 1 : 0);
+    expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "write-note")).toBe(false);
+  });
+
   it.each(["Renombrar", "Mover", "Eliminar"])("uses the clicked tree item for %s while keeping the active note and its edits", async (action) => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue("/tmp/notes");

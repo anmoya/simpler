@@ -232,8 +232,12 @@ export function ClassicShell({
   updateNotice,
   onInstallAndRestart,
 }: ClassicShellProps) {
-  const [imagePreviewPath, setImagePreviewPath] = useState<string | null>(null);
-  useEffect(() => { setImagePreviewPath(null); }, [workspacePath]);
+  const [imagePreview, setImagePreview] = useState<{ workspacePath: string; imagePath: string } | null>(null);
+  const imagePreviewPath = imagePreview?.workspacePath === workspacePath ? imagePreview.imagePath : null;
+  const setImagePreviewPath = (imagePath: string | null) => {
+    setImagePreview(imagePath && workspacePath ? { workspacePath, imagePath } : null);
+  };
+  useEffect(() => { setImagePreview(null); }, [workspacePath]);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCommandHelpOpen, setIsCommandHelpOpen] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
@@ -1151,6 +1155,7 @@ export function ClassicShell({
                 onChange={onNoteChange}
                 searchJump={currentFileSearchJump}
                 onAttachmentError={onAttachmentError}
+                onPreviewImage={setImagePreviewPath}
                 fontSize={editorFontSize}
               />
             </>
