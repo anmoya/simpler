@@ -1150,6 +1150,7 @@ export function ClassicShell({
                 onChange={onNoteChange}
                 searchJump={currentFileSearchJump}
                 onAttachmentError={onAttachmentError}
+                onPreviewImage={setImagePreviewPath}
                 fontSize={editorFontSize}
               />
             </>
