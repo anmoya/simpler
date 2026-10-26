@@ -1,3 +1,4 @@
+import { readRecentNotes, readShowWelcome, recentNoteKey, saveRecentNotes, saveShowWelcome, type RecentNote } from "./recentNotes";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ClassicShell, type TreeActionTarget } from "../components/ClassicShell";
 import { isGitHubRepositoryUrl } from "../components/GitHubConnectionWizard";
@@ -54,6 +55,7 @@ import {
   openWorkspace,
   postponeGitHubWizard,
   readNote,
+  noteAvailability,
   rememberWorkspaceNote,
   rememberWorkspaceTreeState,
   renameItem,
@@ -113,6 +115,10 @@ export function App() {
     themeMode: readThemeMode(),
     sidebarCollapsed: readSidebarCollapsed(),
   }));
+  const [recentNotes, setRecentNotes] = useState(readRecentNotes);
+  const [showWelcome, setShowWelcome] = useState(readShowWelcome);
+  const [isWelcomeOpen, setIsWelcomeOpen] = useState(readShowWelcome);
+  const navigationRequestRef = useRef(0);
   const [remoteCheckEnabled, setRemoteCheckEnabled] = useState(false);
   const [remoteAwareness, setRemoteAwareness] = useState<RemoteAwareness>({ checking: false, result: null, lastSuccessfulCheck: null });
   const remoteCheckRef = useRef<{ path: string; promise: Promise<void> } | null>(null);
@@ -127,6 +133,43 @@ export function App() {
   const [editorFocusRequest, setEditorFocusRequest] = useState(0);
   const [treeOrderPending, setTreeOrderPending] = useState(false);
   const treeOrderRequestRef = useRef(false);
+
+  const updateRecentNotes = (update: (notes: RecentNote[]) => RecentNote[]) => setRecentNotes((notes) => {
+    const updated = update(notes);
+    saveRecentNotes(updated);
+    return updated;
+  });
+  const recordRecentNote = (workspacePath: string, notePath: string) => {
+    const entry: RecentNote = { workspacePath, workspaceName: workspacePath.split(/[\\/]/).filter(Boolean).at(-1) ?? workspacePath,
+      notePath, openedAt: new Date().toISOString(), available: true };
+    updateRecentNotes((notes) => [entry, ...notes.filter((note) => recentNoteKey(note) !== recentNoteKey(entry))].slice(0, 7));
+  };
+  const relocateRecentNotes = (workspacePath: string, oldPath: string, newPath: string) => {
+    updateRecentNotes((notes) => {
+      const relocated = notes.map((note) => note.workspacePath !== workspacePath ? note : {
+        ...note, notePath: note.notePath === oldPath ? newPath : note.notePath.startsWith(`${oldPath}/`) ? `${newPath}${note.notePath.slice(oldPath.length)}` : note.notePath,
+      });
+      const seen = new Set<string>();
+      return relocated.filter((note) => { const key = recentNoteKey(note); if (seen.has(key)) return false; seen.add(key); return true; });
+    });
+  };
+  const recentIdentities = JSON.stringify(recentNotes.map((note) => [recentNoteKey(note), note.openedAt]));
+  useEffect(() => {
+    let current = true;
+    for (const note of recentNotes) {
+      void Promise.resolve().then(() => noteAvailability(note.workspacePath, note.notePath)).then((response) => {
+        if (!current || !response?.ok || !response.data) return;
+        const available = response.data.available;
+        setRecentNotes((notes) => {
+          if (!notes.some((entry) => recentNoteKey(entry) === recentNoteKey(note) && entry.available !== available)) return notes;
+          const updated = notes.map((entry) => recentNoteKey(entry) === recentNoteKey(note) ? { ...entry, available } : entry);
+          saveRecentNotes(updated);
+          return updated;
+        });
+      }).catch(() => undefined);
+    }
+    return () => { current = false; };
+  }, [recentIdentities, isWelcomeOpen]);
 
   const requestPrompt = (title: string, defaultValue = "") =>
     new Promise<string | null>((resolve) => setDialog({ kind: "prompt", title, defaultValue, resolve }));
@@ -582,11 +625,12 @@ export function App() {
     }
   };
 
-  const openWorkspaceAtPath = async (workspacePath: string) => {
-    if (!(await awaitLocalSave())) return false;
+  const openWorkspaceAtPath = async (workspacePath: string, requestedNotePath?: string, navigationId = ++navigationRequestRef.current) => {
+    if (!(await awaitLocalSave()) || navigationId !== navigationRequestRef.current) return false;
     setAppState((current) => ({ ...current, workspaceError: null }));
     const response = await loadWorkspace(workspacePath);
 
+    if (navigationId !== navigationRequestRef.current) return false;
     const openedWorkspace = response.data;
 
     if (!response.ok || !openedWorkspace) {
@@ -596,7 +640,7 @@ export function App() {
       }));
       return false;
     }
-    if (!(await awaitLocalSave())) return false;
+    if (!(await awaitLocalSave()) || navigationId !== navigationRequestRef.current) return false;
 
     const recentWorkspaces = saveRecentWorkspace({
       name: openedWorkspace.name,
@@ -633,19 +677,23 @@ export function App() {
     setRemoteCheckEnabled(false);
     setRemoteAwareness({ checking: false, result: null, lastSuccessfulCheck: null });
 
-    if (openedWorkspace.metadata.lastNotePath) {
-      await openNoteInWorkspace(openedWorkspace.path, openedWorkspace.metadata.lastNotePath, null, true, true, {
+    const noteToOpen = requestedNotePath ?? openedWorkspace.metadata.lastNotePath;
+    if (noteToOpen) {
+      const noteOpened = await openNoteInWorkspace(openedWorkspace.path, noteToOpen, null, true, true, {
         workspaceTree: openedWorkspace.tree,
         openFolderPaths: restoredOpenFolderPaths,
         treeMode: restoredTreeMode,
-      });
+      }, navigationId);
+      if (requestedNotePath && !noteOpened) return false;
     }
+    if (navigationId !== navigationRequestRef.current) return false;
 
     const [openedSyncStatus] = await Promise.all([
       refreshGitStatus(openedWorkspace.path),
       refreshGitHubRemote(openedWorkspace.path),
       refreshAdvancedGitStatus(openedWorkspace.path),
     ]);
+    if (navigationId !== navigationRequestRef.current) return false;
     schedulerRef.current?.workspaceOpened(openedSyncStatus === "cambios-locales");
 
     // syncStatus sin-git/sin-remoto already implies no remote is configured,
@@ -668,7 +716,9 @@ export function App() {
     }
   }, []);
 
-  const selectFolder = (folderPath: string) => {
+  const selectFolder = async (folderPath: string) => {
+    const navigationId = ++navigationRequestRef.current;
+    if (!(await awaitLocalSave()) || navigationId !== navigationRequestRef.current) return;
     noteHistoryRequestRef.current += 1;
     setNoteHistoryPanel(closedNoteHistoryPanel);
     setAppState((current) => ({
@@ -687,14 +737,14 @@ export function App() {
       return;
     }
 
-    await openNoteInWorkspace(appState.workspace.path, notePath, fileSearchJump, true);
+    if (await openNoteInWorkspace(appState.workspace.path, notePath, fileSearchJump, true)) setIsWelcomeOpen(false);
   };
 
   const navigateToNote = async (notePath: string, fileSearchJump: AppState["fileSearchJump"] = null) => {
     if (!appState.workspace) {
       return;
     }
-    await openNoteInWorkspace(appState.workspace.path, notePath, fileSearchJump, true, true);
+    if (await openNoteInWorkspace(appState.workspace.path, notePath, fileSearchJump, true, true)) setIsWelcomeOpen(false);
   };
 
   const openNoteInWorkspace = async (
@@ -704,10 +754,13 @@ export function App() {
     rememberNote = false,
     revealInTree = false,
     revealState?: Pick<AppState, "workspaceTree" | "openFolderPaths" | "treeMode">,
+    navigationId = ++navigationRequestRef.current,
   ) => {
+    if (!(await awaitLocalSave()) || navigationId !== navigationRequestRef.current) return false;
     noteHistoryRequestRef.current += 1;
     setNoteHistoryPanel(closedNoteHistoryPanel);
-    const response = await readNote(workspacePath, notePath);
+    const response = await readNote(workspacePath, notePath).catch((error: unknown) => ({ ok: false, data: null, error: String(error) }));
+    if (!(await awaitLocalSave()) || navigationId !== navigationRequestRef.current || activeWorkspacePathRef.current !== workspacePath) return false;
     const currentRevealState = revealState ?? appStateRef.current;
     const openFolderPaths = revealInTree
       ? expandPathToNote(
@@ -733,9 +786,11 @@ export function App() {
         workspaceError: response.error ?? "No se pudo abrir la nota",
         fileSearchJump: null,
       }));
-      return;
+      updateRecentNotes((notes) => notes.map((note) => note.workspacePath === workspacePath && note.notePath === notePath ? { ...note, available: false } : note));
+      return false;
     }
 
+    recordRecentNote(workspacePath, notePath);
     if (rememberNote) {
       void rememberWorkspaceNote(workspacePath, notePath).catch(() => undefined);
     }
@@ -751,6 +806,24 @@ export function App() {
       workspaceError: null,
       fileSearchJump,
     }));
+    return true;
+  };
+
+  const selectRecentNote = async (note: RecentNote) => {
+    const navigationId = ++navigationRequestRef.current;
+    if (!(await awaitLocalSave()) || navigationId !== navigationRequestRef.current) return;
+    const probe = await Promise.resolve().then(() => noteAvailability(note.workspacePath, note.notePath)).catch(() => null);
+    if (navigationId !== navigationRequestRef.current) return;
+    if (probe?.ok && probe.data?.available === false) {
+      updateRecentNotes((notes) => notes.map((entry) => recentNoteKey(entry) === recentNoteKey(note) ? { ...entry, available: false } : entry));
+      return;
+    }
+    const opened = activeWorkspacePathRef.current === note.workspacePath
+      ? await openNoteInWorkspace(note.workspacePath, note.notePath, null, true, true, undefined, navigationId)
+      : await openWorkspaceAtPath(note.workspacePath, note.notePath, navigationId);
+    if (navigationId !== navigationRequestRef.current) return;
+    if (opened) { setIsWelcomeOpen(false); setEditorFocusRequest((request) => request + 1); }
+    else if (await awaitLocalSave()) updateRecentNotes((notes) => notes.map((entry) => recentNoteKey(entry) === recentNoteKey(note) ? { ...entry, available: false } : entry));
   };
 
   const changeGlobalSearch = (query: string) => {
@@ -938,6 +1011,7 @@ export function App() {
       return;
     }
 
+    if (!(await awaitLocalSave())) return;
     const response = await createFolder(appState.workspace.path, appState.activeFolderPath, folderName);
     applyFilesystemOperation(response, (itemPath) => ({
       activeFolderPath: itemPath,
@@ -953,6 +1027,7 @@ export function App() {
       return;
     }
 
+    if (!(await awaitLocalSave())) return;
     const response = await createNote(appState.workspace.path, appState.activeFolderPath, noteName);
     applyFilesystemOperation(response, (itemPath) => ({
       activeFolderPath: parentFolderPath(itemPath),
@@ -970,6 +1045,7 @@ export function App() {
       setAppState((current) => ({ ...current, openFolderPaths, fileSearchJump: null }));
       persistWorkspaceTreeState(appState.workspace.path, openFolderPaths, appState.treeMode);
       void rememberWorkspaceNote(appState.workspace.path, response.data.itemPath).catch(() => undefined);
+      recordRecentNote(appState.workspace.path, response.data.itemPath);
       setEditorFocusRequest((request) => request + 1);
     }
   };
@@ -1012,6 +1088,7 @@ export function App() {
     if (!(await awaitLocalSave())) return;
     const response = await renameItem(appState.workspace.path, selectedPath, newName);
     applyFilesystemOperation(response, (itemPath) => relocateCurrentSelection(selectedPath, itemPath));
+    if (response.ok && response.data) relocateRecentNotes(appState.workspace.path, selectedPath, response.data.itemPath);
   };
 
   const moveActiveNote = async (target?: TreeActionTarget) => {
@@ -1030,6 +1107,7 @@ export function App() {
       ? await moveItem(appState.workspace.path, selectedPath, targetFolderPath)
       : await moveNote(appState.workspace.path, selectedPath, targetFolderPath);
     applyFilesystemOperation(response, (itemPath) => relocateCurrentSelection(selectedPath, itemPath));
+    if (response.ok && response.data) relocateRecentNotes(appState.workspace.path, selectedPath, response.data.itemPath);
   };
 
   const relocateCurrentSelection = (oldPath: string, newPath: string) => {
@@ -1054,6 +1132,7 @@ export function App() {
     const wasActiveNote = itemPath === appState.activeNotePath;
     const wasActiveFolder = itemPath === appState.activeFolderPath;
     const response = await moveItem(appState.workspace.path, itemPath, targetFolderPath);
+    if (response.ok && response.data) relocateRecentNotes(appState.workspace.path, itemPath, response.data.itemPath);
     applyFilesystemOperation(response, (resultItemPath) => ({
       activeFolderPath: wasActiveNote
         ? parentFolderPath(resultItemPath)
@@ -1432,6 +1511,16 @@ export function App() {
       workspaceName={appState.workspace?.name ?? "Abrir carpeta"}
       workspacePath={appState.workspace?.path ?? null}
       recentWorkspaces={appState.recentWorkspaces}
+      recentNotes={recentNotes}
+      isWelcomeOpen={isWelcomeOpen}
+      showWelcome={showWelcome}
+      onShowWelcomeChange={(show) => { setShowWelcome(show); saveShowWelcome(show); if (!show) setIsWelcomeOpen(false); }}
+      onOpenRecentNotes={() => setIsWelcomeOpen(true)}
+      onCloseRecentNotes={() => { setIsWelcomeOpen(false); setEditorFocusRequest((request) => request + 1); }}
+      onSelectRecentNote={(note) => void selectRecentNote(note)}
+      onRemoveRecentNote={(note) => updateRecentNotes((notes) => notes.filter((entry) => recentNoteKey(entry) !== recentNoteKey(note)))}
+      onWelcomeCreateNote={() => { setIsWelcomeOpen(false); void createNoteInSelection(); }}
+      onWelcomeOpenFolder={openWorkspaceFromPath}
       activeNotePath={appState.activeNotePath}
       activeFolderPath={appState.activeFolderPath}
       noteContent={appState.noteContent}
@@ -1453,7 +1542,7 @@ export function App() {
       canManageWorkspace={appState.workspace !== null}
       onOpenWorkspace={openWorkspaceFromPath}
       onCloneGitHubRepository={cloneExistingGitHubRepository}
-      onOpenRecentWorkspace={openWorkspaceAtPath}
+      onOpenRecentWorkspace={(path) => void openWorkspaceAtPath(path)}
       onRouteChange={openRoute}
       onThemeChange={changeTheme}
       onUiZoomChange={changeUiZoom}

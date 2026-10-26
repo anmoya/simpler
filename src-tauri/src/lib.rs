@@ -822,6 +822,10 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
         return native_response(request, postpone_github_wizard_payload);
     }
 
+    if request.domain == NativeDomain::Filesystem && request.action == "note-availability" {
+        return native_response(request, note_availability_payload);
+    }
+
     if request.domain == NativeDomain::Filesystem && request.action == "read-note" {
         return native_response(request, read_note_payload);
     }
@@ -1055,6 +1059,22 @@ fn native_response(
     }
 }
 
+fn note_availability_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let payload: ReadNotePayload = serde_json::from_value(payload)
+        .map_err(|_| "workspacePath and notePath are required".to_string())?;
+    let available = fs::canonicalize(&payload.workspace_path)
+        .ok()
+        .is_some_and(|root| {
+            resolve_note_path(&payload.workspace_path, &payload.note_path)
+                .ok()
+                .and_then(|path| fs::canonicalize(path).ok())
+                .is_some_and(|path| {
+                    path.starts_with(root) && path.is_file() && fs::File::open(path).is_ok()
+                })
+        });
+    Ok(serde_json::json!({ "available": available }))
+}
+
 fn read_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
     let payload: ReadNotePayload = serde_json::from_value(payload)
         .map_err(|_| "workspacePath and notePath are required".to_string())?;
@@ -1261,12 +1281,14 @@ fn relocate_local_session_paths(
     new_path: &Path,
 ) -> Result<(), String> {
     let mut metadata = read_local_workspace_metadata(workspace_path)?;
-    let old_relative = old_path.strip_prefix(workspace_path)
+    let old_relative = old_path
+        .strip_prefix(workspace_path)
         .map_err(|_| "item is outside the Workspace".to_string())?;
     let relocate = |path: &str| {
-        Path::new(path).strip_prefix(old_relative).ok().map(|suffix| {
-            relative_workspace_path(workspace_path, &new_path.join(suffix))
-        })
+        Path::new(path)
+            .strip_prefix(old_relative)
+            .ok()
+            .map(|suffix| relative_workspace_path(workspace_path, &new_path.join(suffix)))
     };
     if let Some(path) = metadata.last_note_path.as_ref() {
         if let Some(relocated) = relocate(path) {
@@ -3607,6 +3629,36 @@ mod tests {
     }
 
     #[test]
+    fn recent_note_availability_does_not_initialize_a_missing_workspace() {
+        let root = test_workspace("recent_availability");
+        let workspace = root.join("missing");
+        let probe = |workspace: &Path, note: &str| {
+            dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Filesystem,
+                action: "note-availability".into(),
+                payload: serde_json::json!({ "workspacePath": workspace, "notePath": note }),
+            })
+        };
+        let missing = probe(&workspace, "today.md");
+        assert!(missing.ok);
+        assert_eq!(missing.data.unwrap()["available"], false);
+        assert!(!workspace.exists());
+        fs::write(root.join("today.md"), "# Today").unwrap();
+        assert_eq!(probe(&root, "today.md").data.unwrap()["available"], true);
+        assert_eq!(
+            probe(&root, "../today.md").data.unwrap()["available"],
+            false
+        );
+        #[cfg(unix)]
+        {
+            let outside = test_workspace("recent_outside");
+            fs::write(outside.join("secret.md"), "outside").unwrap();
+            std::os::unix::fs::symlink(outside.join("secret.md"), root.join("linked.md")).unwrap();
+            assert_eq!(probe(&root, "linked.md").data.unwrap()["available"], false);
+        }
+    }
+
+    #[test]
     fn remote_check_detects_incoming_changes_without_changing_notes_or_head() {
         let (workspace, remote) = test_git_workspace_with_remote("remote_check_incoming");
         commit_remote_change(&remote, "incoming.md", "# Remote\n");
@@ -4688,7 +4740,10 @@ mod tests {
                 action: "open".to_string(),
                 payload: serde_json::json!({ "workspacePath": workspace }),
             });
-            assert_eq!(reopened.data.unwrap()["metadata"]["lastNotePath"], expected_note);
+            assert_eq!(
+                reopened.data.unwrap()["metadata"]["lastNotePath"],
+                expected_note
+            );
         }
     }
 
@@ -4719,7 +4774,10 @@ mod tests {
                 action: "open".to_string(),
                 payload: serde_json::json!({ "workspacePath": workspace }),
             });
-            assert_eq!(reopened.data.unwrap()["metadata"]["lastNotePath"], expected_note);
+            assert_eq!(
+                reopened.data.unwrap()["metadata"]["lastNotePath"],
+                expected_note
+            );
         }
     }
 

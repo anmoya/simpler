@@ -1432,3 +1432,20 @@ button {
 .tree-controls__icon-button[aria-pressed="true"] { background: var(--color-subtle); color: var(--color-accent); }
 @media (max-width: 560px) { .tree-actions button span { display: none; } }
 @media (prefers-reduced-motion: reduce) { .tree-tooltip__content { transition: none; } }
+
+.editor-pane { position: relative; }
+.welcome-screen { position: absolute; inset: 0; z-index: 5; overflow: auto; padding: clamp(16px, 4vw, 42px); background: var(--color-editor); color: var(--color-text); }
+.welcome-screen > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.welcome-screen h1 { margin: 0; font-family: var(--font-family-heading); }
+.welcome-screen p { color: var(--color-muted); }
+.welcome-screen ol { display: grid; gap: 8px; padding: 0; list-style: none; }
+.welcome-screen li { display: flex; gap: 8px; min-width: 0; }
+.welcome-screen button { background: var(--color-control); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 10px; cursor: pointer; }
+.welcome-screen li > button:first-child { flex: 1; min-width: 0; display: grid; gap: 5px; text-align: left; }
+.welcome-screen span, .welcome-screen small { color: var(--color-muted); overflow-wrap: anywhere; }
+.welcome-screen button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.welcome-screen button:hover { background: var(--color-active); }
+.welcome-screen button:disabled { cursor: default; color: var(--color-muted); }
+.welcome-screen__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.settings-dialog .settings-dialog__checkbox { display: flex; align-items: center; gap: 8px; }
+.settings-dialog__checkbox input { width: auto; }
