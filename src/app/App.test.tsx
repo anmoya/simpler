@@ -240,6 +240,7 @@ describe("App", () => {
     finishFirst({ ok: true, data: workspace("first"), error: null });
     await waitFor(() => expect(screen.getByTestId("markdown-editor")).toHaveTextContent("/tmp/second"));
     expect(screen.getByRole("button", { name: "second — Abrir o cambiar…" })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem("simpler.recentNotes")!)).toHaveLength(2);
   });
 
   it("shows Welcome by default, records opened notes locally and reopens Recientes from the Workspace menu", async () => {

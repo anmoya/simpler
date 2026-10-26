@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { relativeOpeningTime, recentNoteKey, type RecentNote } from "../app/recentNotes";
 import { Icon } from "./icons";
 export function WelcomeScreen({ notes, canCreate, onOpen, onRemove, onContinue, onCreate, onOpenFolder, notice }: {
@@ -6,7 +6,9 @@ export function WelcomeScreen({ notes, canCreate, onOpen, onRemove, onContinue, 
   onRemove: (note: RecentNote) => void; onContinue: () => void; onCreate: () => void;
   onOpenFolder: () => void; notice?: ReactNode;
 }) {
-  return <section className="welcome-screen" aria-label="Recientes">
+  const screenRef = useRef<HTMLElement>(null);
+  useEffect(() => { screenRef.current?.querySelector<HTMLButtonElement>("button")?.focus(); }, []);
+  return <section ref={screenRef} className="welcome-screen" aria-label="Recientes">
     <header><div><h1>Retoma tu trabajo</h1><p>Las últimas siete notas abiertas en este computador.</p></div>
       <button type="button" aria-label="Continuar" onClick={onContinue}><Icon name="close" /></button></header>
     {notice}
