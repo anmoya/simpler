@@ -310,8 +310,8 @@ describe("ClassicShell", () => {
     });
 
     expect(screen.getAllByText("daily")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: /today.md/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /ideas.md/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "today.md" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ideas.md" })).toBeInTheDocument();
   });
 
   it("hides and shows a folder's children through its expand toggle", async () => {
@@ -330,7 +330,7 @@ describe("ClassicShell", () => {
     expect(onToggleFolder).toHaveBeenCalledWith("daily");
 
     rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={new Set()} />);
-    expect(screen.queryByRole("button", { name: /today.md/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "today.md" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand daily" })).toBeInTheDocument();
 
     const childrenWrapper = document.querySelector(".note-tree__folder-children");
@@ -446,7 +446,7 @@ describe("ClassicShell", () => {
       onSelectNote,
     });
 
-    await userEvent.click(screen.getByRole("button", { name: /today.md/ }));
+    await userEvent.click(screen.getByRole("button", { name: "today.md" }));
 
     expect(onSelectNote).toHaveBeenCalledWith("daily/today.md");
   });
@@ -480,6 +480,7 @@ describe("ClassicShell", () => {
       activeNotePath: "daily/today.md",
       activeFolderPath: "daily",
       onCreateFolder,
+      workspaceTree: [{ name: "today.md", path: "daily/today.md", kind: "note", children: [] }],
       onCreateNote,
       onRenameSelection,
       onMoveActiveNote,
@@ -487,8 +488,10 @@ describe("ClassicShell", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "New folder" }));
     await userEvent.click(screen.getByRole("button", { name: "New note" }));
-    await userEvent.click(screen.getByRole("button", { name: "Rename" }));
-    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    await userEvent.click(screen.getByRole("button", { name: "Más acciones para today.md" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Renombrar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Más acciones para today.md" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Mover" }));
 
     expect(onCreateFolder).toHaveBeenCalledOnce();
     expect(onCreateNote).toHaveBeenCalledOnce();
@@ -501,8 +504,8 @@ describe("ClassicShell", () => {
 
     expect(screen.getByRole("button", { name: "New folder" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "New note" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Move" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Rename" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Move" })).not.toBeInTheDocument();
   });
 
   it("shows the raw Markdown editor with the active note's content", () => {
@@ -753,7 +756,7 @@ describe("ClassicShell", () => {
     });
 
     expect(
-      screen.getByRole("button", { name: /very-long-note-name-that-should-not-break-the-sidebar-layout.md/ }),
+      screen.getByRole("button", { name: "very-long-note-name-that-should-not-break-the-sidebar-layout.md" }),
     ).toHaveAttribute(
       "title",
       "research/archive/very-long-note-name-that-should-not-break-the-sidebar-layout.md",

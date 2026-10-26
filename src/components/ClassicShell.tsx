@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, cloneElement } from "react";
 import type { AppRoute } from "../app/routes";
 import type {
   CloseSyncPromptState,
@@ -22,6 +22,7 @@ import { Icon } from "./icons";
 import { GitHubConnectionWizard } from "./GitHubConnectionWizard";
 
 type CommandAction = () => void;
+export type TreeActionTarget = Pick<WorkspaceTreeItem, "path" | "kind">;
 
 // Below this width the sidebar auto-collapses to the icon rail. It sits
 // under the 720px breakpoint in styles.css (which already switches to a
@@ -90,9 +91,9 @@ export interface ClassicShellProps {
   onRestoreNoteHistoryEntry: () => void;
   onCreateFolder: () => void;
   onCreateNote: () => void;
-  onRenameSelection: () => void;
-  onMoveActiveNote: () => void;
-  onDeleteSelection: () => void;
+  onRenameSelection: (target?: TreeActionTarget) => void;
+  onMoveActiveNote: (target?: TreeActionTarget) => void;
+  onDeleteSelection: (target?: TreeActionTarget) => void;
   trashEntries: TrashEntry[];
   onRestoreTrashItem: (id: string) => void;
   onMoveItem: (itemPath: string, targetFolderPath: string) => void;
@@ -239,10 +240,26 @@ export function ClassicShell({
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const fileSearchInputRef = useRef<HTMLInputElement | null>(null);
   const editorContainerRef = useRef<HTMLElement | null>(null);
-  const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; kind: "folder" | "note" } | null>(
+  const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; target: TreeActionTarget; trigger: HTMLElement } | null>(
     null,
   );
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const openTreeItemMenu = (event: MouseEvent | ReactKeyboardEvent, kind: WorkspaceTreeItem["kind"], path: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const trigger = event.currentTarget as HTMLElement;
+    const rect = trigger.getBoundingClientRect();
+    setTreeContextMenu({
+      x: "clientX" in event ? event.clientX : rect.left,
+      y: "clientY" in event ? event.clientY : rect.bottom,
+      target: { path, kind },
+      trigger,
+    });
+  };
+  const closeTreeItemMenu = (restoreFocus = false) => {
+    if (restoreFocus) treeContextMenu?.trigger.focus();
+    setTreeContextMenu(null);
+  };
   const [focusSearchOnExpand, setFocusSearchOnExpand] = useState(false);
   const globalSearchInputRef = useRef<HTMLInputElement>(null);
   // Auto-collapse tracks the window narrowing below `narrowViewportThreshold`
@@ -522,9 +539,9 @@ export function ClassicShell({
     }
 
     const closeMenu = () => setTreeContextMenu(null);
-    const handleKeyDown = (event: KeyboardEvent) => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
-        closeMenu();
+        closeTreeItemMenu(true);
       }
     };
 
@@ -929,6 +946,7 @@ export function ClassicShell({
             ) : (
               <>
                 <div className="tree-controls">
+                  <TreeTooltip text={treeMode === "accordion" ? "Modo acordeón: abrir una carpeta cierra sus hermanas. Cambiar a modo libre." : "Modo libre: abrir una carpeta conserva las demás abiertas. Cambiar a acordeón."}>
                   <button
                     type="button"
                     className="tree-controls__icon-button"
@@ -944,6 +962,8 @@ export function ClassicShell({
                   >
                     <Icon name="tree-mode" size={16} />
                   </button>
+                  </TreeTooltip>
+                  <TreeTooltip text="Focus Active Note: cerrar otras carpetas y mostrar la ruta de la nota activa.">
                   <button
                     type="button"
                     className="tree-controls__icon-button"
@@ -954,6 +974,7 @@ export function ClassicShell({
                   >
                     <Icon name="target" size={16} />
                   </button>
+                  </TreeTooltip>
                 </div>
                 {isGlobalSearchOpen ? (
                   <div className="global-search" role="search" aria-label="Global Search">
@@ -989,6 +1010,14 @@ export function ClassicShell({
                     ) : null}
                   </div>
                 ) : null}
+                <div className="tree-actions" aria-label="Workspace actions">
+                  <button type="button" title="New note" aria-label="New note" onClick={onCreateNote} disabled={!canManageWorkspace}>
+                    <Icon name="note-plus" /><span>Nueva nota</span>
+                  </button>
+                  <button type="button" title="New folder" aria-label="New folder" onClick={onCreateFolder} disabled={!canManageWorkspace}>
+                    <Icon name="folder-plus" /><span>Nueva carpeta</span>
+                  </button>
+                </div>
                 {workspaceTree.length > 0 ? (
                   <WorkspaceTree
                     items={workspaceTree}
@@ -998,15 +1027,7 @@ export function ClassicShell({
                     onToggleFolder={onToggleFolder}
                     onSelectFolder={onSelectFolder}
                     onSelectNote={onSelectNote}
-                    onItemContextMenu={(event, kind, path) => {
-                      event.preventDefault();
-                      if (kind === "folder") {
-                        onSelectFolder(path);
-                      } else {
-                        onSelectNote(path);
-                      }
-                      setTreeContextMenu({ x: event.clientX, y: event.clientY, kind });
-                    }}
+                    onItemContextMenu={openTreeItemMenu}
                     onMoveItem={onMoveItem}
                     dragOverFolder={dragOverFolder}
                     onDragOverFolder={setDragOverFolder}
@@ -1018,41 +1039,7 @@ export function ClassicShell({
                   </p>
                 )}
 
-                <div className="tree-actions" aria-label="Workspace actions">
-                  <button type="button" title="New folder" aria-label="New folder" onClick={onCreateFolder} disabled={!canManageWorkspace}>
-                    <Icon name="folder-plus" />
-                  </button>
-                  <button type="button" title="New note" aria-label="New note" onClick={onCreateNote} disabled={!canManageWorkspace}>
-                    <Icon name="note-plus" />
-                  </button>
-                  <button
-                    type="button"
-                    title="Rename"
-                    aria-label="Rename"
-                    onClick={onRenameSelection}
-                    disabled={!canManageWorkspace || !hasSelection}
-                  >
-                    <Icon name="rename" />
-                  </button>
-                  <button
-                    type="button"
-                    title="Move"
-                    aria-label="Move"
-                    onClick={onMoveActiveNote}
-                    disabled={!canManageWorkspace || activeNotePath === null}
-                  >
-                    <Icon name="move" />
-                  </button>
-                  <button
-                    type="button"
-                    title="Delete"
-                    aria-label="Delete"
-                    onClick={onDeleteSelection}
-                    disabled={!canManageWorkspace || !hasSelection}
-                  >
-                    <Icon name="trash" />
-                  </button>
-                </div>
+
               </>
             )}
           </>
@@ -1225,12 +1212,10 @@ export function ClassicShell({
         <TreeContextMenu
           x={treeContextMenu.x}
           y={treeContextMenu.y}
-          kind={treeContextMenu.kind}
-          onCreateFolder={onCreateFolder}
-          onCreateNote={onCreateNote}
-          onRenameSelection={onRenameSelection}
-          onMoveActiveNote={onMoveActiveNote}
-          onDeleteSelection={onDeleteSelection}
+          onClose={() => closeTreeItemMenu(true)}
+          onRenameSelection={() => { onRenameSelection(treeContextMenu.target); closeTreeItemMenu(); }}
+          onMoveActiveNote={() => { onMoveActiveNote(treeContextMenu.target); closeTreeItemMenu(); }}
+          onDeleteSelection={() => { onDeleteSelection(treeContextMenu.target); closeTreeItemMenu(); }}
         />
       ) : null}
     </div>
@@ -1343,54 +1328,44 @@ function CloseSyncPromptDialog({
   );
 }
 
-function TreeContextMenu({
-  x,
-  y,
-  kind,
-  onCreateFolder,
-  onCreateNote,
-  onRenameSelection,
-  onMoveActiveNote,
-  onDeleteSelection,
-}: {
+function TreeContextMenu({ x, y, onClose, onRenameSelection, onMoveActiveNote, onDeleteSelection }: {
   x: number;
   y: number;
-  kind: "folder" | "note";
-  onCreateFolder: () => void;
-  onCreateNote: () => void;
+  onClose: () => void;
   onRenameSelection: () => void;
   onMoveActiveNote: () => void;
   onDeleteSelection: () => void;
 }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus(); }, []);
   return (
-    <div className="context-menu" role="menu" style={{ left: x, top: y }}>
-      {kind === "folder" ? (
-        <>
-          <button type="button" role="menuitem" onClick={onCreateNote}>
-            <Icon name="note-plus" size={14} />
-            Nueva nota
-          </button>
-          <button type="button" role="menuitem" onClick={onCreateFolder}>
-            <Icon name="folder-plus" size={14} />
-            Nueva carpeta
-          </button>
-        </>
-      ) : (
-        <button type="button" role="menuitem" onClick={onMoveActiveNote}>
-          <Icon name="move" size={14} />
-          Mover
-        </button>
-      )}
-      <button type="button" role="menuitem" onClick={onRenameSelection}>
-        <Icon name="rename" size={14} />
-        Renombrar
-      </button>
-      <button type="button" role="menuitem" className="context-menu__danger" onClick={onDeleteSelection}>
-        <Icon name="trash" size={14} />
-        Eliminar
-      </button>
+    <div ref={menuRef} className="context-menu" role="menu" aria-label="Acciones del elemento"
+      style={{ left: `min(${x}px, calc(100vw - 14rem))`, top: `min(${y}px, calc(100vh - 10rem))` }}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        const buttons = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+          event.preventDefault();
+          const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 :
+            (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[next]?.focus();
+        } else if (event.key === "Escape" || event.key === "Tab") {
+          event.preventDefault(); event.stopPropagation(); onClose();
+        }
+      }}>
+      <button type="button" role="menuitem" onClick={onRenameSelection}><Icon name="rename" size={14} />Renombrar</button>
+      <button type="button" role="menuitem" onClick={onMoveActiveNote}><Icon name="move" size={14} />Mover</button>
+      <button type="button" role="menuitem" className="context-menu__danger" onClick={onDeleteSelection}><Icon name="trash" size={14} />Eliminar</button>
     </div>
   );
+}
+
+function TreeTooltip({ text, children }: { text: string; children: ReactElement<{ "aria-describedby"?: string }> }) {
+  const id = useId();
+  return <span className="tree-tooltip">
+    {cloneElement(children, { "aria-describedby": id })}<span id={id} role="tooltip" className="tree-tooltip__content">{text}</span>
+  </span>;
 }
 
 function GitHubAuthenticationPanel({
@@ -1791,7 +1766,7 @@ function WorkspaceTree({
   onToggleFolder: (folderPath: string) => void;
   onSelectFolder: (folderPath: string) => void;
   onSelectNote: (notePath: string) => void;
-  onItemContextMenu: (event: MouseEvent, kind: "folder" | "note", path: string) => void;
+  onItemContextMenu: (event: MouseEvent | ReactKeyboardEvent, kind: WorkspaceTreeItem["kind"], path: string) => void;
   onMoveItem: (itemPath: string, targetFolderPath: string) => void;
   dragOverFolder: string | null;
   onDragOverFolder: (folderPath: string | null) => void;
@@ -1852,6 +1827,9 @@ function WorkspaceTree({
                 draggable
                 onClick={() => onSelectFolder(item.path)}
                 onContextMenu={(event) => onItemContextMenu(event, "folder", item.path)}
+                onKeyDown={(event) => {
+                  if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) onItemContextMenu(event, "folder", item.path);
+                }}
                 onDragStart={(event) => {
                   event.stopPropagation();
                   event.dataTransfer.setData("text/plain", item.path);
@@ -1881,8 +1859,11 @@ function WorkspaceTree({
                   {item.name}
                 </span>
               </button>
+              <button type="button" className="note-tree__more" aria-label={`Más acciones para ${item.name}`} aria-haspopup="menu"
+                onClick={(event) => onItemContextMenu(event, item.kind, item.path)}><Icon name="more" size={14} /></button>
             </div>
           ) : (
+            <div className="note-tree__note-row">
             <button
               type="button"
               className={
@@ -1892,6 +1873,9 @@ function WorkspaceTree({
               draggable
               onClick={() => onSelectNote(item.path)}
               onContextMenu={(event) => onItemContextMenu(event, "note", item.path)}
+                onKeyDown={(event) => {
+                  if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) onItemContextMenu(event, "note", item.path);
+                }}
               onDragStart={(event) => {
                 event.stopPropagation();
                 event.dataTransfer.setData("text/plain", item.path);
@@ -1903,6 +1887,9 @@ function WorkspaceTree({
                 {item.name}
               </span>
             </button>
+              <button type="button" className="note-tree__more" aria-label={`Más acciones para ${item.name}`} aria-haspopup="menu"
+                onClick={(event) => onItemContextMenu(event, item.kind, item.path)}><Icon name="more" size={14} /></button>
+            </div>
           )}
           {item.kind === "folder" && item.children.length > 0 ? (
             <div
