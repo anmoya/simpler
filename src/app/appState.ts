@@ -39,7 +39,7 @@ export interface WorkspaceSummary {
 export interface WorkspaceTreeItem {
   name: string;
   path: string;
-  kind: "folder" | "note";
+  kind: "folder" | "note" | "image";
   children: WorkspaceTreeItem[];
 }
 

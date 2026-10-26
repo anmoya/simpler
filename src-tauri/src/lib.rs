@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+mod image_preview;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -794,6 +795,7 @@ struct WorkspaceTreeItem {
 enum WorkspaceTreeItemKind {
     Folder,
     Note,
+    Image,
 }
 
 pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandResponse {
@@ -815,6 +817,13 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
 
     if request.domain == NativeDomain::Filesystem && request.action == "read-note" {
         return native_response(request, read_note_payload);
+    }
+
+    if request.domain == NativeDomain::Filesystem && request.action == "preview-image" {
+        return native_response(request, image_preview::preview);
+    }
+    if request.domain == NativeDomain::Filesystem && request.action == "open-image-external" {
+        return native_response(request, image_preview::open_external);
     }
 
     if request.domain == NativeDomain::Filesystem && request.action == "write-note" {
@@ -2707,11 +2716,16 @@ fn read_workspace_tree(
                 kind: WorkspaceTreeItemKind::Folder,
                 children: read_workspace_tree(root_path, &path)?,
             });
-        } else if metadata.is_file() && is_markdown_note(&path) {
+        } else if metadata.is_file() && (is_markdown_note(&path) || image_preview::is_image(&path))
+        {
             items.push(WorkspaceTreeItem {
                 name: name.to_string(),
                 path: relative_workspace_path(root_path, &path),
-                kind: WorkspaceTreeItemKind::Note,
+                kind: if is_markdown_note(&path) {
+                    WorkspaceTreeItemKind::Note
+                } else {
+                    WorkspaceTreeItemKind::Image
+                },
                 children: Vec::new(),
             });
         }
@@ -2833,7 +2847,7 @@ fn relative_workspace_path(root_path: &Path, path: &Path) -> String {
 fn folder_rank(item: &WorkspaceTreeItem) -> u8 {
     match item.kind {
         WorkspaceTreeItemKind::Folder => 0,
-        WorkspaceTreeItemKind::Note => 1,
+        WorkspaceTreeItemKind::Note | WorkspaceTreeItemKind::Image => 1,
     }
 }
 
@@ -2863,18 +2877,21 @@ mod commands {
         if request.domain == NativeDomain::Filesystem && request.action == "read-clipboard-text" {
             return handle_read_clipboard_text_command(app, request).await;
         }
-        if request.domain == NativeDomain::Git
-            && (request.action == "check-remote" || request.action == "sync")
+        if (request.domain == NativeDomain::Filesystem
+            && (request.action == "preview-image" || request.action == "open-image-external"))
+            || (request.domain == NativeDomain::Git
+                && (request.action == "check-remote" || request.action == "sync"))
         {
             let action = request.action.clone();
+            let domain = request.domain.clone();
             return tauri::async_runtime::spawn_blocking(move || dispatch_native_command(request))
                 .await
                 .unwrap_or_else(|error| NativeCommandResponse {
                     ok: false,
-                    domain: NativeDomain::Git,
+                    domain,
                     action,
                     data: None,
-                    error: Some(format!("Git task failed: {error}")),
+                    error: Some(format!("native task failed: {error}")),
                 });
         }
         if request.domain == NativeDomain::Filesystem && request.action == "global-search" {
@@ -4228,6 +4245,113 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn image_tree_does_not_follow_symlinks_outside_the_workspace() {
+        let workspace = test_workspace("image_symlinks");
+        let outside = test_workspace("image_outside");
+        fs::write(outside.join("private.png"), "private").unwrap();
+        std::os::unix::fs::symlink(&outside, workspace.join("linked")).unwrap();
+        std::os::unix::fs::symlink(outside.join("private.png"), workspace.join("leak.png"))
+            .unwrap();
+        let opened = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert!(opened.ok);
+        assert_eq!(opened.data.unwrap()["tree"], serde_json::json!([]));
+        for action in ["preview-image", "open-image-external"] {
+            for image_path in [
+                "leak.png",
+                "linked/private.png",
+                "../private.png",
+                "/tmp/private.png",
+                ".git/private.png",
+            ] {
+                let response = dispatch_native_command(NativeCommandRequest {
+                    domain: NativeDomain::Filesystem,
+                    action: action.to_string(),
+                    payload: serde_json::json!({ "workspacePath": workspace, "imagePath": image_path }),
+                });
+                assert!(!response.ok, "{action}: {image_path}");
+            }
+        }
+    }
+
+    #[test]
+    fn image_preview_rejects_missing_corrupt_active_and_oversized_inputs() {
+        let workspace = test_workspace("image_limits");
+        fs::write(workspace.join("corrupt.png"), "not a PNG").unwrap();
+        fs::write(
+            workspace.join("active.png"),
+            "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>",
+        )
+        .unwrap();
+        fs::write(workspace.join("active.svg"), "<svg/>").unwrap();
+        fs::File::create(workspace.join("huge.png"))
+            .unwrap()
+            .set_len(12 * 1024 * 1024 + 1)
+            .unwrap();
+        let mut bomb = vec![0u8; 54];
+        bomb[0..2].copy_from_slice(b"BM");
+        bomb[10..14].copy_from_slice(&54u32.to_le_bytes());
+        bomb[14..18].copy_from_slice(&40u32.to_le_bytes());
+        bomb[18..22].copy_from_slice(&100_000i32.to_le_bytes());
+        bomb[22..26].copy_from_slice(&100_000i32.to_le_bytes());
+        bomb[26..28].copy_from_slice(&1u16.to_le_bytes());
+        bomb[28..30].copy_from_slice(&24u16.to_le_bytes());
+        fs::write(workspace.join("dimensions.bmp"), bomb).unwrap();
+        for image_path in [
+            "missing.png",
+            "corrupt.png",
+            "active.png",
+            "active.svg",
+            "huge.png",
+            "dimensions.bmp",
+        ] {
+            let response = dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Filesystem,
+                action: "preview-image".to_string(),
+                payload: serde_json::json!({ "workspacePath": workspace, "imagePath": image_path }),
+            });
+            assert!(!response.ok, "{image_path}");
+            assert!(response.data.is_none());
+        }
+        for image_path in ["active.png", "active.svg", "corrupt.png"] {
+            let response = dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Filesystem,
+                action: "open-image-external".to_string(),
+                payload: serde_json::json!({ "workspacePath": workspace, "imagePath": image_path }),
+            });
+            assert!(!response.ok, "{image_path}");
+        }
+    }
+
+    #[test]
+    fn previews_workspace_images_without_reading_arbitrary_files() {
+        use base64::Engine;
+        let workspace = test_workspace("image_preview");
+        fs::create_dir_all(workspace.join("assets")).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==").unwrap();
+        fs::write(workspace.join("assets/pixel.png"), &bytes).unwrap();
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "preview-image".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "imagePath": "assets/pixel.png" }),
+        });
+        assert!(response.ok, "{:?}", response.error);
+        let data = response.data.unwrap();
+        assert_eq!(data["name"], "pixel.png");
+        assert_eq!(data["sizeBytes"], bytes.len());
+        assert_eq!(data["width"], 1);
+        assert_eq!(data["height"], 1);
+        assert!(data["dataUrl"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
     fn opens_workspace_with_visible_folders_and_markdown_notes() {
         let workspace = test_workspace("visible_tree");
         fs::create_dir_all(workspace.join("daily")).unwrap();
@@ -4571,7 +4695,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_hidden_internal_and_non_markdown_entries_without_deleting_them() {
+    fn lists_images_but_filters_hidden_internal_and_other_files_without_deleting_them() {
         let workspace = test_workspace("filtered_tree");
         fs::create_dir_all(workspace.join(".git")).unwrap();
         fs::create_dir_all(workspace.join(".simpler")).unwrap();
@@ -4596,7 +4720,7 @@ mod tests {
                     "name": "assets",
                     "path": "assets",
                     "kind": "folder",
-                    "children": []
+                    "children": [{ "name": "photo.png", "path": "assets/photo.png", "kind": "image", "children": [] }]
                 },
                 {
                     "name": "note.md",

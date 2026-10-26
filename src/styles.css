@@ -1374,6 +1374,20 @@ button {
     transform: none;
   }
 }
+.image-preview {
+  position: static;
+  width: min(780px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 20px;
+  color: var(--color-text);
+  background: var(--color-control);
+}
+.image-preview h2, .image-preview__path { overflow-wrap: anywhere; }
+.image-preview__canvas { display: flex; justify-content: center; overflow: auto; }
+.image-preview__canvas img { display: block; max-width: 100%; max-height: 55vh; object-fit: contain; }
+.image-preview__actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; }
+.image-preview button { color: var(--color-text); background: var(--color-subtle); padding: 7px 10px; }
 
 .remote-sync-control { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--color-text); background: var(--color-control); border: 1px solid var(--color-border); border-radius: var(--radius-control, 6px); padding: 0.25rem 0.55rem; cursor: pointer; font: inherit; }
 .remote-sync-control--incoming { font-weight: 700; border-color: var(--color-accent); background: var(--color-active); color: var(--color-text); }
