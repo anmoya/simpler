@@ -80,7 +80,7 @@ describe("App", () => {
     });
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await screen.findByText("Local work stays here", { exact: false });
     const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
     await user.click(editable);
