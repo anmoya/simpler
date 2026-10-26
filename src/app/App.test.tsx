@@ -80,7 +80,7 @@ describe("App", () => {
     });
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await screen.findByText("Local work stays here", { exact: false });
     const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
     await user.click(editable);
@@ -174,7 +174,7 @@ describe("App", () => {
     });
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(await screen.findByRole("button", { name: "Desconectado — reintentar" }));
     const sync = await screen.findByRole("button", { name: "Sincronizar — cambios remotos disponibles" });
     expect(sync).toHaveAttribute("title", expect.stringContaining("cambios locales y remotos"));
@@ -203,13 +203,13 @@ describe("App", () => {
     });
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await screen.findByRole("button", { name: "Comprobando actualizaciones…" });
     fireEvent.focus(window);
     fireEvent.focus(window);
     expect(checked).toEqual(["/tmp/first"]);
     await user.click(screen.getByRole("button", { name: /first/ }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     finishFirst({ ok: true, data: { state: "incoming", behind: 3, ahead: 0, hasLocalChanges: false, message: null }, error: null });
     await waitFor(() => expect(checked).toEqual(["/tmp/first", "/tmp/second"]));
     await screen.findByRole("button", { name: "Sincronizar" });
@@ -245,7 +245,7 @@ describe("App", () => {
     });
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("button", { name: "project" }));
     // Selection and expansion are separate: the selected destination stays collapsed.
     expect(screen.getByRole("button", { name: "Expand project" })).toBeInTheDocument();
@@ -280,7 +280,7 @@ describe("App", () => {
     });
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
     editable.focus();
     await user.keyboard("X");
@@ -297,7 +297,71 @@ describe("App", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("keeps Abrir carpeta separate while cloning a GitHub repository opens the cloned Workspace", async () => {
+  it("keeps the current note when a pending Local Save or the destination Workspace fails", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("simpler.recentWorkspaces", JSON.stringify([{ name: "source", path: "/tmp/source" }]));
+    mocks.open.mockResolvedValue("/tmp/destination");
+    let finishSave!: (response: unknown) => void;
+    let writes = 0;
+    const opened: string[] = [];
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") {
+        opened.push(request.payload.workspacePath);
+        if (request.payload.workspacePath === "/tmp/destination") return Promise.resolve({ ok: false, data: null, error: "Destination unavailable" });
+        return reply({ name: "source", path: "/tmp/source", tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], metadata: { lastNotePath: "today.md", githubWizardPostponed: true } });
+      }
+      if (request.action === "read-note") return reply({ content: "Keep my writing" });
+      if (request.action === "write-note") {
+        writes += 1;
+        if (writes === 1) return new Promise((resolve) => { finishSave = resolve; });
+        return reply({ content: request.payload.content });
+      }
+      if (request.domain === "workspace") return reply({});
+      if (request.action === "status" && request.domain === "git") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      throw new Error(`unexpected ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    const editor = await screen.findByTestId("markdown-editor");
+    const editable = editor.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    editable.focus();
+    await user.keyboard("X");
+    await user.click(screen.getByRole("button", { name: "source — Abrir o cambiar…" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    expect(opened).toEqual(["/tmp/source"]);
+    finishSave({ ok: false, data: null, error: "Disk full" });
+    expect(await screen.findByText("Disk full")).toBeInTheDocument();
+    expect(editable.textContent).toContain("X");
+    expect(opened).toEqual(["/tmp/source"]);
+    editable.focus();
+    await user.keyboard("Y");
+    await user.click(screen.getByRole("button", { name: "source — Abrir o cambiar…" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    expect(await screen.findByText("Destination unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "source — Abrir o cambiar…" })).toBeInTheDocument();
+    expect(screen.getByTestId("markdown-editor").textContent).toContain("XY");
+  });
+
+  it("navigates the Workspace menu by keyboard and returns focus to its trigger", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("simpler.recentWorkspaces", JSON.stringify([{ name: "archived", path: "/tmp/archived" }]));
+    mocks.invoke.mockResolvedValue({ ok: false, data: null, error: "Unavailable" });
+    render(<App />);
+    const trigger = screen.getByRole("button", { name: "Abrir carpeta" });
+    trigger.focus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Abrir carpeta" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "/tmp/archived" })).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(screen.getByRole("menuitem", { name: "Clonar desde GitHub" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu", { name: "Workspace menu" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("offers cloning as a secondary Workspace menu action and opens the cloned Workspace", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "prompt")
       .mockReturnValueOnce("https://github.com/simpler/notes.git")
@@ -345,7 +409,9 @@ describe("App", () => {
     render(<App />);
 
     expect(screen.getByRole("button", { name: "Abrir carpeta" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Clonar desde GitHub" }));
+    expect(screen.queryByRole("button", { name: "Clonar desde GitHub" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Clonar desde GitHub" }));
 
     expect(mocks.invoke).toHaveBeenCalledWith("native_command", {
       request: {
@@ -355,6 +421,8 @@ describe("App", () => {
       },
     });
     await waitFor(() => expect(screen.getByText("/tmp/cloned-notes")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "cloned-notes — Abrir o cambiar…" })).toBeInTheDocument();
+    expect(screen.getByText("Abrir o cambiar…")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     expect(screen.getByText("https://github.com/simpler/notes.git")).toBeInTheDocument();
   });
@@ -383,7 +451,7 @@ describe("App", () => {
 
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByText("Advanced Git"));
 
@@ -450,7 +518,7 @@ describe("App", () => {
 
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("tab", { name: "Trash" }));
     await user.click(await screen.findByRole("button", { name: "Restore" }));
     await user.click(screen.getByRole("tab", { name: "Trash" }));
@@ -515,7 +583,7 @@ describe("App", () => {
 
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
 
@@ -588,7 +656,7 @@ describe("App", () => {
 
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
 
@@ -629,7 +697,7 @@ describe("App", () => {
 
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
 
@@ -707,7 +775,7 @@ describe("App", () => {
 
       render(<App />);
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
       expect(await screen.findByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
     });
@@ -719,7 +787,7 @@ describe("App", () => {
 
       render(<App />);
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
       expect(await screen.findByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
     });
@@ -731,7 +799,7 @@ describe("App", () => {
 
       render(<App />);
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
       await user.click(screen.getByRole("tab", { name: "Sync" }));
 
       await waitFor(() => expect(screen.getByText("https://github.com/simpler/notes.git")).toBeInTheDocument());
@@ -745,7 +813,7 @@ describe("App", () => {
 
       render(<App />);
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
       await user.click(screen.getByRole("tab", { name: "Sync" }));
 
       await waitFor(() => expect(screen.getByRole("button", { name: "Conectar remoto GitHub" })).toBeInTheDocument());
@@ -759,7 +827,7 @@ describe("App", () => {
 
       render(<App />);
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
       expect(await screen.findByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -789,7 +857,7 @@ describe("App", () => {
 
       render(<App />);
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
       expect(await screen.findByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -888,7 +956,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     expect(screen.queryByRole("button", { name: "today.md" })).not.toBeInTheDocument();
     await user.keyboard("{Control>}{Shift>}f{/Shift}{/Control}");
     await user.type(screen.getByRole("searchbox", { name: "Global Search" }), "needle");
@@ -967,7 +1035,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
     expect(mocks.invoke).toHaveBeenCalledWith("native_command", {
       request: {
@@ -1048,7 +1116,7 @@ describe("App", () => {
 
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
     expect(screen.getByRole("button", { name: "Workspace Tree Mode" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "today.md" })).toBeInTheDocument();
@@ -1123,7 +1191,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
     expect(screen.getByRole("contentinfo", { name: "Workspace status" })).toHaveTextContent("Sin remoto");
   });
@@ -1163,7 +1231,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
     expect(screen.getByRole("contentinfo", { name: "Workspace status" })).toHaveTextContent("Error");
     expect(screen.getByRole("button", { name: "today.md" })).toBeInTheDocument();
@@ -1235,7 +1303,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
     editable.focus();
     await user.type(editable, "{End}\nChanged");
@@ -1312,7 +1380,7 @@ describe("App", () => {
 
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
     await user.click(await screen.findByRole("button", { name: "Open note history" }));
     await user.click(await screen.findByRole("button", { name: /Earlier words/ }));
@@ -1381,7 +1449,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Sync now" }));
 
@@ -1460,7 +1528,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Sync now" }));
     await user.click(screen.getByRole("tab", { name: "Sync" }));
@@ -1516,7 +1584,7 @@ describe("App", () => {
 
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Sync now" }));
 
@@ -1585,7 +1653,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
     await waitFor(() => {
       expect(mocks.invoke).toHaveBeenCalledWith("native_command", {
@@ -1670,7 +1738,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
     expect(await screen.findByText("remote is unavailable")).toBeInTheDocument();
     expect(screen.getByTestId("markdown-editor").textContent).toContain("Still local");
@@ -1753,7 +1821,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
     editable.focus();
     await user.type(editable, "{End}\nClose me");
@@ -1877,7 +1945,7 @@ describe("App", () => {
 
     async function openWorkspaceAndMakePending(user: ReturnType<typeof userEvent.setup>) {
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
       const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
       editable.focus();
       await user.type(editable, "{End}\nmore text");
@@ -1890,7 +1958,7 @@ describe("App", () => {
 
       render(<App />);
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-      await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+      await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
       await user.click(screen.getByRole("button", { name: "Cerrar" }));
 

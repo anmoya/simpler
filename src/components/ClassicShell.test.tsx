@@ -431,7 +431,7 @@ describe("ClassicShell", () => {
     renderShell({ onOpenWorkspace });
 
     await userEvent.click(screen.getByRole("button", { name: "Abrir carpeta" }));
-    await userEvent.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
 
     expect(onOpenWorkspace).toHaveBeenCalledOnce();
   });
@@ -798,7 +798,7 @@ describe("ClassicShell", () => {
       onToggleSidebarCollapse,
     });
 
-    expect(screen.getByRole("button", { name: "notes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "notes — Abrir o cambiar…" })).toBeInTheDocument();
     expect(screen.queryByRole("search", { name: "Global Search" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Workspace actions")).toBeInTheDocument();
     expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
@@ -838,7 +838,7 @@ describe("ClassicShell", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "notes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "notes — Abrir o cambiar…" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Collapsed sidebar")).not.toBeInTheDocument();
   });
 
