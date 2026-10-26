@@ -59,6 +59,47 @@ describe("App", () => {
     vi.restoreAllMocks();
   });
 
+  it("restores the last Workspace and note on process startup without opening the folder menu", async () => {
+    localStorage.setItem("simpler.recentWorkspaces", JSON.stringify([{ name: "notes", path: "/tmp/notes" }]));
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], metadata: { lastNotePath: "today.md", githubWizardPostponed: true } });
+      if (request.domain === "workspace" && ["remember-note", "remember-tree-state"].includes(request.action)) return reply({});
+      if (request.domain === "filesystem" && request.action === "read-note") return reply({ content: "# Last session" });
+      if (request.domain === "git" && request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    const firstProcess = render(<App />);
+    expect(await screen.findByTestId("markdown-editor")).toHaveTextContent("# Last session");
+    firstProcess.unmount();
+    render(<App />);
+    expect(await screen.findByTestId("markdown-editor")).toHaveTextContent("# Last session");
+  });
+
+  it.each(["workspace", "note"])("offers a usable startup when the last %s is unavailable", async (unavailable) => {
+    localStorage.setItem("simpler.recentWorkspaces", JSON.stringify([{ name: "notes", path: "/tmp/notes" }]));
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") {
+        if (unavailable === "workspace") return Promise.resolve({ ok: false, domain: "workspace", action: "open", data: null, error: "Workspace folder is unavailable" });
+        return reply({ name: "notes", path: "/tmp/notes", tree: [], metadata: { lastNotePath: null, githubWizardPostponed: true } });
+      }
+      if (request.domain === "git" && request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    if (unavailable === "workspace") {
+      expect(await screen.findByText("Workspace folder is unavailable")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Abrir carpeta" })).toBeEnabled();
+    } else {
+      expect(await screen.findByText("Create a note to start writing in notes.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "New note" })).toBeEnabled();
+    }
+    expect(screen.queryByTestId("markdown-editor")).not.toBeInTheDocument();
+  });
+
   it("creates a visible note in its collapsed folder and accepts typing immediately without refocusing on Local Save", async () => {
     const user = userEvent.setup();
     const writes: string[] = [];
