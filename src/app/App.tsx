@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ClassicShell } from "../components/ClassicShell";
+import { ClassicShell, type TreeActionTarget } from "../components/ClassicShell";
 import { isGitHubRepositoryUrl } from "../components/GitHubConnectionWizard";
 import {
   initialAppState,
@@ -968,8 +968,8 @@ export function App() {
     }
   };
 
-  const renameSelection = async () => {
-    const selectedPath = appState.activeNotePath ?? appState.activeFolderPath;
+  const renameSelection = async (target?: TreeActionTarget) => {
+    const selectedPath = target?.path ?? appState.activeNotePath ?? appState.activeFolderPath;
 
     if (!selectedPath || !appState.workspace) {
       return;
@@ -980,33 +980,38 @@ export function App() {
       return;
     }
 
-    const wasNote = appState.activeNotePath !== null;
     const response = await renameItem(appState.workspace.path, selectedPath, newName);
-    applyFilesystemOperation(response, (itemPath) => ({
-      activeFolderPath: wasNote ? parentFolderPath(itemPath) : itemPath,
-      activeNotePath: wasNote ? itemPath : null,
-      noteContent: wasNote ? appState.noteContent : "",
-      editorError: null,
-    }));
+    applyFilesystemOperation(response, (itemPath) => relocateCurrentSelection(selectedPath, itemPath));
   };
 
-  const moveActiveNote = async () => {
-    if (!appState.workspace || !appState.activeNotePath) {
+  const moveActiveNote = async (target?: TreeActionTarget) => {
+    const selectedPath = target?.path ?? appState.activeNotePath;
+    if (!appState.workspace || !selectedPath) {
       return;
     }
 
-    const targetFolderPath = await requestPrompt("Carpeta destino", appState.activeFolderPath);
+    const targetFolderPath = await requestPrompt("Carpeta destino", parentFolderPath(selectedPath));
     if (targetFolderPath === null) {
       return;
     }
 
-    const response = await moveNote(appState.workspace.path, appState.activeNotePath, targetFolderPath);
-    applyFilesystemOperation(response, (itemPath) => ({
-      activeFolderPath: parentFolderPath(itemPath),
-      activeNotePath: itemPath,
-      noteContent: appState.noteContent,
-      editorError: null,
-    }));
+    const response = target
+      ? await moveItem(appState.workspace.path, selectedPath, targetFolderPath)
+      : await moveNote(appState.workspace.path, selectedPath, targetFolderPath);
+    applyFilesystemOperation(response, (itemPath) => relocateCurrentSelection(selectedPath, itemPath));
+  };
+
+  const relocateCurrentSelection = (oldPath: string, newPath: string) => {
+    const relocate = (path: string) => path === oldPath ? newPath : path.startsWith(`${oldPath}/`) ? `${newPath}${path.slice(oldPath.length)}` : path;
+    const current = appStateRef.current;
+    const activeNotePath = current.activeNotePath ? relocate(current.activeNotePath) : null;
+    return {
+      activeFolderPath: activeNotePath && activeNotePath !== current.activeNotePath
+        ? parentFolderPath(activeNotePath) : relocate(current.activeFolderPath),
+      activeNotePath,
+      noteContent: current.noteContent,
+      editorError: current.editorError,
+    };
   };
 
   const moveItemToFolder = async (itemPath: string, targetFolderPath: string) => {
@@ -1029,14 +1034,14 @@ export function App() {
     }));
   };
 
-  const deleteSelection = async () => {
-    const selectedPath = appState.activeNotePath ?? appState.activeFolderPath;
+  const deleteSelection = async (target?: TreeActionTarget) => {
+    const selectedPath = target?.path ?? appState.activeNotePath ?? appState.activeFolderPath;
 
     if (!selectedPath || !appState.workspace) {
       return;
     }
 
-    const wasNote = appState.activeNotePath !== null;
+    const wasNote = target ? target.kind !== "folder" : appState.activeNotePath !== null;
     const confirmed = await requestConfirm(
       wasNote ? `¿Eliminar "${basename(selectedPath)}"?` : `¿Eliminar la carpeta "${basename(selectedPath)}" y todo su contenido?`,
     );
@@ -1045,12 +1050,17 @@ export function App() {
     }
 
     const response = await deleteItem(appState.workspace.path, selectedPath);
-    applyFilesystemOperation(response, (itemPath) => ({
-      activeFolderPath: itemPath,
-      activeNotePath: null,
-      noteContent: "",
-      editorError: null,
-    }));
+    applyFilesystemOperation(response, (itemPath) => {
+      const current = appStateRef.current;
+      const contains = (path: string | null) => path === selectedPath || path?.startsWith(`${selectedPath}/`);
+      const removesActiveNote = contains(current.activeNotePath);
+      return {
+        activeFolderPath: contains(current.activeFolderPath) ? itemPath : current.activeFolderPath,
+        activeNotePath: removesActiveNote ? null : current.activeNotePath,
+        noteContent: removesActiveNote ? "" : current.noteContent,
+        editorError: removesActiveNote ? null : current.editorError,
+      };
+    });
   };
 
   const restoreFromTrash = async (id: string) => {

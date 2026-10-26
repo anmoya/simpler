@@ -59,6 +59,63 @@ describe("App", () => {
     vi.restoreAllMocks();
   });
 
+  it.each(["Renombrar", "Mover", "Eliminar"])("uses the clicked tree item for %s while keeping the active note and its edits", async (action) => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    const operations: Array<{ action: string; payload: Record<string, string> }> = [];
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      const tree = ["today.md", "other.md"].map((path) => ({ name: path, path, kind: "note", children: [] }));
+      if (request.domain === "workspace" && request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree, metadata: { lastNotePath: "today.md", githubWizardPostponed: true } });
+      if (request.domain === "workspace" && ["remember-note", "remember-tree-state"].includes(request.action)) return reply({});
+      if (request.domain === "filesystem" && request.action === "read-note") {
+        if (request.payload.notePath !== "today.md") throw new Error("Opening an item menu must not read or select that note");
+        return reply({ content: "Current text" });
+      }
+      if (request.domain === "filesystem" && request.action === "write-note") return reply({ content: request.payload.content });
+      if (request.domain === "filesystem" && ["rename-item", "move-item", "delete-item"].includes(request.action)) {
+        operations.push(request);
+        return reply({ tree, itemPath: action === "Renombrar" ? "renamed.md" : action === "Mover" ? "archive/other.md" : "" });
+      }
+      if (request.domain === "git" && request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("X");
+    const currentText = editable.textContent;
+    const moreButton = screen.getByRole("button", { name: "Más acciones para other.md" });
+    await user.click(moreButton);
+    expect(screen.getByRole("menuitem", { name: "Renombrar" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Mover" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(moreButton).toHaveFocus();
+    if (action === "Renombrar") await user.click(moreButton);
+    else if (action === "Mover") {
+      screen.getByRole("button", { name: "other.md" }).focus();
+      await user.keyboard("{Shift>}{F10}{/Shift}");
+    } else fireEvent.contextMenu(screen.getByRole("button", { name: "other.md" }));
+    await user.click(screen.getByRole("menuitem", { name: action }));
+    const dialog = screen.getByRole("dialog");
+    if (action !== "Eliminar") {
+      const input = within(dialog).getByRole("textbox");
+      await user.clear(input);
+      await user.type(input, action === "Renombrar" ? "renamed" : "archive");
+    }
+    await user.click(within(dialog).getByRole("button", { name: action === "Eliminar" ? "Eliminar" : "Aceptar" }));
+    await waitFor(() => expect(operations).toHaveLength(1));
+    expect(operations[0].payload.itemPath).toBe("other.md");
+    expect(screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]")).toBe(editable);
+    expect(editable.textContent).toBe(currentText);
+    expect(screen.getByRole("button", { name: "Workspace Tree Mode" })).toHaveAccessibleDescription(/Modo libre/);
+    expect(screen.getByRole("button", { name: "Focus Active Note" })).toHaveAccessibleDescription(/mostrar la ruta de la nota activa/);
+  });
+
   it("previews an image without changing the active Raw Markdown note and returns focus", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue("/tmp/notes");
