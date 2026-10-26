@@ -1772,7 +1772,9 @@ fn resolve_git_conflict_payload(payload: serde_json::Value) -> Result<serde_json
         .map_err(|_| "workspacePath, notePath, and resolution are required".to_string())?;
     let workspace_path = PathBuf::from(&payload.workspace_path);
     ensure_workspace_folder(&workspace_path)?;
-    resolve_note_path(&payload.workspace_path, &payload.note_path)?;
+    if payload.note_path != tree_order::METADATA_PATH {
+        resolve_note_path(&payload.workspace_path, &payload.note_path)?;
+    }
     let result = resolve_git_conflict(
         &workspace_path,
         &payload.note_path,
@@ -1824,7 +1826,7 @@ fn read_git_workspace_status(
     if !git_command_succeeded(&status_output) {
         return Err(git_failure("failed to read git status", &status_output));
     }
-    let conflicted_files = conflicted_markdown_files(workspace_path, git)?;
+    let conflicted_files = conflicted_sync_files(workspace_path, git)?;
     let has_changes = !status_output.stdout.trim().is_empty();
 
     let sync_status = if !conflicted_files.is_empty() {
@@ -2229,7 +2231,7 @@ fn sync_git_workspace(
     if remote_has_branch {
         let pull_output = git.run(workspace_path, &["pull", "--rebase", remote, branch])?;
         if !git_command_succeeded(&pull_output) {
-            let conflicted_files = conflicted_markdown_files(workspace_path, git)?;
+            let conflicted_files = conflicted_sync_files(workspace_path, git)?;
             if !conflicted_files.is_empty() {
                 return Ok(conflict_result(conflicted_files));
             }
@@ -2260,7 +2262,7 @@ fn sync_git_workspace(
     })
 }
 
-fn conflicted_markdown_files(
+fn conflicted_sync_files(
     workspace_path: &Path,
     git: &impl GitCommandRunner,
 ) -> Result<Vec<String>, String> {
@@ -2273,7 +2275,7 @@ fn conflicted_markdown_files(
         .stdout
         .lines()
         .map(str::trim)
-        .filter(|path| !path.is_empty() && is_markdown_note(Path::new(path)))
+        .filter(|path| *path == tree_order::METADATA_PATH || (!path.is_empty() && is_markdown_note(Path::new(path))))
         .map(str::to_string)
         .collect())
 }
@@ -2292,9 +2294,23 @@ fn resolve_git_conflict(
     resolution: ConflictResolution,
     git: &impl GitCommandRunner,
 ) -> Result<GitSyncResult, String> {
-    let conflicted_files = conflicted_markdown_files(workspace_path, git)?;
+    let conflicted_files = conflicted_sync_files(workspace_path, git)?;
     if !conflicted_files.iter().any(|path| path == note_path) {
         return Err("note is not an unresolved Sync conflict".to_string());
+    }
+
+    if note_path == tree_order::METADATA_PATH {
+        let stage = match resolution {
+            ConflictResolution::Local => "3",
+            ConflictResolution::Remote => "2",
+            ConflictResolution::Manual => return Err("Manual Tree Order conflicts require choosing the local or remote version".into()),
+        };
+        let object = format!(":{stage}:{note_path}");
+        let candidate = git.run(workspace_path, &["show", &object])?;
+        if !git_command_succeeded(&candidate) {
+            return Err(git_failure("failed to read the selected Manual Tree Order", &candidate));
+        }
+        tree_order::parse(&candidate.stdout)?;
     }
 
     match resolution {
@@ -2320,17 +2336,19 @@ fn resolve_git_conflict(
         "failed to stage the conflict resolution",
     )?;
 
-    let remaining = conflicted_markdown_files(workspace_path, git)?;
+    let remaining = conflicted_sync_files(workspace_path, git)?;
     if !remaining.is_empty() {
         return Ok(conflict_result(remaining));
     }
 
-    run_git_step(
-        git,
-        workspace_path,
-        &["-c", "core.editor=true", "rebase", "--continue"],
-        "failed to continue Sync after conflict resolution",
-    )?;
+    let continued = git.run(workspace_path, &["-c", "core.editor=true", "rebase", "--continue"])?;
+    if !git_command_succeeded(&continued) {
+        let remaining = conflicted_sync_files(workspace_path, git)?;
+        if !remaining.is_empty() {
+            return Ok(conflict_result(remaining));
+        }
+        return Err(git_failure("failed to continue Sync after conflict resolution", &continued));
+    }
     sync_git_workspace(workspace_path, git)
 }
 
@@ -2905,7 +2923,7 @@ mod commands {
         if (request.domain == NativeDomain::Filesystem
             && (request.action == "preview-image" || request.action == "open-image-external"))
             || (request.domain == NativeDomain::Git
-                && (request.action == "check-remote" || request.action == "sync"))
+                && (request.action == "check-remote" || request.action == "sync" || request.action == "resolve-conflict"))
         {
             let action = request.action.clone();
             let domain = request.domain.clone();
@@ -3272,6 +3290,7 @@ pub fn run() {}
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    include!("sync_order_tests.rs");
 
     struct StubEnvLookup(Option<&'static str>);
 

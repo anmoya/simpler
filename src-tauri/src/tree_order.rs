@@ -8,14 +8,18 @@ use std::fs;
 use std::path::{Component, Path};
 use std::sync::Mutex;
 
-const METADATA_PATH: &str = ".simpler/workspace.json";
+pub(super) const METADATA_PATH: &str = ".simpler/workspace.json";
 static SHARED_ORDER: Mutex<()> = Mutex::new(());
 
 fn read(workspace: &Path) -> Result<SharedWorkspaceMetadata, String> {
     ensure_workspace_metadata(workspace)?;
     let content = fs::read_to_string(workspace.join(METADATA_PATH))
         .map_err(|error| format!("failed to read shared Workspace metadata: {error}"))?;
-    let metadata: SharedWorkspaceMetadata = serde_json::from_str(&content)
+    parse(&content)
+}
+
+pub(super) fn parse(content: &str) -> Result<SharedWorkspaceMetadata, String> {
+    let metadata: SharedWorkspaceMetadata = serde_json::from_str(content)
         .map_err(|error| format!("invalid shared Workspace metadata: {error}"))?;
     validate(&metadata)?;
     Ok(metadata)
@@ -57,7 +61,18 @@ pub(super) fn apply(workspace: &Path, tree: &mut [WorkspaceTreeItem]) -> Result<
     let _guard = SHARED_ORDER
         .lock()
         .map_err(|_| "Manual Tree Order is unavailable".to_string())?;
-    let mut metadata = read(workspace)?;
+    let mut metadata = match read(workspace) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            // Only an actual unresolved Git conflict permits an uncustomized tree.
+            // Do not reconcile or rewrite the conflict-markered shared file.
+            let conflicts = super::conflicted_sync_files(workspace, &super::SystemGitCommandRunner);
+            if conflicts.is_ok_and(|paths| paths.iter().any(|path| path == METADATA_PATH)) {
+                return Ok(());
+            }
+            return Err(error);
+        }
+    };
     let previous = metadata.manual_tree_order.clone();
     let mut existing_folders = BTreeSet::new();
     reconcile(

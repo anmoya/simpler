@@ -281,7 +281,7 @@ describe("ClassicShell", () => {
       onEditConflictManually,
     });
 
-    expect(screen.getByRole("region", { name: "Conflicted Markdown files" })).toHaveTextContent("daily/today.md");
+    expect(screen.getByRole("region", { name: "Sync conflicts" })).toHaveTextContent("daily/today.md");
     await userEvent.click(screen.getByRole("button", { name: "Use local" }));
     await userEvent.click(screen.getByRole("button", { name: "Use remote" }));
     await userEvent.click(screen.getByRole("button", { name: "Edit manually" }));
