@@ -1223,7 +1223,34 @@ fn rename_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
 
     fs::rename(&item_path, &target_path)
         .map_err(|error| format!("failed to rename item: {error}"))?;
+    relocate_local_session_paths(&workspace_path, &item_path, &target_path)?;
     workspace_operation_result(&workspace_path, &target_path)
+}
+
+fn relocate_local_session_paths(
+    workspace_path: &Path,
+    old_path: &Path,
+    new_path: &Path,
+) -> Result<(), String> {
+    let mut metadata = read_local_workspace_metadata(workspace_path)?;
+    let old_relative = old_path.strip_prefix(workspace_path)
+        .map_err(|_| "item is outside the Workspace".to_string())?;
+    let relocate = |path: &str| {
+        Path::new(path).strip_prefix(old_relative).ok().map(|suffix| {
+            relative_workspace_path(workspace_path, &new_path.join(suffix))
+        })
+    };
+    if let Some(path) = metadata.last_note_path.as_ref() {
+        if let Some(relocated) = relocate(path) {
+            metadata.last_note_path = Some(relocated);
+        }
+    }
+    for path in &mut metadata.open_folder_paths {
+        if let Some(relocated) = relocate(path) {
+            *path = relocated;
+        }
+    }
+    write_local_workspace_metadata(workspace_path, &metadata)
 }
 
 fn move_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1247,6 +1274,7 @@ fn move_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, St
 
     fs::rename(&note_path, &target_path)
         .map_err(|error| format!("failed to move note: {error}"))?;
+    relocate_local_session_paths(&workspace_path, &note_path, &target_path)?;
     workspace_operation_result(&workspace_path, &target_path)
 }
 
@@ -1461,6 +1489,7 @@ fn move_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, St
 
     fs::rename(&item_path, &target_path)
         .map_err(|error| format!("failed to move item: {error}"))?;
+    relocate_local_session_paths(&workspace_path, &item_path, &target_path)?;
     workspace_operation_result(&workspace_path, &target_path)
 }
 
@@ -4110,6 +4139,67 @@ mod tests {
             reopened_response.data.unwrap()["metadata"]["lastNotePath"],
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn restores_last_note_after_renaming_its_identity_or_parent_folder() {
+        let workspace = test_workspace("last_note_after_rename");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::write(workspace.join("daily/today.md"), "# Today").unwrap();
+        let remember = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "remember-note".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "notePath": "daily/today.md" }),
+        });
+        assert!(remember.ok);
+        for (item_path, new_name, expected_note) in [
+            ("daily/today.md", "morning", "daily/morning.md"),
+            ("daily", "journal", "journal/morning.md"),
+        ] {
+            let rename = dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Filesystem,
+                action: "rename-item".to_string(),
+                payload: serde_json::json!({ "workspacePath": workspace, "itemPath": item_path, "newName": new_name }),
+            });
+            assert!(rename.ok, "{:?}", rename.error);
+            let reopened = dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Workspace,
+                action: "open".to_string(),
+                payload: serde_json::json!({ "workspacePath": workspace }),
+            });
+            assert_eq!(reopened.data.unwrap()["metadata"]["lastNotePath"], expected_note);
+        }
+    }
+
+    #[test]
+    fn restores_last_note_after_moving_a_note_or_its_parent_folder() {
+        let workspace = test_workspace("last_note_after_move");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::create_dir_all(workspace.join("archive")).unwrap();
+        fs::write(workspace.join("daily/today.md"), "# Today").unwrap();
+        let remember = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "remember-note".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "notePath": "daily/today.md" }),
+        });
+        assert!(remember.ok);
+        for (action, item_path, target_folder, expected_note) in [
+            ("move-note", "daily/today.md", "archive", "archive/today.md"),
+            ("move-item", "archive", "daily", "daily/archive/today.md"),
+        ] {
+            let moved = dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Filesystem,
+                action: action.to_string(),
+                payload: serde_json::json!({ "workspacePath": workspace, "itemPath": item_path, "notePath": item_path, "targetFolderPath": target_folder }),
+            });
+            assert!(moved.ok, "{:?}", moved.error);
+            let reopened = dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Workspace,
+                action: "open".to_string(),
+                payload: serde_json::json!({ "workspacePath": workspace }),
+            });
+            assert_eq!(reopened.data.unwrap()["metadata"]["lastNotePath"], expected_note);
+        }
     }
 
     #[test]

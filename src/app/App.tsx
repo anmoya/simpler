@@ -125,6 +125,7 @@ export function App() {
     new Promise<boolean>((resolve) => setDialog({ kind: "confirm", title, resolve }));
   const appStateRef = useRef(appState);
   const activeWorkspacePathRef = useRef<string | null>(null);
+  const startupRestoredRef = useRef(false);
   const noteHistoryRequestRef = useRef(0);
   const globalSearchRequestRef = useRef(0);
   const globalSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -637,6 +638,15 @@ export function App() {
       openGitHubConnectionWizard();
     }
   };
+
+  useEffect(() => {
+    if (startupRestoredRef.current) return;
+    startupRestoredRef.current = true;
+    const lastWorkspace = readRecentWorkspaces()[0];
+    if (lastWorkspace) {
+      void openWorkspaceAtPath(lastWorkspace.path);
+    }
+  }, []);
 
   const selectFolder = (folderPath: string) => {
     noteHistoryRequestRef.current += 1;
