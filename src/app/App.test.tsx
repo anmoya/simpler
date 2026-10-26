@@ -100,6 +100,67 @@ describe("App", () => {
     expect(screen.queryByTestId("markdown-editor")).not.toBeInTheDocument();
   });
 
+  it("shows incoming remote changes and retries a disconnected check without syncing", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/remote-notes");
+    let checks = 0;
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const answer = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return answer({ name: "remote-notes", path: "/tmp/remote-notes", tree: [], metadata: { lastNotePath: null } });
+      if (request.action === "status" && request.domain === "git") return answer({ isRepository: true, hasRemote: true, syncStatus: "sincronizado", conflictedFiles: [] });
+      if (request.action === "github-remote") return answer({ remote: { name: "origin", url: "https://github.com/simpler/notes.git" } });
+      if (request.action === "check-remote") {
+        checks += 1;
+        return answer(checks !== 2
+          ? { state: "disconnected", ahead: 0, behind: 0, hasLocalChanges: false, message: "Could not resolve host" }
+          : { state: "incoming", ahead: 0, behind: 2, hasLocalChanges: true, message: null });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(await screen.findByRole("button", { name: "Desconectado — reintentar" }));
+    const sync = await screen.findByRole("button", { name: "Sincronizar — cambios remotos disponibles" });
+    expect(sync).toHaveAttribute("title", expect.stringContaining("cambios locales y remotos"));
+    expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "sync")).toBe(false);
+    fireEvent.focus(window);
+    const disconnected = await screen.findByRole("button", { name: "Desconectado — reintentar" });
+    expect(disconnected).toHaveAttribute("title", expect.stringContaining("Última comprobación correcta:"));
+  });
+
+  it("ignores old Workspace remote results and coalesces focus checks while one is pending", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValueOnce("/tmp/first").mockResolvedValueOnce("/tmp/second");
+    let finishFirst!: (response: unknown) => void;
+    const checked: string[] = [];
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const answer = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return answer({ name: request.payload.workspacePath.split("/").pop(), path: request.payload.workspacePath, tree: [], metadata: { lastNotePath: null } });
+      if (request.action === "status" && request.domain === "git") return answer({ isRepository: true, hasRemote: true, syncStatus: "sincronizado", conflictedFiles: [] });
+      if (request.action === "github-remote") return answer({ remote: { name: "origin", url: "https://github.com/simpler/notes.git" } });
+      if (request.action === "check-remote") {
+        checked.push(request.payload.workspacePath);
+        if (request.payload.workspacePath === "/tmp/first") return new Promise((resolve) => { finishFirst = resolve; });
+        return answer({ state: "up-to-date", ahead: 0, behind: 0, hasLocalChanges: false, message: null });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await screen.findByRole("button", { name: "Comprobando actualizaciones…" });
+    fireEvent.focus(window);
+    fireEvent.focus(window);
+    expect(checked).toEqual(["/tmp/first"]);
+    await user.click(screen.getByRole("button", { name: /first/ }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    finishFirst({ ok: true, data: { state: "incoming", behind: 3, ahead: 0, hasLocalChanges: false, message: null }, error: null });
+    await waitFor(() => expect(checked).toEqual(["/tmp/first", "/tmp/second"]));
+    await screen.findByRole("button", { name: "Sincronizar" });
+    expect(screen.queryByRole("button", { name: "Sincronizar — cambios remotos disponibles" })).not.toBeInTheDocument();
+  });
+
   it("creates a visible note in its collapsed folder and accepts typing immediately without refocusing on Local Save", async () => {
     const user = userEvent.setup();
     const writes: string[] = [];
