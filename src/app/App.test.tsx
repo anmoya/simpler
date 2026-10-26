@@ -116,6 +116,61 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Focus Active Note" })).toHaveAccessibleDescription(/mostrar la ruta de la nota activa/);
   });
 
+  it("previews an image without changing the active Raw Markdown note and returns focus", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    let finishPreview!: (value: unknown) => void;
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const result = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return result({ name: "notes", path: "/tmp/notes", tree: [
+        { name: "draft.md", path: "draft.md", kind: "note", children: [] },
+        { name: "assets", path: "assets", kind: "folder", children: [
+          { name: "photo.png", path: "assets/photo.png", kind: "image", children: [] },
+        ] },
+      ], metadata: { lastNotePath: "draft.md", openFolderPaths: ["assets"], githubWizardPostponed: true } });
+      if (request.action === "status") return result({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return result({ remote: null });
+      if (request.action === "read-note") return result({ content: "# Draft\nLocal work stays here" });
+      if (request.action === "write-note") return new Promise(() => {});
+      if (request.action === "preview-image") return new Promise((resolve) => { finishPreview = resolve; });
+      return result({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await screen.findByText("Local work stays here", { exact: false });
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    await user.click(editable);
+    await user.type(editable, "{End} unsaved");
+    const editedContent = screen.getByTestId("markdown-editor").textContent;
+    expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "write-note")).toBe(true);
+    const imageButton = screen.getByRole("button", { name: "photo.png" });
+    await user.click(imageButton);
+    const preview = screen.getByRole("dialog", { name: "Vista previa de imagen" });
+    expect(within(preview).getByText("Cargando imagen…")).toBeInTheDocument();
+    expect(screen.getByTestId("markdown-editor").textContent).toBe(editedContent);
+    finishPreview({ ok: true, domain: "filesystem", action: "preview-image", data: { name: "photo.png", sizeBytes: 1234, width: 40, height: 30, dataUrl: "data:image/png;base64,aGVsbG8=" }, error: null });
+    expect(await within(preview).findByText("1.2 KiB · 40 × 30 px")).toBeInTheDocument();
+    await user.click(within(preview).getByRole("button", { name: "Abrir externamente" }));
+    expect(mocks.invoke).toHaveBeenCalledWith("native_command", { request: { domain: "filesystem", action: "open-image-external", payload: { workspacePath: "/tmp/notes", imagePath: "assets/photo.png" } } });
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Vista previa de imagen" })).not.toBeInTheDocument();
+    expect(imageButton).toHaveFocus();
+    expect(screen.getByTestId("markdown-editor").textContent).toBe(editedContent);
+    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "read-note").map(([, { request }]) => request.payload.notePath)).toEqual(["draft.md"]);
+    await user.click(imageButton);
+    finishPreview({ ok: false, domain: "filesystem", action: "preview-image", data: null, error: "Imagen demasiado grande" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Imagen demasiado grande");
+    await user.click(screen.getByRole("button", { name: "Reintentar" }));
+    expect(screen.getByText("Cargando imagen…")).toBeInTheDocument();
+    finishPreview({ ok: true, domain: "filesystem", action: "preview-image", data: { name: "photo.png", sizeBytes: 1234, width: 40, height: 30, dataUrl: "data:image/png;base64,aGVsbG8=" }, error: null });
+    const recoveredImage = await screen.findByRole("img", { name: "photo.png" });
+    fireEvent.error(recoveredImage);
+    expect(screen.getByRole("alert")).toHaveTextContent("La imagen no se puede mostrar");
+    await user.click(screen.getByRole("button", { name: "Cerrar vista previa" }));
+    expect(screen.getByTestId("markdown-editor").textContent).toBe(editedContent);
+  });
+
   it("restores the last Workspace and note on process startup without opening the folder menu", async () => {
     localStorage.setItem("simpler.recentWorkspaces", JSON.stringify([{ name: "notes", path: "/tmp/notes" }]));
     mocks.invoke.mockImplementation((_command: string, { request }) => {
