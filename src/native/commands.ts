@@ -97,7 +97,7 @@ export interface DeviceFlowInstructions {
 export interface WorkspaceTreeItem {
   name: string;
   path: string;
-  kind: "folder" | "note";
+  kind: "folder" | "note" | "image";
   children: WorkspaceTreeItem[];
 }
 
@@ -109,6 +109,22 @@ export function invokeNativeCommand<TData, TPayload = unknown>(
 
 export interface NoteContent {
   content: string;
+}
+
+export interface ImagePreview {
+  name: string;
+  sizeBytes: number;
+  width: number;
+  height: number;
+  dataUrl: string;
+}
+
+export function previewImage(workspacePath: string, imagePath: string) {
+  return invokeNativeCommand<ImagePreview>({ domain: "filesystem", action: "preview-image", payload: { workspacePath, imagePath } });
+}
+
+export function openImageExternally(workspacePath: string, imagePath: string) {
+  return invokeNativeCommand({ domain: "filesystem", action: "open-image-external", payload: { workspacePath, imagePath } });
 }
 
 export interface FilesystemOperationResult {

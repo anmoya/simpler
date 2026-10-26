@@ -16,6 +16,7 @@ import type {
 import { uiZoomSteps, defaultUiZoom, editorFontSizeSteps, defaultEditorFontSize } from "../app/appState";
 import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
+import { ImagePreviewDialog } from "./ImagePreviewDialog";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { NoteHistoryPanel } from "./NoteHistoryPanel";
 import { Icon } from "./icons";
@@ -224,6 +225,8 @@ export function ClassicShell({
   updateNotice,
   onInstallAndRestart,
 }: ClassicShellProps) {
+  const [imagePreviewPath, setImagePreviewPath] = useState<string | null>(null);
+  useEffect(() => { setImagePreviewPath(null); }, [workspacePath]);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCommandHelpOpen, setIsCommandHelpOpen] = useState(false);
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
@@ -992,6 +995,7 @@ export function ClassicShell({
                     onToggleFolder={onToggleFolder}
                     onSelectFolder={onSelectFolder}
                     onSelectNote={onSelectNote}
+                    onSelectImage={setImagePreviewPath}
                     onItemContextMenu={(event, kind, path) => {
                       event.preventDefault();
                       if (kind === "folder") {
@@ -1194,6 +1198,7 @@ export function ClassicShell({
       {isCommandHelpOpen ? (
         <CommandHelp commands={availableCommands} onClose={() => setIsCommandHelpOpen(false)} />
       ) : null}
+      {workspacePath && imagePreviewPath ? <ImagePreviewDialog key={`${workspacePath}:${imagePreviewPath}`} workspacePath={workspacePath} imagePath={imagePreviewPath} onClose={() => setImagePreviewPath(null)} /> : null}
       {dialog ? <AppDialog dialog={dialog} onSubmit={onDialogSubmit} onCancel={onDialogCancel} /> : null}
       {closeSyncPrompt ? (
         <CloseSyncPromptDialog
@@ -1768,6 +1773,7 @@ function WorkspaceTree({
   onToggleFolder,
   onSelectFolder,
   onSelectNote,
+  onSelectImage,
   onItemContextMenu,
   onMoveItem,
   dragOverFolder,
@@ -1781,6 +1787,7 @@ function WorkspaceTree({
   onToggleFolder: (folderPath: string) => void;
   onSelectFolder: (folderPath: string) => void;
   onSelectNote: (notePath: string) => void;
+  onSelectImage: (imagePath: string) => void;
   onItemContextMenu: (event: MouseEvent, kind: "folder" | "note", path: string) => void;
   onMoveItem: (itemPath: string, targetFolderPath: string) => void;
   dragOverFolder: string | null;
@@ -1880,8 +1887,8 @@ function WorkspaceTree({
               }
               title={item.path}
               draggable
-              onClick={() => onSelectNote(item.path)}
-              onContextMenu={(event) => onItemContextMenu(event, "note", item.path)}
+              onClick={() => item.kind === "image" ? onSelectImage(item.path) : onSelectNote(item.path)}
+              onContextMenu={(event) => { if (item.kind === "image") { event.preventDefault(); onSelectImage(item.path); } else onItemContextMenu(event, "note", item.path); }}
               onDragStart={(event) => {
                 event.stopPropagation();
                 event.dataTransfer.setData("text/plain", item.path);
@@ -1889,7 +1896,7 @@ function WorkspaceTree({
               }}
             >
               <span className="note-tree__label">
-                <Icon name="note" size={14} />
+                <Icon name={item.kind === "image" ? "image" : "note"} size={14} />
                 {item.name}
               </span>
             </button>
@@ -1916,6 +1923,7 @@ function WorkspaceTree({
                   onToggleFolder={onToggleFolder}
                   onSelectFolder={onSelectFolder}
                   onSelectNote={onSelectNote}
+                  onSelectImage={onSelectImage}
                   onItemContextMenu={onItemContextMenu}
                   onMoveItem={onMoveItem}
                   dragOverFolder={dragOverFolder}
