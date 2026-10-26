@@ -146,6 +146,12 @@ export interface FilesystemOperationResult {
   itemPath: string;
 }
 
+export function setTreeOrder(workspacePath: string, parentPath: string, orderedPaths: string[] | null) {
+  return invokeNativeCommand<FilesystemOperationResult>({
+    domain: "workspace", action: "set-tree-order", payload: { workspacePath, parentPath, orderedPaths },
+  });
+}
+
 export interface TrashEntry {
   id: string;
   originalRelativePath: string;

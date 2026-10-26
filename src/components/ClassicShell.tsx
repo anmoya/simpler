@@ -94,6 +94,8 @@ export interface ClassicShellProps {
   onCreateFolder: () => void;
   onCreateNote: () => void;
   onRenameSelection: (target?: TreeActionTarget) => void;
+  onSetTreeOrder?: (parentPath: string, orderedPaths: string[] | null) => void;
+  treeOrderPending?: boolean;
   onMoveActiveNote: (target?: TreeActionTarget) => void;
   onDeleteSelection: (target?: TreeActionTarget) => void;
   trashEntries: TrashEntry[];
@@ -191,6 +193,8 @@ export function ClassicShell({
   onCreateFolder,
   onCreateNote,
   onRenameSelection,
+  onSetTreeOrder,
+  treeOrderPending = false,
   onMoveActiveNote,
   onDeleteSelection,
   trashEntries,
@@ -1279,6 +1283,14 @@ export function ClassicShell({
           onRenameSelection={() => { onRenameSelection(treeContextMenu.target); closeTreeItemMenu(); }}
           onMoveActiveNote={() => { onMoveActiveNote(treeContextMenu.target); closeTreeItemMenu(); }}
           onDeleteSelection={() => { onDeleteSelection(treeContextMenu.target); closeTreeItemMenu(); }}
+          siblings={treeSiblings(workspaceTree, treeContextMenu.target.path)}
+          targetPath={treeContextMenu.target.path}
+          orderPending={treeOrderPending}
+          onSetOrder={onSetTreeOrder ? (orderedPaths) => {
+            const parentPath = treeContextMenu.target.path.split("/").slice(0, -1).join("/");
+            onSetTreeOrder(parentPath, orderedPaths);
+            closeTreeItemMenu(true);
+          } : undefined}
         />
       ) : null}
     </div>
@@ -1391,14 +1403,35 @@ function CloseSyncPromptDialog({
   );
 }
 
-function TreeContextMenu({ x, y, onClose, onRenameSelection, onMoveActiveNote, onDeleteSelection }: {
+function treeSiblings(items: WorkspaceTreeItem[], path: string): WorkspaceTreeItem[] {
+  if (items.some((item) => item.path === path)) return items;
+  for (const item of items) {
+    if (item.kind === "folder") {
+      const siblings = treeSiblings(item.children, path);
+      if (siblings.length) return siblings;
+    }
+  }
+  return [];
+}
+
+function TreeContextMenu({ x, y, onClose, onRenameSelection, onMoveActiveNote, onDeleteSelection, siblings, targetPath, onSetOrder, orderPending }: {
   x: number;
   y: number;
   onClose: () => void;
   onRenameSelection: () => void;
   onMoveActiveNote: () => void;
   onDeleteSelection: () => void;
+  siblings: WorkspaceTreeItem[];
+  targetPath: string;
+  onSetOrder?: (orderedPaths: string[] | null) => void;
+  orderPending: boolean;
 }) {
+  const index = siblings.findIndex((item) => item.path === targetPath);
+  const move = (direction: -1 | 1) => {
+    const paths = siblings.map((item) => item.path);
+    [paths[index], paths[index + direction]] = [paths[index + direction], paths[index]];
+    onSetOrder?.(paths);
+  };
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => { menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus(); }, []);
   return (
@@ -1406,7 +1439,7 @@ function TreeContextMenu({ x, y, onClose, onRenameSelection, onMoveActiveNote, o
       style={{ left: `min(${x}px, calc(100vw - 14rem))`, top: `min(${y}px, calc(100vh - 10rem))` }}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
-        const buttons = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
+        const buttons = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []);
         const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
         if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
           event.preventDefault();
@@ -1420,6 +1453,11 @@ function TreeContextMenu({ x, y, onClose, onRenameSelection, onMoveActiveNote, o
       <button type="button" role="menuitem" onClick={onRenameSelection}><Icon name="rename" size={14} />Renombrar</button>
       <button type="button" role="menuitem" onClick={onMoveActiveNote}><Icon name="move" size={14} />Mover</button>
       <button type="button" role="menuitem" className="context-menu__danger" onClick={onDeleteSelection}><Icon name="trash" size={14} />Eliminar</button>
+      {onSetOrder ? <>
+        <button type="button" role="menuitem" disabled={orderPending || index <= 0} onClick={() => move(-1)}><Icon name="arrow-up" size={14} />Subir</button>
+        <button type="button" role="menuitem" disabled={orderPending || index < 0 || index >= siblings.length - 1} onClick={() => move(1)}><Icon name="arrow-down" size={14} />Bajar</button>
+        <button type="button" role="menuitem" disabled={orderPending} onClick={() => onSetOrder(null)}><Icon name="tree-mode" size={14} />Restablecer orden alfabético</button>
+      </> : null}
     </div>
   );
 }

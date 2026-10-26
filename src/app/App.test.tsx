@@ -188,6 +188,83 @@ describe("App", () => {
     expect(origin).toHaveFocus();
   });
 
+  it.each(["Renombrar", "Mover", "Eliminar"])("waits for pending Local Save before %s mutates the active note path", async (action) => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    let finishSave!: (value: unknown) => void;
+    const mutations: string[] = [];
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      const tree = [{ name: "a.md", path: "a.md", kind: "note", children: [] }];
+      if (request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree, metadata: { lastNotePath: "a.md", githubWizardPostponed: true } });
+      if (request.action === "read-note") return reply({ content: "Keep writing" });
+      if (request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      if (request.action === "write-note") return new Promise((resolve) => { finishSave = resolve; });
+      if (["rename-item", "move-item", "delete-item"].includes(request.action)) {
+        mutations.push(request.action);
+        return reply({ tree, itemPath: "changed.md" });
+      }
+      return reply({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editable = (await screen.findByTestId("markdown-editor")).querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("X");
+    await user.click(screen.getByRole("button", { name: "Más acciones para a.md" }));
+    await user.click(screen.getByRole("menuitem", { name: action }));
+    const dialog = screen.getByRole("dialog");
+    if (action !== "Eliminar") {
+      const input = within(dialog).getByRole("textbox");
+      await user.clear(input);
+      await user.type(input, "changed");
+    }
+    await user.click(within(dialog).getByRole("button", { name: action === "Eliminar" ? "Eliminar" : "Aceptar" }));
+    expect(mutations).toEqual([]);
+    finishSave({ ok: true, domain: "filesystem", action: "write-note", data: {}, error: null });
+    await waitFor(() => expect(mutations).toHaveLength(1));
+  });
+
+  it("reorders mixed siblings from item menus and shows a failed reset without losing the active note", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    let tree = [
+      { name: "folder", path: "folder", kind: "folder", children: [] },
+      { name: "a.md", path: "a.md", kind: "note", children: [] },
+      { name: "z.png", path: "z.png", kind: "image", children: [] },
+    ];
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree, metadata: { lastNotePath: "a.md", githubWizardPostponed: true } });
+      if (request.action === "read-note") return reply({ content: "Keep writing" });
+      if (request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      if (request.action === "set-tree-order") {
+        if (request.payload.orderedPaths === null) return Promise.resolve({ ok: false, domain: "workspace", action: "set-tree-order", data: null, error: "Manual Tree Order could not be saved" });
+        tree = request.payload.orderedPaths.map((path: string) => tree.find((item) => item.path === path)!);
+        return reply({ tree, itemPath: request.payload.parentPath });
+      }
+      return reply({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editor = await screen.findByTestId("markdown-editor");
+    await user.click(screen.getByRole("button", { name: "Más acciones para z.png" }));
+    expect(screen.getByRole("menuitem", { name: "Bajar" })).toBeDisabled();
+    await user.click(screen.getByRole("menuitem", { name: "Subir" }));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^(folder|a.md|z.png)$/ }).map((button) => button.textContent)).toEqual(["folder", "z.png", "a.md"]));
+    expect(editor).toHaveTextContent("Keep writing");
+    await user.click(screen.getByRole("button", { name: "Más acciones para folder" }));
+    expect(screen.getByRole("menuitem", { name: "Subir" })).toBeDisabled();
+    await user.click(screen.getByRole("menuitem", { name: "Restablecer orden alfabético" }));
+    expect(await screen.findByText("Manual Tree Order could not be saved")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^(folder|a.md|z.png)$/ }).map((button) => button.textContent)).toEqual(["folder", "z.png", "a.md"]);
+    expect(editor).toHaveTextContent("Keep writing");
+  });
+
   it.each(["Renombrar", "Mover", "Eliminar"])("uses the clicked tree item for %s while keeping the active note and its edits", async (action) => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue("/tmp/notes");
