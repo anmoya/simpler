@@ -303,6 +303,7 @@ button {
 .workspace-clone-link,
 .editor-toolbar button,
 .sync-panel button,
+.trash-panel button,
 .command-popover button {
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -319,6 +320,7 @@ button {
 .workspace-clone-link:hover,
 .editor-toolbar button:not(:disabled):hover,
 .sync-panel button:not(:disabled):hover,
+.trash-panel button:not(:disabled):hover,
 .command-popover button:hover {
   border-color: var(--color-border);
   background: var(--color-control);
@@ -339,12 +341,30 @@ button {
 .workspace-clone-link:focus-visible,
 .editor-toolbar button:focus-visible,
 .sync-panel button:focus-visible,
+.trash-panel button:focus-visible,
 .command-popover button:focus-visible,
 .global-search__field:focus-within,
 .file-search input:focus-visible {
   outline: none;
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px var(--color-accent-ring);
+}
+
+.trash-panel button {
+  padding: 6px 10px;
+  border-color: var(--color-border);
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.trash-panel button:not(:disabled):hover {
+  background: var(--color-active);
+}
+
+.trash-panel button:disabled {
+  color: var(--color-muted);
+  cursor: default;
 }
 
 .workspace-trigger {
@@ -1368,3 +1388,8 @@ button {
 .image-preview__canvas img { display: block; max-width: 100%; max-height: 55vh; object-fit: contain; }
 .image-preview__actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; }
 .image-preview button { color: var(--color-text); background: var(--color-subtle); padding: 7px 10px; }
+
+.remote-sync-control { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--color-text); background: var(--color-control); border: 1px solid var(--color-border); border-radius: var(--radius-control, 6px); padding: 0.25rem 0.55rem; cursor: pointer; font: inherit; }
+.remote-sync-control--incoming { font-weight: 700; border-color: var(--color-accent); background: var(--color-active); color: var(--color-text); }
+.remote-sync-control:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.remote-sync-control:disabled { cursor: default; opacity: .7; }

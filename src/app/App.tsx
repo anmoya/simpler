@@ -39,6 +39,8 @@ import {
   githubRemote,
   gitSync,
   gitStatus,
+  checkRemote,
+  type RemoteAwareness,
   githubAuthStatus,
   pollGitHubDeviceFlow,
   resolveGitConflict,
@@ -110,12 +112,18 @@ export function App() {
     themeMode: readThemeMode(),
     sidebarCollapsed: readSidebarCollapsed(),
   }));
+  const [remoteCheckEnabled, setRemoteCheckEnabled] = useState(false);
+  const [remoteAwareness, setRemoteAwareness] = useState<RemoteAwareness>({ checking: false, result: null, lastSuccessfulCheck: null });
+  const remoteCheckRef = useRef<{ path: string; promise: Promise<void> } | null>(null);
+  const syncInFlightRef = useRef(false);
+  const remoteCheckRequestRef = useRef<(path: string) => Promise<void>>(async () => undefined);
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
   const [closeSyncPrompt, setCloseSyncPrompt] = useState<CloseSyncPromptState | null>(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [uiZoom, setUiZoomState] = useState<UiZoom>(() => readUiZoom());
   const [editorFontSize, setEditorFontSizeState] = useState<EditorFontSize>(() => readEditorFontSize());
   const [noteHistoryPanel, setNoteHistoryPanel] = useState<NoteHistoryPanelState>(closedNoteHistoryPanel);
+  const [editorFocusRequest, setEditorFocusRequest] = useState(0);
 
   const requestPrompt = (title: string, defaultValue = "") =>
     new Promise<string | null>((resolve) => setDialog({ kind: "prompt", title, defaultValue, resolve }));
@@ -124,6 +132,7 @@ export function App() {
     new Promise<boolean>((resolve) => setDialog({ kind: "confirm", title, resolve }));
   const appStateRef = useRef(appState);
   const activeWorkspacePathRef = useRef<string | null>(null);
+  const startupRestoredRef = useRef(false);
   const noteHistoryRequestRef = useRef(0);
   const globalSearchRequestRef = useRef(0);
   const globalSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -611,6 +620,8 @@ export function App() {
       fileSearchJump: null,
     }));
     activeWorkspacePathRef.current = openedWorkspace.path;
+    setRemoteCheckEnabled(false);
+    setRemoteAwareness({ checking: false, result: null, lastSuccessfulCheck: null });
 
     if (openedWorkspace.metadata.lastNotePath) {
       await openNoteInWorkspace(openedWorkspace.path, openedWorkspace.metadata.lastNotePath, null, true, true, {
@@ -636,6 +647,15 @@ export function App() {
       openGitHubConnectionWizard();
     }
   };
+
+  useEffect(() => {
+    if (startupRestoredRef.current) return;
+    startupRestoredRef.current = true;
+    const lastWorkspace = readRecentWorkspaces()[0];
+    if (lastWorkspace) {
+      void openWorkspaceAtPath(lastWorkspace.path);
+    }
+  }, []);
 
   const selectFolder = (folderPath: string) => {
     noteHistoryRequestRef.current += 1;
@@ -922,6 +942,18 @@ export function App() {
       noteContent: "",
       editorError: null,
     }));
+    if (response.ok && response.data) {
+      const openFolderPaths = expandPathToNote(
+        appState.openFolderPaths,
+        response.data.itemPath,
+        response.data.tree,
+        appState.treeMode,
+      );
+      setAppState((current) => ({ ...current, openFolderPaths, fileSearchJump: null }));
+      persistWorkspaceTreeState(appState.workspace.path, openFolderPaths, appState.treeMode);
+      void rememberWorkspaceNote(appState.workspace.path, response.data.itemPath).catch(() => undefined);
+      setEditorFocusRequest((request) => request + 1);
+    }
   };
 
   const renameSelection = async () => {
@@ -1052,6 +1084,56 @@ export function App() {
     });
   };
 
+  const checkWorkspaceRemote = (workspacePath: string): Promise<void> => {
+    if (remoteCheckRef.current?.path === workspacePath) return remoteCheckRef.current.promise;
+    if (remoteCheckRef.current) return remoteCheckRef.current.promise.then(() => checkWorkspaceRemote(workspacePath));
+    if (syncInFlightRef.current || activeWorkspacePathRef.current !== workspacePath) return Promise.resolve();
+    setRemoteAwareness((current) => ({ ...current, checking: true }));
+    let promise: Promise<void>;
+    promise = Promise.resolve().then(async () => {
+      try {
+        const response = await checkRemote(workspacePath);
+        if (activeWorkspacePathRef.current !== workspacePath) return;
+        const result = response?.ok && response.data ? response.data : {
+          state: "error" as const, ahead: 0, behind: 0, hasLocalChanges: false,
+          message: response?.error ?? "No se pudo comprobar el remoto",
+        };
+        const succeeded = result.state === "up-to-date" || result.state === "incoming" || result.state === "diverged";
+        setRemoteAwareness((current) => ({
+          checking: false, result,
+          lastSuccessfulCheck: succeeded ? new Date().toISOString() : current.lastSuccessfulCheck,
+        }));
+      } catch {
+        if (activeWorkspacePathRef.current !== workspacePath) return;
+        setRemoteAwareness((current) => ({ ...current, checking: false, result: {
+          state: "error", ahead: 0, behind: 0, hasLocalChanges: false, message: "No se pudo comprobar el remoto",
+        } }));
+      } finally {
+        if (remoteCheckRef.current?.promise === promise) remoteCheckRef.current = null;
+      }
+    });
+    remoteCheckRef.current = { path: workspacePath, promise };
+    return promise;
+  };
+  remoteCheckRequestRef.current = checkWorkspaceRemote;
+
+  useEffect(() => {
+    const path = appState.workspace?.path;
+    if (!path || !remoteCheckEnabled) return;
+    void remoteCheckRequestRef.current(path);
+    const checkWhileActive = () => {
+      if (document.visibilityState !== "hidden") void remoteCheckRequestRef.current(path);
+    };
+    const interval = window.setInterval(checkWhileActive, 120_000);
+    window.addEventListener("focus", checkWhileActive);
+    document.addEventListener("visibilitychange", checkWhileActive);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", checkWhileActive);
+      document.removeEventListener("visibilitychange", checkWhileActive);
+    };
+  }, [appState.workspace?.path, remoteCheckEnabled]);
+
   const syncWorkspace = async () => {
     schedulerRef.current?.manualSync();
   };
@@ -1068,14 +1150,22 @@ export function App() {
       return { ok: false };
     }
 
-    if (currentSyncStatus === "sincronizando") {
+    if (currentSyncStatus === "sincronizando" || syncInFlightRef.current) {
       return { ok: false };
     }
 
+    syncInFlightRef.current = true;
+    const pendingCheck = remoteCheckRef.current?.promise;
+    if (pendingCheck) await pendingCheck;
+    if (activeWorkspacePathRef.current !== workspacePath) {
+      syncInFlightRef.current = false;
+      return { ok: false };
+    }
     setAppState((current) => ({ ...current, syncStatus: "sincronizando", workspaceError: null }));
 
     try {
       const response = await gitSync(workspacePath);
+      if (activeWorkspacePathRef.current !== workspacePath) return { ok: false };
 
       if (!response.ok || !response.data) {
         schedulerRef.current?.syncFailed();
@@ -1125,12 +1215,17 @@ export function App() {
         syncEvents: recordSyncEvent(current.syncEvents, "error", "No se pudo sincronizar el Workspace"),
       }));
       return { ok: false, error: "No se pudo sincronizar el Workspace" };
+    } finally {
+      syncInFlightRef.current = false;
+      if (activeWorkspacePathRef.current === workspacePath) void checkWorkspaceRemote(workspacePath);
     }
   };
 
   const refreshGitStatus = async (workspacePath: string) => {
     try {
       const response = await gitStatus(workspacePath);
+      if (activeWorkspacePathRef.current !== workspacePath) return null;
+      setRemoteCheckEnabled(Boolean(response?.ok && response.data?.isRepository && response.data?.hasRemote));
 
       if (!response.ok || !response.data) {
         setAppState((current) => ({
@@ -1161,8 +1256,10 @@ export function App() {
   const refreshGitHubRemote = async (workspacePath: string) => {
     try {
       const response = await githubRemote(workspacePath);
+      if (activeWorkspacePathRef.current !== workspacePath) return;
       setAppState((current) => ({ ...current, githubRemote: response.ok ? response.data?.remote ?? null : null }));
     } catch {
+      if (activeWorkspacePathRef.current !== workspacePath) return;
       setAppState((current) => ({ ...current, githubRemote: null }));
     }
   };
@@ -1170,12 +1267,14 @@ export function App() {
   const refreshAdvancedGitStatus = async (workspacePath: string) => {
     try {
       const response = await advancedGitStatus(workspacePath);
+      if (activeWorkspacePathRef.current !== workspacePath) return;
       setAppState((current) => ({
         ...current,
         advancedGit: response.ok ? response.data : null,
         workspaceError: response.ok ? current.workspaceError : response.error ?? "No se pudieron leer los detalles de Git",
       }));
     } catch {
+      if (activeWorkspacePathRef.current !== workspacePath) return;
       setAppState((current) => ({ ...current, advancedGit: null }));
     }
   };
@@ -1272,6 +1371,8 @@ export function App() {
       openFolderPaths={appState.openFolderPaths}
       treeMode={appState.treeMode}
       statusLabel={statusLabel}
+      remoteAwareness={remoteCheckEnabled ? remoteAwareness : undefined}
+      onCheckRemote={() => { if (appState.workspace) void checkWorkspaceRemote(appState.workspace.path); }}
       workspaceError={appState.workspaceError}
       workspaceName={appState.workspace?.name ?? "Abrir carpeta"}
       workspacePath={appState.workspace?.path ?? null}
@@ -1279,6 +1380,7 @@ export function App() {
       activeNotePath={appState.activeNotePath}
       activeFolderPath={appState.activeFolderPath}
       noteContent={appState.noteContent}
+      editorFocusRequest={editorFocusRequest}
       noteHistoryOpen={noteHistoryPanel.isOpen}
       noteHistoryEntries={noteHistoryPanel.entries}
       selectedNoteHistoryCommitId={noteHistoryPanel.selectedCommitId}

@@ -14,7 +14,7 @@ import type {
   WorkspaceTreeItem,
 } from "../app/appState";
 import { uiZoomSteps, defaultUiZoom, editorFontSizeSteps, defaultEditorFontSize } from "../app/appState";
-import type { AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
+import type { RemoteAwareness, AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { ImagePreviewDialog } from "./ImagePreviewDialog";
 import { MarkdownEditor } from "./MarkdownEditor";
@@ -46,6 +46,8 @@ export interface ClassicShellProps {
   openFolderPaths: ReadonlySet<string>;
   treeMode: TreeMode;
   statusLabel: string;
+  remoteAwareness?: RemoteAwareness;
+  onCheckRemote?: () => void;
   workspaceError: string | null;
   workspaceName: string;
   workspacePath: string | null;
@@ -53,6 +55,7 @@ export interface ClassicShellProps {
   activeNotePath: string | null;
   activeFolderPath: string;
   noteContent: string;
+  editorFocusRequest?: number;
   noteHistoryOpen: boolean;
   noteHistoryEntries: NoteHistoryEntry[];
   selectedNoteHistoryCommitId: string | null;
@@ -135,11 +138,14 @@ export interface ClassicShellProps {
 const releasePageUrl = "https://github.com/anmoya/simpler/releases/latest";
 
 export function ClassicShell({
+  editorFocusRequest,
   activeRoute,
   workspaceTree,
   openFolderPaths,
   treeMode,
   statusLabel,
+  remoteAwareness,
+  onCheckRemote,
   workspaceError,
   workspaceName,
   workspacePath,
@@ -1140,6 +1146,7 @@ export function ClassicShell({
                 notePath={activeNotePath}
                 workspacePath={workspacePath}
                 value={noteContent}
+                focusRequest={editorFocusRequest}
                 onChange={onNoteChange}
                 searchJump={currentFileSearchJump}
                 onAttachmentError={onAttachmentError}
@@ -1169,6 +1176,9 @@ export function ClassicShell({
 
       <footer className="status-bar" aria-label="Workspace status">
         <span>{statusLabel}</span>
+        {remoteAwareness ? (
+          <RemoteSyncControl awareness={remoteAwareness} localChanges={statusLabel === "Cambios locales"} syncing={statusLabel === "Sincronizando"} onSync={onSyncWorkspace} onRetry={onCheckRemote} />
+        ) : null}
         {updateNotice ? (
           <span className="update-notice" role="status">
             {updateNotice.kind === "downloading" ? (
@@ -1979,4 +1989,24 @@ function findPlainTextMatches(content: string, query: string): FileSearchJump[] 
 
     return matches;
   });
+}
+
+function RemoteSyncControl({ awareness, localChanges, syncing, onSync, onRetry }: {
+  awareness: RemoteAwareness; localChanges: boolean; syncing: boolean; onSync: () => void; onRetry?: () => void;
+}) {
+  const result = awareness.result;
+  const incoming = (result?.behind ?? 0) > 0;
+  const failed = result && ["disconnected", "authentication-error", "error"].includes(result.state);
+  const label = awareness.checking ? "Comprobando actualizaciones…" : result?.state === "disconnected" ? "Desconectado" : result?.state === "authentication-error" ? "Revisar credenciales" : failed ? "Error de comprobación" : "Sincronizar";
+  const explanation = incoming
+    ? (localChanges || result?.hasLocalChanges || (result?.ahead ?? 0) > 0 ? "Hay cambios locales y remotos pendientes" : "Hay cambios remotos disponibles")
+    : failed ? result.message ?? "No se pudo comprobar el remoto" : "Sincronizar Workspace";
+  const lastCheck = awareness.lastSuccessfulCheck ? ` Última comprobación correcta: ${new Date(awareness.lastSuccessfulCheck).toLocaleString()}.` : " Aún no hay una comprobación remota correcta.";
+  return <button type="button" className={`remote-sync-control${incoming ? " remote-sync-control--incoming" : ""}`}
+    disabled={awareness.checking || syncing}
+    title={explanation + lastCheck}
+    aria-label={failed ? `${label} — reintentar` : incoming ? "Sincronizar — cambios remotos disponibles" : label}
+    onClick={failed ? onRetry : onSync}>
+    <Icon name="sync" size={14} />{label}{incoming ? " · Cambios remotos" : ""}
+  </button>;
 }

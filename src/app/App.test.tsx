@@ -114,6 +114,189 @@ describe("App", () => {
     expect(screen.getByTestId("markdown-editor").textContent).toBe(editedContent);
   });
 
+  it("restores the last Workspace and note on process startup without opening the folder menu", async () => {
+    localStorage.setItem("simpler.recentWorkspaces", JSON.stringify([{ name: "notes", path: "/tmp/notes" }]));
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], metadata: { lastNotePath: "today.md", githubWizardPostponed: true } });
+      if (request.domain === "workspace" && ["remember-note", "remember-tree-state"].includes(request.action)) return reply({});
+      if (request.domain === "filesystem" && request.action === "read-note") return reply({ content: "# Last session" });
+      if (request.domain === "git" && request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    const firstProcess = render(<App />);
+    expect(await screen.findByTestId("markdown-editor")).toHaveTextContent("# Last session");
+    firstProcess.unmount();
+    render(<App />);
+    expect(await screen.findByTestId("markdown-editor")).toHaveTextContent("# Last session");
+  });
+
+  it.each(["workspace", "note"])("offers a usable startup when the last %s is unavailable", async (unavailable) => {
+    localStorage.setItem("simpler.recentWorkspaces", JSON.stringify([{ name: "notes", path: "/tmp/notes" }]));
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") {
+        if (unavailable === "workspace") return Promise.resolve({ ok: false, domain: "workspace", action: "open", data: null, error: "Workspace folder is unavailable" });
+        return reply({ name: "notes", path: "/tmp/notes", tree: [], metadata: { lastNotePath: null, githubWizardPostponed: true } });
+      }
+      if (request.domain === "git" && request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    if (unavailable === "workspace") {
+      expect(await screen.findByText("Workspace folder is unavailable")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Abrir carpeta" })).toBeEnabled();
+    } else {
+      expect(await screen.findByText("Create a note to start writing in notes.")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "New note" })).toBeEnabled();
+    }
+    expect(screen.queryByTestId("markdown-editor")).not.toBeInTheDocument();
+  });
+
+  it("shows incoming remote changes and retries a disconnected check without syncing", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/remote-notes");
+    let checks = 0;
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const answer = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return answer({ name: "remote-notes", path: "/tmp/remote-notes", tree: [], metadata: { lastNotePath: null } });
+      if (request.action === "status" && request.domain === "git") return answer({ isRepository: true, hasRemote: true, syncStatus: "sincronizado", conflictedFiles: [] });
+      if (request.action === "github-remote") return answer({ remote: { name: "origin", url: "https://github.com/simpler/notes.git" } });
+      if (request.action === "check-remote") {
+        checks += 1;
+        return answer(checks !== 2
+          ? { state: "disconnected", ahead: 0, behind: 0, hasLocalChanges: false, message: "Could not resolve host" }
+          : { state: "incoming", ahead: 0, behind: 2, hasLocalChanges: true, message: null });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(await screen.findByRole("button", { name: "Desconectado — reintentar" }));
+    const sync = await screen.findByRole("button", { name: "Sincronizar — cambios remotos disponibles" });
+    expect(sync).toHaveAttribute("title", expect.stringContaining("cambios locales y remotos"));
+    expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "sync")).toBe(false);
+    fireEvent.focus(window);
+    const disconnected = await screen.findByRole("button", { name: "Desconectado — reintentar" });
+    expect(disconnected).toHaveAttribute("title", expect.stringContaining("Última comprobación correcta:"));
+  });
+
+  it("ignores old Workspace remote results and coalesces focus checks while one is pending", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValueOnce("/tmp/first").mockResolvedValueOnce("/tmp/second");
+    let finishFirst!: (response: unknown) => void;
+    const checked: string[] = [];
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const answer = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return answer({ name: request.payload.workspacePath.split("/").pop(), path: request.payload.workspacePath, tree: [], metadata: { lastNotePath: null } });
+      if (request.action === "status" && request.domain === "git") return answer({ isRepository: true, hasRemote: true, syncStatus: "sincronizado", conflictedFiles: [] });
+      if (request.action === "github-remote") return answer({ remote: { name: "origin", url: "https://github.com/simpler/notes.git" } });
+      if (request.action === "check-remote") {
+        checked.push(request.payload.workspacePath);
+        if (request.payload.workspacePath === "/tmp/first") return new Promise((resolve) => { finishFirst = resolve; });
+        return answer({ state: "up-to-date", ahead: 0, behind: 0, hasLocalChanges: false, message: null });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await screen.findByRole("button", { name: "Comprobando actualizaciones…" });
+    fireEvent.focus(window);
+    fireEvent.focus(window);
+    expect(checked).toEqual(["/tmp/first"]);
+    await user.click(screen.getByRole("button", { name: /first/ }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    finishFirst({ ok: true, data: { state: "incoming", behind: 3, ahead: 0, hasLocalChanges: false, message: null }, error: null });
+    await waitFor(() => expect(checked).toEqual(["/tmp/first", "/tmp/second"]));
+    await screen.findByRole("button", { name: "Sincronizar" });
+    expect(screen.queryByRole("button", { name: "Sincronizar — cambios remotos disponibles" })).not.toBeInTheDocument();
+  });
+
+  it("creates a visible note in its collapsed folder and accepts typing immediately without refocusing on Local Save", async () => {
+    const user = userEvent.setup();
+    const writes: string[] = [];
+    let finishSave!: () => void;
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      const folder = { name: "project", path: "project", kind: "folder", children: [] as unknown[] };
+      if (request.domain === "workspace" && request.action === "open") {
+        return reply({ name: "notes", path: "/tmp/notes", tree: [folder], metadata: { lastNotePath: null, githubWizardPostponed: true } });
+      }
+      if (request.domain === "git" && request.action === "status") {
+        return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      }
+      if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
+      if (request.domain === "workspace" && ["remember-note", "remember-tree-state"].includes(request.action)) return reply({});
+      if (request.domain === "filesystem" && request.action === "create-note") {
+        return reply({ itemPath: "project/draft.md", tree: [{ ...folder, children: [{ name: "draft.md", path: "project/draft.md", kind: "note", children: [] }] }] });
+      }
+      if (request.domain === "filesystem" && request.action === "write-note") {
+        writes.push(request.payload.content);
+        return new Promise((resolve) => {
+          finishSave = () => resolve({ ok: true, domain: "filesystem", action: "write-note", data: { content: request.payload.content }, error: null });
+        });
+      }
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    await user.click(screen.getByRole("button", { name: "project" }));
+    // Selection and expansion are separate: the selected destination stays collapsed.
+    expect(screen.getByRole("button", { name: "Expand project" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "New note" }));
+    await user.type(within(screen.getByRole("dialog", { name: "Nombre de la nota" })).getByRole("textbox"), "draft{Enter}");
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    expect(editable).toHaveFocus();
+    await user.keyboard("X");
+    await waitFor(() => expect(writes).toContain("X"));
+    expect(editable).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Collapse project" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "draft.md" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "New folder" }));
+    const folderNameInput = within(screen.getByRole("dialog", { name: "Nombre de la carpeta" })).getByRole("textbox");
+    finishSave();
+    await waitFor(() => expect(folderNameInput).toHaveFocus());
+  });
+
+  it.each(["cancel", "failure"])("keeps the current note and its changes when note creation ends in %s", async (outcome) => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], metadata: { lastNotePath: "today.md", githubWizardPostponed: true } });
+      if (request.domain === "filesystem" && request.action === "read-note") return reply({ content: "Existing words" });
+      if (request.domain === "filesystem" && request.action === "write-note") return reply({ content: request.payload.content });
+      if (request.domain === "workspace" && ["remember-note", "remember-tree-state"].includes(request.action)) return reply({});
+      if (request.domain === "git" && request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
+      if (request.domain === "filesystem" && request.action === "create-note") return Promise.resolve({ ok: false, domain: "filesystem", action: "create-note", data: null, error: "A note with that name already exists" });
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("button", { name: "Abrir otra carpeta..." }));
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("X");
+    const currentText = editable.textContent;
+    await user.click(screen.getByRole("button", { name: "New note" }));
+    const dialog = screen.getByRole("dialog", { name: "Nombre de la nota" });
+    if (outcome === "cancel") await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    else {
+      await user.type(within(dialog).getByRole("textbox"), "today{Enter}");
+      expect(await screen.findByText("A note with that name already exists")).toBeInTheDocument();
+    }
+    expect(screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]")).toBe(editable);
+    expect(editable.textContent).toBe(currentText);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("keeps Abrir carpeta separate while cloning a GitHub repository opens the cloned Workspace", async () => {
     const user = userEvent.setup();
     vi.spyOn(window, "prompt")
