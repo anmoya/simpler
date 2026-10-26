@@ -303,6 +303,7 @@ button {
 .workspace-clone-link,
 .editor-toolbar button,
 .sync-panel button,
+.trash-panel button,
 .command-popover button {
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -319,6 +320,7 @@ button {
 .workspace-clone-link:hover,
 .editor-toolbar button:not(:disabled):hover,
 .sync-panel button:not(:disabled):hover,
+.trash-panel button:not(:disabled):hover,
 .command-popover button:hover {
   border-color: var(--color-border);
   background: var(--color-control);
@@ -339,12 +341,30 @@ button {
 .workspace-clone-link:focus-visible,
 .editor-toolbar button:focus-visible,
 .sync-panel button:focus-visible,
+.trash-panel button:focus-visible,
 .command-popover button:focus-visible,
 .global-search__field:focus-within,
 .file-search input:focus-visible {
   outline: none;
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px var(--color-accent-ring);
+}
+
+.trash-panel button {
+  padding: 6px 10px;
+  border-color: var(--color-border);
+  background: var(--color-control);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.trash-panel button:not(:disabled):hover {
+  background: var(--color-active);
+}
+
+.trash-panel button:disabled {
+  color: var(--color-muted);
+  cursor: default;
 }
 
 .workspace-trigger {
