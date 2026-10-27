@@ -17,7 +17,7 @@ export function toggleFolder(
 }
 
 export function focusActiveNote(notePath: string, tree: WorkspaceTreeItem[]): Set<string> {
-  return new Set(folderPathToNote(notePath, tree));
+  return new Set(folderPathToItem(notePath, tree));
 }
 
 export function expandPathToNote(
@@ -26,9 +26,18 @@ export function expandPathToNote(
   tree: WorkspaceTreeItem[],
   mode: TreeMode,
 ): Set<string> {
+  return expandPathToItem(current, notePath, tree, mode);
+}
+
+export function expandPathToItem(
+  current: ReadonlySet<string>,
+  itemPath: string,
+  tree: WorkspaceTreeItem[],
+  mode: TreeMode,
+): Set<string> {
   let next = new Set(current);
 
-  for (const folderPath of folderPathToNote(notePath, tree)) {
+  for (const folderPath of folderPathToItem(itemPath, tree)) {
     next = openFolder(next, folderPath, tree, mode);
   }
 
@@ -58,14 +67,14 @@ export function restoreOpenFolderPaths(paths: readonly string[], tree: Workspace
   return new Set(paths.filter((path) => existingFolders.has(path)));
 }
 
-function folderPathToNote(notePath: string, items: WorkspaceTreeItem[], ancestors: string[] = []): string[] {
+function folderPathToItem(notePath: string, items: WorkspaceTreeItem[], ancestors: string[] = []): string[] {
   for (const item of items) {
-    if (item.kind === "note" && item.path === notePath) {
+    if (item.path === notePath) {
       return ancestors;
     }
 
     if (item.kind === "folder") {
-      const path = folderPathToNote(notePath, item.children, [...ancestors, item.path]);
+      const path = folderPathToItem(notePath, item.children, [...ancestors, item.path]);
       if (path.length > 0) {
         return path;
       }
