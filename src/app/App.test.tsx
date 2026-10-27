@@ -166,7 +166,7 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editable = (await screen.findByTestId("markdown-editor")).querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.keyboard("X");
     const content = editable.textContent;
@@ -211,7 +211,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     const editor = await screen.findByTestId("markdown-editor");
-    (editor.querySelector("[contenteditable=true]") as HTMLElement).focus();
+    (await findEditableElement()).focus();
     await user.keyboard("X");
     const editedContent = editor.textContent;
     const values = new Map<string, string>();
@@ -529,7 +529,7 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editable = (await screen.findByTestId("markdown-editor")).querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.keyboard("X");
     await user.click(screen.getByRole("button", { name: "Más acciones para a.md" }));
@@ -664,7 +664,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await screen.findByText("Local work stays here", { exact: false });
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     await user.click(editable);
     await user.type(editable, "{End} unsaved");
     const editedContent = screen.getByTestId("markdown-editor").textContent;
@@ -858,7 +858,7 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Expand project" })).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: "Nueva nota" }));
     await user.type(within(screen.getByRole("dialog", { name: "Nombre de la nota" })).getByRole("textbox"), "draft{Enter}");
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     expect(editable).toHaveFocus();
     await user.keyboard("X");
     await waitFor(() => expect(writes).toContain("X"));
@@ -889,7 +889,7 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.keyboard("X");
     const currentText = editable.textContent;
@@ -932,7 +932,7 @@ describe("App", () => {
     });
     render(<App />);
     const editor = await screen.findByTestId("markdown-editor");
-    const editable = editor.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const editable = await findEditableElement();
     await waitFor(() => expect(editable.textContent).toBe("Keep my writing"));
     editable.focus();
     await user.keyboard("X");
@@ -2359,7 +2359,7 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.keyboard("X");
     const currentText = editable.textContent;
