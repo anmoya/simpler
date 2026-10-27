@@ -225,7 +225,7 @@ describe("App", () => {
     expect(screen.getByRole("status", { name: "Destino de orden" })).toHaveTextContent("antes de folder");
     dragAt(target, "drop", 20);
     await waitFor(() => expect(orders).toEqual([["z.png", "folder", "a.md"]]));
-    expect(screen.getAllByRole("button", { name: /^(folder|a.md|z.png)$/ }).map((button) => button.textContent)).toEqual(["z.png", "folder", "a.md"]);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^(folder|a.md|z.png)$/ }).map((button) => button.textContent)).toEqual(["z.png", "folder", "a.md"]));
     expect(editor.textContent).toBe(editedContent);
     expect(physicalMoves).toBe(0);
     // Another parent's child is not a valid reorder destination.
