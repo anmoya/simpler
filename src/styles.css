@@ -10,6 +10,10 @@
   box-sizing: border-box;
 }
 
+html, body, #root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -53,7 +57,7 @@ button {
   grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
   transition: grid-template-columns 220ms ease;
   grid-template-rows: 34px minmax(0, 1fr) 26px;
-  height: calc(100vh / var(--ui-zoom, 1));
+  height: 100%;
   background: var(--color-background);
   color: var(--color-text);
   font-size: var(--font-size-body);
@@ -1151,6 +1155,7 @@ button {
 @media print {
   @page { size: A4; margin: 18mm 17mm; }
   html, body { min-width: 0 !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+  html, body, #root { height: auto !important; }
   .app-shell { display: block !important; height: auto !important; zoom: 1 !important; background: #fff !important; color: #171717 !important; }
   .app-shell > :not(.editor-pane), .editor-pane > :not(.editor-body), .editor-body > :not(.pdf-print-document) { display: none !important; }
   .editor-pane { display: block !important; }
