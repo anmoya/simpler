@@ -135,7 +135,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "b.md" }));
     await user.click(screen.getByRole("button", { name: "c.md" }));
     await waitFor(() => expect(screen.getByTestId("markdown-editor")).toHaveTextContent("# Latest C"));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.keyboard("X");
     await waitFor(() => expect(saved).toContain("X# Latest C"));
@@ -276,16 +276,18 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editor = screen.getByTestId("markdown-editor");
-    const editable = editor.querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
+    await waitFor(() => expect(editable.textContent).toContain("Draft"));
     editable.focus();
     await user.keyboard("{Control>}{Home}{/Control}");
     expect(screen.getByRole("button", { name: "Previsualizar imagen (Alt+Enter)" })).toBeInTheDocument();
+    const writesBeforePreview = mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note").length;
+    expect(writesBeforePreview).toBe(0);
     await user.keyboard("{ArrowRight}{ArrowRight}{Alt>}{Enter}{/Alt}");
     const preview = await screen.findByRole("dialog", { name: "Vista previa de imagen" });
     expect(await within(preview).findByRole("img", { name: "a b.png" })).toBeInTheDocument();
     expect(mocks.invoke).toHaveBeenCalledWith("native_command", { request: { domain: "filesystem", action: "preview-image", payload: { workspacePath: "/tmp/notes", imagePath: "projects/assets/a b.png" } } });
-    expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "write-note")).toBe(false);
+    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note")).toHaveLength(writesBeforePreview);
     await user.keyboard("{Escape}");
     expect(editable).toHaveFocus();
     await user.keyboard("X");
@@ -314,7 +316,8 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
+    await waitFor(() => expect(editable.textContent).toContain(original.split("\n")[0]));
     editable.focus();
     await user.keyboard("{Control>}{Home}{/Control}{Shift>}{Tab}{/Shift}");
     const action = screen.getByRole("button", { name: "Previsualizar imagen (Alt+Enter)" });
@@ -345,16 +348,19 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
+    await waitFor(() => expect(editable.textContent).toBe(content));
     editable.focus();
     await user.keyboard("{Control>}{Home}{/Control}");
     const originalText = editable.textContent;
+    const writesBeforePreview = mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note").length;
+    expect(writesBeforePreview).toBe(0);
     await user.click(screen.getByRole("button", { name: "Previsualizar imagen (Alt+Enter)" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(editable.textContent).toBe(originalText);
     const nativePreviews = mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "preview-image");
     expect(nativePreviews).toHaveLength(content.includes("missing.png") ? 1 : 0);
-    expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "write-note")).toBe(false);
+    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note")).toHaveLength(writesBeforePreview);
   });
 
   it("retains seven distinct recent notes, keeps unavailable entries and lets the user remove one", async () => {
@@ -603,7 +609,7 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.keyboard("X");
     const currentText = editable.textContent;
@@ -927,6 +933,7 @@ describe("App", () => {
     render(<App />);
     const editor = await screen.findByTestId("markdown-editor");
     const editable = editor.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    await waitFor(() => expect(editable.textContent).toBe("Keep my writing"));
     editable.focus();
     await user.keyboard("X");
     await user.click(screen.getByRole("button", { name: "source — Abrir o cambiar…" }));

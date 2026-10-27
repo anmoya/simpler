@@ -147,6 +147,21 @@ export interface WorkspaceTreePatch {
   upsertedItem: WorkspaceTreeItem | null;
 }
 
+export function openWebUrl(url: string) {
+  return invokeNativeCommand({ domain: "filesystem", action: "open-web-url", payload: { url } });
+}
+
+export interface PdfExportResult { outputPath: string; needsOverwriteConfirmation: boolean; }
+export function exportPdfToPath(outputPath: string, overwrite: boolean) {
+  return invokeNativeCommand<PdfExportResult>({ domain: "filesystem", action: "export-pdf", payload: { outputPath, overwrite } });
+}
+export function pdfTargetExists(path: string) {
+  return invokeNativeCommand<{ exists: boolean }>({ domain: "filesystem", action: "pdf-target-exists", payload: { path } });
+}
+export function openExportedPdf(path: string) {
+  return invokeNativeCommand({ domain: "filesystem", action: "open-exported-pdf", payload: { path } });
+}
+
 export interface FilesystemOperationResult {
   patch: WorkspaceTreePatch;
   tree?: WorkspaceTreeItem[];

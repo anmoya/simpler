@@ -954,6 +954,15 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
     if request.domain == NativeDomain::Filesystem && request.action == "open-image-external" {
         return native_response(request, image_preview::open_external);
     }
+    if request.domain == NativeDomain::Filesystem && request.action == "open-web-url" {
+        return native_response(request, open_web_url_payload);
+    }
+    if request.domain == NativeDomain::Filesystem && request.action == "open-exported-pdf" {
+        return native_response(request, open_exported_pdf_payload);
+    }
+    if request.domain == NativeDomain::Filesystem && request.action == "pdf-target-exists" {
+        return native_response(request, pdf_target_exists_payload);
+    }
 
     if request.domain == NativeDomain::Filesystem && request.action == "write-note" {
         return native_response(request, write_note_payload);
@@ -1084,6 +1093,80 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
         error: Some("unsupported native command".to_string()),
     }
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenWebUrlPayload {
+    url: String,
+}
+
+fn open_web_url_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let request: OpenWebUrlPayload =
+        serde_json::from_value(payload).map_err(|_| "url is required".to_string())?;
+    if !(request.url.starts_with("https://") || request.url.starts_with("http://"))
+        || request.url.chars().any(char::is_control)
+    {
+        return Err("Only HTTP and HTTPS links can be opened externally".to_string());
+    }
+    #[cfg(target_os = "linux")]
+    Command::new("xdg-open")
+        .arg(&request.url)
+        .spawn()
+        .map_err(|error| format!("Could not open web link: {error}"))?;
+    #[cfg(target_os = "macos")]
+    Command::new("open")
+        .arg(&request.url)
+        .spawn()
+        .map_err(|error| format!("Could not open web link: {error}"))?;
+    #[cfg(target_os = "windows")]
+    Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", &request.url])
+        .spawn()
+        .map_err(|error| format!("Could not open web link: {error}"))?;
+    serde_json::to_value(serde_json::json!({ "opened": true })).map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenExportedPdfPayload { path: String }
+
+fn open_exported_pdf_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let request: OpenExportedPdfPayload = serde_json::from_value(payload)
+        .map_err(|_| "path is required".to_string())?;
+    let path = Path::new(&request.path);
+    if path.extension().and_then(|extension| extension.to_str()).is_none_or(|ext| !ext.eq_ignore_ascii_case("pdf")) || !path.is_file() {
+        return Err("The exported PDF could not be found".to_string());
+    }
+    #[cfg(target_os = "linux")]
+    Command::new("xdg-open").arg(path).spawn()
+        .map_err(|error| format!("Could not open exported PDF: {error}"))?;
+    #[cfg(not(target_os = "linux"))]
+    return Err("Opening exported PDF is currently supported on Linux".to_string());
+    serde_json::to_value(serde_json::json!({ "opened": true })).map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportPdfPayload { output_path: String, #[serde(default)] overwrite: bool }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportPdfResult { output_path: String, needs_overwrite_confirmation: bool }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PdfTargetPayload { path: String }
+
+fn pdf_target_exists_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let request: PdfTargetPayload = serde_json::from_value(payload).map_err(|_| "path is required".to_string())?;
+    let path = Path::new(&request.path);
+    if !path.is_absolute() || path.extension().and_then(|ext| ext.to_str()).is_none_or(|ext| !ext.eq_ignore_ascii_case("pdf")) {
+        return Err("The PDF destination must be an absolute path ending in .pdf".to_string());
+    }
+    serde_json::to_value(serde_json::json!({ "exists": path.exists() })).map_err(|error| error.to_string())
+}
+
+static PDF_EXPORT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn get_install_kind_payload(_: serde_json::Value) -> Result<serde_json::Value, String> {
     let install_kind = get_install_kind(&SystemEnvLookup);
@@ -3215,6 +3298,126 @@ fn folder_rank(item: &WorkspaceTreeItem) -> u8 {
 }
 
 #[cfg(not(test))]
+async fn export_pdf_command(
+    app: tauri::AppHandle,
+    request: NativeCommandRequest,
+) -> NativeCommandResponse {
+    let action = request.action.clone();
+    let result = export_pdf_to_path(app, request.payload).await;
+    match result {
+        Ok(data) => NativeCommandResponse { ok: true, domain: NativeDomain::Filesystem, action, data: Some(data), error: None },
+        Err(error) => NativeCommandResponse { ok: false, domain: NativeDomain::Filesystem, action, data: None, error: Some(error) },
+    }
+}
+
+#[cfg(not(test))]
+async fn export_pdf_to_path(app: tauri::AppHandle, payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let request: ExportPdfPayload = serde_json::from_value(payload)
+        .map_err(|_| "An absolute PDF destination is required".to_string())?;
+    let target = PathBuf::from(&request.output_path);
+    if !target.is_absolute() || target.extension().and_then(|ext| ext.to_str()).is_none_or(|ext| !ext.eq_ignore_ascii_case("pdf")) {
+        return Err("The PDF destination must be an absolute path ending in .pdf".to_string());
+    }
+    let parent = target.parent().ok_or_else(|| "The PDF destination folder is invalid".to_string())?;
+    if !parent.is_dir() { return Err("The selected PDF folder does not exist or is not accessible".to_string()); }
+    if target.exists() && !request.overwrite {
+        return serde_json::to_value(ExportPdfResult { output_path: request.output_path, needs_overwrite_confirmation: true }).map_err(|error| error.to_string());
+    }
+    let sequence = PDF_EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temp_name = format!(".simpler-pdf-{}-{sequence}.tmp.pdf", std::process::id());
+    let temp = parent.join(temp_name);
+    if temp.exists() { return Err("Could not allocate a temporary PDF file".to_string()); }
+
+    let generation = async {
+        print_webview_to_pdf(app, temp.clone()).await?;
+        let data = fs::read(&temp).map_err(|error| format!("Could not read generated PDF: {error}"))?;
+        if !data.starts_with(b"%PDF-") || !data.windows(5).any(|window| window == b"%%EOF") {
+            return Err("The PDF engine returned an incomplete or invalid file".to_string());
+        }
+        finalize_pdf_temp(&temp, &target, request.overwrite, request.output_path.clone())
+    }.await;
+    // The generated file is temporary even when a late destination collision
+    // asks the caller to confirm replacement. Always remove it after handling.
+    let _ = fs::remove_file(&temp);
+    generation
+}
+
+fn finalize_pdf_temp(temp: &Path, target: &Path, overwrite: bool, output_path: String) -> Result<serde_json::Value, String> {
+    let result = if overwrite {
+        match fs::rename(temp, target) {
+            Ok(()) => serde_json::to_value(ExportPdfResult { output_path, needs_overwrite_confirmation: false }).map_err(|error| error.to_string()),
+            Err(error) => Err(format!("Could not save PDF to the selected destination: {error}")),
+        }
+    } else {
+        // create_new is an atomic no-clobber operation and works when hard
+        // links are unavailable (for example on some mounted filesystems).
+        // The temporary and destination are siblings, so copying stays local.
+        match fs::OpenOptions::new().write(true).create_new(true).open(target) {
+            Ok(mut destination) => {
+                let copied = (|| {
+                    let mut source = fs::File::open(temp)?;
+                    std::io::copy(&mut source, &mut destination)?;
+                    destination.sync_all()
+                })();
+                match copied {
+                    Ok(()) => serde_json::to_value(ExportPdfResult { output_path, needs_overwrite_confirmation: false }).map_err(|error| error.to_string()),
+                    Err(error) => {
+                        let _ = fs::remove_file(target);
+                        Err(format!("Could not save PDF to the selected destination: {error}"))
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                serde_json::to_value(ExportPdfResult { output_path, needs_overwrite_confirmation: true }).map_err(|error| error.to_string())
+            }
+            Err(error) => Err(format!("Could not save PDF to the selected destination: {error}")),
+        }
+    };
+    let _ = fs::remove_file(temp);
+    result
+}
+
+#[cfg(not(test))]
+async fn print_webview_to_pdf(app: tauri::AppHandle, path: PathBuf) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::gio::prelude::FileExt;
+        use tauri::Manager;
+        use webkit2gtk::{PrintOperation, PrintOperationExt};
+        let window = app.get_webview_window("main").ok_or_else(|| "The main WebView is unavailable".to_string())?;
+        let uri = gtk::gio::File::for_path(&path).uri().to_string();
+        let (sender, receiver) = tokio::sync::oneshot::channel::<Result<(), String>>();
+        let sender = std::sync::Arc::new(Mutex::new(Some(sender)));
+        let failed_sender = std::sync::Arc::clone(&sender);
+        window.with_webview(move |webview| {
+            let operation = PrintOperation::new(&webview.inner());
+            let settings = gtk::PrintSettings::new();
+            settings.set_printer("Print to File");
+            settings.set("output-uri", Some(&uri));
+            settings.set("output-file-format", Some("pdf"));
+            operation.set_print_settings(&settings);
+            operation.connect_failed(move |_, error| {
+                if let Ok(mut sender) = failed_sender.lock() {
+                    if let Some(sender) = sender.take() { let _ = sender.send(Err(format!("PDF generation failed: {error}"))); }
+                }
+            });
+            operation.connect_finished(move |_| {
+                if let Ok(mut sender) = sender.lock() {
+                    if let Some(sender) = sender.take() { let _ = sender.send(Ok(())); }
+                }
+            });
+            operation.print();
+        }).map_err(|error| format!("Could not start native PDF generation: {error}"))?;
+        receiver.await.map_err(|_| "Native PDF generation ended without a result".to_string())?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (app, path);
+        Err("Direct PDF export is currently supported on Linux".to_string())
+    }
+}
+
+#[cfg(not(test))]
 mod commands {
     use super::{
         dispatch_native_command, handle_read_clipboard_image_command,
@@ -3233,6 +3436,9 @@ mod commands {
                 || request.action == "restart-to-apply-update")
         {
             return handle_update_command(app, request).await;
+        }
+        if request.domain == NativeDomain::Filesystem && request.action == "export-pdf" {
+            return super::export_pdf_command(app, request).await;
         }
         if request.domain == NativeDomain::Filesystem && request.action == "read-clipboard-image" {
             return handle_read_clipboard_image_command(app, request).await;
@@ -3699,6 +3905,66 @@ pub fn run() {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pdf_late_collision_is_atomic_preserves_target_and_cleans_temp() {
+        let dir = std::env::temp_dir().join(format!("simpler-pdf-race-{}-{}", std::process::id(), PDF_EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed)));
+        fs::create_dir_all(&dir).unwrap();
+        let temp = dir.join("generated.tmp.pdf");
+        let target = dir.join("chosen.pdf");
+        fs::write(&temp, b"generated pdf").unwrap();
+        fs::write(&target, b"user file").unwrap();
+
+        let result = finalize_pdf_temp(&temp, &target, false, target.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(result["needsOverwriteConfirmation"], true);
+        assert_eq!(fs::read(&target).unwrap(), b"user file");
+        assert!(!temp.exists(), "temporary PDF must be removed after collision");
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn pdf_no_clobber_save_succeeds_and_removes_temp() {
+        let dir = std::env::temp_dir().join(format!("simpler-pdf-save-{}-{}", std::process::id(), PDF_EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed)));
+        fs::create_dir_all(&dir).unwrap();
+        let temp = dir.join("generated.tmp.pdf");
+        let target = dir.join("chosen.pdf");
+        fs::write(&temp, b"%PDF-generated").unwrap();
+        let result = finalize_pdf_temp(&temp, &target, false, target.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(result["needsOverwriteConfirmation"], false);
+        assert_eq!(fs::read(&target).unwrap(), b"%PDF-generated");
+        assert!(!temp.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pdf_confirmed_overwrite_replaces_target_and_removes_temp() {
+        let dir = std::env::temp_dir().join(format!("simpler-pdf-overwrite-{}-{}", std::process::id(), PDF_EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed)));
+        fs::create_dir_all(&dir).unwrap();
+        let temp = dir.join("generated.tmp.pdf");
+        let target = dir.join("chosen.pdf");
+        fs::write(&temp, b"%PDF-new").unwrap();
+        fs::write(&target, b"old pdf").unwrap();
+        let result = finalize_pdf_temp(&temp, &target, true, target.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(result["needsOverwriteConfirmation"], false);
+        assert_eq!(fs::read(&target).unwrap(), b"%PDF-new");
+        assert!(!temp.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pdf_no_clobber_save_write_failure_removes_partial_destination() {
+        let dir = std::env::temp_dir().join(format!("simpler-pdf-error-{}-{}", std::process::id(), PDF_EXPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed)));
+        fs::create_dir_all(&dir).unwrap();
+        let temp = dir.join("generated.tmp.pdf");
+        let target = dir.join("chosen.pdf");
+        // Simulate a late source read failure after reserving the destination.
+        std::os::unix::fs::symlink(dir.join("missing-source"), &temp).unwrap();
+        let result = finalize_pdf_temp(&temp, &target, false, target.to_string_lossy().into_owned());
+        assert!(result.is_err());
+        assert!(!target.exists());
+        assert!(!temp.exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     use std::cell::RefCell;
     include!("sync_order_tests.rs");
 
@@ -3889,6 +4155,14 @@ mod tests {
             response.error,
             Some("unsupported native command".to_string())
         );
+    }
+
+    #[test]
+    fn external_web_links_reject_non_http_schemes_before_spawning() {
+        for url in ["file:///etc/passwd", "javascript:alert(1)", "https://example.com\n--help"] {
+            let result = open_web_url_payload(serde_json::json!({ "url": url }));
+            assert!(result.is_err(), "unexpectedly accepted {url:?}");
+        }
     }
 
     #[test]

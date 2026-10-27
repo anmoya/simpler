@@ -1,8 +1,23 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClassicShell } from "./ClassicShell";
 import type { ClassicShellProps } from "./ClassicShell";
+
+const pdfMocks = vi.hoisted(() => ({ save: vi.fn(), confirm: vi.fn(), message: vi.fn(), targetExists: vi.fn(), exportPdf: vi.fn(), openPdf: vi.fn(), readNote: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", async importOriginal => ({
+  ...await importOriginal<typeof import("@tauri-apps/plugin-dialog")>(),
+  save: (...args: unknown[]) => pdfMocks.save(...args),
+  confirm: (...args: unknown[]) => pdfMocks.confirm(...args),
+  message: (...args: unknown[]) => pdfMocks.message(...args),
+}));
+vi.mock("../native/commands", async importOriginal => ({
+  ...await importOriginal<typeof import("../native/commands")>(),
+  pdfTargetExists: (...args: unknown[]) => pdfMocks.targetExists(...args),
+  exportPdfToPath: (...args: unknown[]) => pdfMocks.exportPdf(...args),
+  openExportedPdf: (...args: unknown[]) => pdfMocks.openPdf(...args),
+  readNote: (...args: unknown[]) => pdfMocks.readNote(...args),
+}));
 
 const noop = () => undefined;
 const defaultProps: ClassicShellProps = {
@@ -127,7 +142,98 @@ afterEach(() => {
   setWindowWidth(defaultWindowWidth);
 });
 
+beforeEach(() => {
+  pdfMocks.save.mockReset().mockResolvedValue("/tmp/today.pdf");
+  pdfMocks.confirm.mockReset().mockResolvedValue(false);
+  pdfMocks.message.mockReset().mockResolvedValue(undefined);
+  pdfMocks.targetExists.mockReset().mockResolvedValue({ ok: true, data: { exists: false }, error: null });
+  pdfMocks.exportPdf.mockReset().mockResolvedValue({ ok: true, data: { outputPath: "/tmp/today.pdf", needsOverwriteConfirmation: false }, error: null });
+  pdfMocks.openPdf.mockReset().mockResolvedValue({ ok: true, data: { opened: true }, error: null });
+  pdfMocks.readNote.mockReset().mockResolvedValue({ ok: true, data: { content: "# Saved target" }, error: null });
+});
+
 describe("ClassicShell", () => {
+  it("switches note modes through the palette and exports directly to a selected PDF path", async () => {
+    const user = userEvent.setup();
+    const props = { ...defaultProps, activeNotePath: "daily/today.md", workspacePath: "/workspace", noteContent: "# Today\n\nHello" };
+    const view = render(<ClassicShell {...props} />);
+    expect(screen.getByRole("toolbar", { name: "Note view modes" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Split" }));
+    expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Split" })).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("simpler.noteViewMode")).toBe("split");
+    await user.click(screen.getByRole("button", { name: "Rendered" }));
+    expect(screen.getByRole("region", { name: "Raw Markdown editor" })).toHaveClass("editor-surface--hidden");
+    await user.click(screen.getByRole("button", { name: "Open Command Palette" }));
+    await user.click(screen.getByRole("button", { name: "Show Raw Markdown" }));
+    expect(screen.getByRole("button", { name: "Raw" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Export PDF" }));
+    await waitFor(() => expect(pdfMocks.exportPdf).toHaveBeenCalledWith("/tmp/today.pdf", false));
+    expect(pdfMocks.save).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "today.pdf", filters: [{ name: "PDF", extensions: ["pdf"] }] }));
+    expect(pdfMocks.confirm).toHaveBeenCalledWith(expect.stringContaining("PDF guardado correctamente"), expect.objectContaining({ title: "Exportación PDF" }));
+    view.rerender(<ClassicShell {...defaultProps} activeNotePath="daily/next.md" workspacePath="/workspace" noteContent="# Next" />);
+    expect(pdfMocks.exportPdf).toHaveBeenCalledOnce();
+  });
+
+  it("cancellation clears export state and changing notes does not restart an export", async () => {
+    const user = userEvent.setup();
+    pdfMocks.save.mockResolvedValueOnce(null);
+    const view = render(<ClassicShell {...defaultProps} activeNotePath="daily/today.md" workspacePath="/workspace" noteContent="# Today" />);
+    await user.click(screen.getByRole("button", { name: "Export PDF" }));
+    expect(await screen.findByText("Exportación cancelada.")).toBeInTheDocument();
+    view.rerender(<ClassicShell {...defaultProps} activeNotePath="daily/next.md" workspacePath="/workspace" noteContent="# Next" />);
+    expect(pdfMocks.save).toHaveBeenCalledOnce();
+    expect(pdfMocks.exportPdf).not.toHaveBeenCalled();
+  });
+
+  it("keeps an in-flight export bound to its original note when the active note changes", async () => {
+    const user = userEvent.setup();
+    let finishExport!: (result: { ok: boolean; data: { outputPath: string; needsOverwriteConfirmation: boolean }; error: null }) => void;
+    pdfMocks.exportPdf.mockReturnValueOnce(new Promise(resolve => { finishExport = resolve; }));
+    const view = render(<ClassicShell {...defaultProps} activeNotePath="daily/today.md" workspacePath="/workspace" noteContent="# Today" />);
+    await user.click(screen.getByRole("button", { name: "Export PDF" }));
+    await waitFor(() => expect(pdfMocks.exportPdf).toHaveBeenCalledOnce());
+    view.rerender(<ClassicShell {...defaultProps} activeNotePath="daily/next.md" workspacePath="/workspace" noteContent="# Next" />);
+    expect(pdfMocks.exportPdf).toHaveBeenCalledOnce();
+    expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
+    await act(async () => finishExport({ ok: true, data: { outputPath: "/tmp/today.pdf", needsOverwriteConfirmation: false }, error: null }));
+    expect(await screen.findByText("PDF guardado en /tmp/today.pdf.")).toBeInTheDocument();
+    expect(pdfMocks.exportPdf).toHaveBeenCalledOnce();
+  });
+
+  it("confirms replacement and reports generation failure without leaving a pending export", async () => {
+    const user = userEvent.setup();
+    pdfMocks.targetExists.mockResolvedValueOnce({ ok: true, data: { exists: true }, error: null });
+    pdfMocks.confirm.mockResolvedValueOnce(true);
+    pdfMocks.exportPdf.mockResolvedValueOnce({ ok: false, data: null, error: "disk full" });
+    const view = render(<ClassicShell {...defaultProps} activeNotePath="daily/today.md" workspacePath="/workspace" noteContent="# Today" />);
+    await user.click(screen.getByRole("button", { name: "Export PDF" }));
+    expect(await screen.findByText(/No se pudo exportar el PDF: disk full/)).toBeInTheDocument();
+    expect(pdfMocks.confirm).toHaveBeenCalledWith(expect.stringContaining("reemplazarlo"), expect.objectContaining({ kind: "warning" }));
+    expect(pdfMocks.exportPdf).toHaveBeenCalledWith("/tmp/today.pdf", true);
+    view.rerender(<ClassicShell {...defaultProps} activeNotePath="daily/next.md" workspacePath="/workspace" noteContent="# Next" />);
+    expect(pdfMocks.exportPdf).toHaveBeenCalledOnce();
+  });
+
+  it("exports a context-menu note using saved content without selecting it", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("simpler.noteViewMode", "split");
+    let finishExport!: (result: { ok: boolean; data: { outputPath: string; needsOverwriteConfirmation: boolean }; error: null }) => void;
+    pdfMocks.exportPdf.mockReturnValueOnce(new Promise(resolve => { finishExport = resolve; }));
+    const onSelectNote = vi.fn();
+    render(<ClassicShell {...defaultProps} workspacePath="/workspace" activeNotePath="today.md" noteContent="# Active draft" onSelectNote={onSelectNote}
+      workspaceTree={[{ name: "other.md", path: "folder/other.md", kind: "note", children: [] }]} />);
+    fireEvent.contextMenu(screen.getAllByRole("button", { name: "other.md" })[0]);
+    await user.click(screen.getByRole("menuitem", { name: "Exportar PDF" }));
+    await waitFor(() => expect(pdfMocks.exportPdf).toHaveBeenCalledOnce());
+    expect(pdfMocks.readNote).toHaveBeenCalledWith("/workspace", "folder/other.md");
+    expect(pdfMocks.save).toHaveBeenCalledWith(expect.objectContaining({ defaultPath: "other.pdf" }));
+    expect(document.querySelector(".pdf-print-document")).toHaveTextContent("Saved target");
+    expect(screen.getByRole("heading", { name: "Active draft" })).toBeInTheDocument();
+    expect(onSelectNote).not.toHaveBeenCalled();
+    await act(async () => finishExport({ ok: true, data: { outputPath: "/tmp/today.pdf", needsOverwriteConfirmation: false }, error: null }));
+  });
+
   it("disables the note history toggle in a plain (non-Git-backed) Workspace", () => {
     renderShell({
       activeNotePath: "today.md",

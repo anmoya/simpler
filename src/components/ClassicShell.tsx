@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, cloneElement } from "react";
+import { useCallback, useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, cloneElement } from "react";
+import { confirm, message, save } from "@tauri-apps/plugin-dialog";
 import type { AppRoute } from "../app/routes";
 import type {
   CloseSyncPromptState,
@@ -21,11 +22,13 @@ import { WelcomeScreen } from "./WelcomeScreen";
 import type { RecentNote } from "../app/recentNotes";
 import { SettingsDialog } from "./SettingsDialog";
 import { ImagePreviewDialog } from "./ImagePreviewDialog";
-import { sharedWorkspaceMetadataPath } from "../native/commands";
+import { exportPdfToPath, openExportedPdf, pdfTargetExists, readNote, sharedWorkspaceMetadataPath } from "../native/commands";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { NoteHistoryPanel } from "./NoteHistoryPanel";
 import { Icon } from "./icons";
 import { GitHubConnectionWizard } from "./GitHubConnectionWizard";
+import { NoteViewMode, readNoteViewMode, RenderedNote, noteViewModeStorageKey } from "./RenderedNote";
+import { syncToSourceLine, visibleSourceLine } from "./noteScrollSync";
 
 type CommandAction = () => void;
 export type TreeActionTarget = Pick<WorkspaceTreeItem, "path" | "kind">;
@@ -44,6 +47,16 @@ interface ShellCommand {
   shortcut: string;
   available: boolean;
   run: CommandAction;
+}
+
+interface PdfExportSession {
+  id: number;
+  workspacePath: string;
+  notePath: string;
+  content: string;
+  outputPath: string;
+  overwrite: boolean;
+  onAssetsSettled: (missingImages: string[]) => void;
 }
 
 export interface ClassicShellProps {
@@ -271,6 +284,105 @@ export function ClassicShell({
   useEffect(() => { setImagePreview(null); }, [workspacePath]);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<"appearance" | "editor" | "workspace" | "sync">("appearance");
+  const [noteViewMode, setNoteViewMode] = useState<NoteViewMode>(readNoteViewMode);
+  const [printNotice, setPrintNotice] = useState("");
+  const [pdfExportSession, setPdfExportSession] = useState<PdfExportSession | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const pdfExportInProgress = useRef(false);
+  const pdfExportSequence = useRef(0);
+  const rawScrollRef = useRef<HTMLElement | null>(null);
+  const syncingScroll = useRef(false);
+  const changeNoteViewMode = (mode: NoteViewMode) => {
+    setNoteViewMode(mode);
+    try { localStorage.setItem(noteViewModeStorageKey, mode); } catch { /* Keep the current device session preference. */ }
+  };
+  const syncNoteScroll = (source: HTMLElement, target: HTMLElement | null, lineAnchors: HTMLElement[]) => {
+    if (!target || syncingScroll.current) return;
+    const sourceLine = visibleSourceLine(source, lineAnchors);
+    if (sourceLine === null) return;
+    syncingScroll.current = true;
+    syncToSourceLine(target, sourceLine);
+    requestAnimationFrame(() => { syncingScroll.current = false; });
+  };
+  const exportNote = async (targetNotePath: string) => {
+    const noteWorkspacePath = workspacePath;
+    if (!targetNotePath || !noteWorkspacePath || pdfExportInProgress.current) return;
+    pdfExportInProgress.current = true;
+    setIsExportingPdf(true);
+    setPdfExportSession(null);
+    try {
+      const notePath = targetNotePath;
+      let content: string;
+      if (notePath === activeNotePath) content = noteContent;
+      else {
+        const loaded = await readNote(noteWorkspacePath, notePath);
+        if (!loaded.ok || !loaded.data) throw new Error(loaded.error ?? "No se pudo leer la nota seleccionada.");
+        content = loaded.data.content;
+      }
+      setPrintNotice("Elige dónde guardar el PDF…");
+      const filename = notePath.split("/").at(-1)?.replace(/\.md$/i, "") || "Simpler note";
+      const selectedPath = await save({
+        defaultPath: `${filename}.pdf`,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+      if (!selectedPath) { setPrintNotice("Exportación cancelada."); return; }
+      const outputPath = /\.pdf$/i.test(selectedPath) ? selectedPath : `${selectedPath}.pdf`;
+      const target = await pdfTargetExists(outputPath);
+      if (!target.ok || !target.data) throw new Error(target.error ?? "No se pudo comprobar el destino del PDF.");
+      let overwrite = false;
+      if (target.data.exists) {
+        overwrite = await confirm(`Ya existe “${filename}.pdf” en el destino elegido. ¿Quieres reemplazarlo?`, { title: "Reemplazar PDF", kind: "warning" });
+        if (!overwrite) { setPrintNotice("Exportación cancelada; el archivo existente se conservó."); return; }
+      }
+
+      setPrintNotice("Preparando el contenido del PDF…");
+      const missingImages = await new Promise<string[]>((resolve, reject) => {
+        let completed = false;
+        const id = ++pdfExportSequence.current;
+        const onAssetsSettled = (missing: string[]) => {
+          if (completed) return;
+          completed = true;
+          void exportPdfToPath(outputPath, overwrite).then(result => {
+            if (!result.ok || !result.data) throw new Error(result.error ?? "Falló la generación del PDF.");
+            if (result.data.needsOverwriteConfirmation) throw new Error("El destino cambió durante la exportación. Vuelve a elegir el archivo para confirmar el reemplazo.");
+            resolve(missing);
+          }).catch(reject);
+        };
+        setPdfExportSession({ id, workspacePath: noteWorkspacePath, notePath, content, outputPath, overwrite, onAssetsSettled });
+      });
+      setPdfExportSession(null);
+      const warning = missingImages.length ? ` El PDF quedó listo, pero faltan estas imágenes: ${missingImages.join(", ")}.` : "";
+      setPrintNotice(`PDF guardado en ${outputPath}.${warning}`);
+      try {
+        const shouldOpen = await confirm(`PDF guardado correctamente.${warning}\n\n¿Quieres abrirlo ahora?`, { title: "Exportación PDF", kind: "info" });
+        if (shouldOpen) {
+          const opened = await openExportedPdf(outputPath);
+          if (!opened.ok) throw new Error(opened.error ?? "No se pudo abrir el PDF.");
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        setPrintNotice(`PDF guardado en ${outputPath}, pero no se pudo abrir: ${detail}`);
+        await message(`El PDF se guardó, pero no se pudo abrir.\n${detail}`, { title: "PDF guardado", kind: "error" });
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setPrintNotice(`No se pudo exportar el PDF: ${detail}`);
+      await message(detail, { title: "Error al exportar el PDF", kind: "error" });
+    } finally {
+      setPdfExportSession(null);
+      pdfExportInProgress.current = false;
+      setIsExportingPdf(false);
+    }
+  };
+  const exportOpenNote = () => activeNotePath ? exportNote(activeNotePath) : Promise.resolve();
+  useEffect(() => {
+    const editor = editorContainerRef.current?.querySelector<HTMLElement>(".cm-scroller");
+    rawScrollRef.current = editor ?? null;
+    if (!editor || noteViewMode !== "split") return;
+    const onScroll = () => syncNoteScroll(editor, editorContainerRef.current?.parentElement?.querySelector<HTMLElement>(".rendered-note") ?? null, [...editor.querySelectorAll<HTMLElement>(".cm-line")]);
+    editor.addEventListener("scroll", onScroll, { passive: true });
+    return () => editor.removeEventListener("scroll", onScroll);
+  }, [noteViewMode, activeNotePath, noteContent]);
   const [isCommandHelpOpen, setIsCommandHelpOpen] = useState(false);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const settingsOriginRef = useRef<HTMLElement | null>(null);
@@ -573,6 +685,10 @@ export function ClassicShell({
         available: editorFontSize !== defaultEditorFontSize,
         run: () => onEditorFontSizeChange(defaultEditorFontSize),
       },
+      { id: "view-raw", label: "Show Raw Markdown", shortcut: "", available: Boolean(activeNotePath) && noteViewMode !== "raw", run: () => changeNoteViewMode("raw") },
+      { id: "view-split", label: "Show Raw Markdown and Rendered Note", shortcut: "", available: Boolean(activeNotePath) && noteViewMode !== "split", run: () => changeNoteViewMode("split") },
+      { id: "view-rendered", label: "Show Rendered Note", shortcut: "", available: Boolean(activeNotePath) && noteViewMode !== "rendered", run: () => changeNoteViewMode("rendered") },
+      { id: "export-pdf", label: "Export open note as PDF", shortcut: "", available: Boolean(activeNotePath) && !isExportingPdf, run: () => { void exportOpenNote(); } },
       {
         id: "command-help",
         label: "Command Help",
@@ -621,6 +737,11 @@ export function ClassicShell({
       onEditorFontSizeChange,
       uiZoom,
       editorFontSize,
+      noteViewMode,
+      activeNotePath,
+      isExportingPdf,
+      noteContent,
+      workspacePath,
       handleToggleSidebarCollapse,
       effectiveSidebarCollapsed,
       onToggleSidebarCollapse,
@@ -1180,7 +1301,13 @@ export function ClassicShell({
         </div>
 
         <div className={noteHistoryOpen ? "editor-body editor-body--history" : "editor-body"} inert={isWelcomeOpen || undefined} style={isWelcomeOpen ? { visibility: "hidden" } : undefined}>
-        <section className="editor-surface" aria-label="Raw Markdown editor" ref={editorContainerRef}>
+        {activeNotePath && !isWelcomeOpen ? <div className="note-view-toolbar" role="toolbar" aria-label="Note view modes">
+          <div className="note-view-toolbar__modes" role="group" aria-label="Note view modes">
+            {([ ["raw", "Raw"], ["split", "Split"], ["rendered", "Rendered"] ] as const).map(([mode, label]) => <button key={mode} type="button" aria-pressed={noteViewMode === mode} onClick={() => changeNoteViewMode(mode)}>{label}</button>)}
+          </div>
+          <div className="note-view-toolbar__export"><button type="button" onClick={() => void exportOpenNote()} disabled={isExportingPdf}>Export PDF</button></div>
+        </div> : null}
+        <section className={`editor-surface${noteViewMode === "rendered" ? " editor-surface--hidden" : ""}`} aria-label="Raw Markdown editor" ref={editorContainerRef}>
           {editorError ? (
             <EditorErrorState error={editorError} notePath={activeNotePath} />
           ) : activeNotePath ? (
@@ -1209,6 +1336,13 @@ export function ClassicShell({
             <p className="empty-editor">Select a Markdown note to start writing.</p>
           )}
         </section>
+        {activeNotePath && (noteViewMode === "split" || noteViewMode === "rendered") ? <RenderedNote
+          className={noteViewMode === "split" ? "rendered-note--split" : "rendered-note--full"}
+          content={noteContent} notePath={activeNotePath} workspacePath={workspacePath} onNavigate={onNavigateToNote}
+          onScroll={element => syncNoteScroll(element, rawScrollRef.current, [...element.querySelectorAll<HTMLElement>("[data-source-line]")])}
+        /> : null}
+        {pdfExportSession ? <article key={pdfExportSession.id} className="pdf-print-document"><RenderedNote content={pdfExportSession.content} notePath={pdfExportSession.notePath} workspacePath={pdfExportSession.workspacePath} onNavigate={() => undefined} onAssetsSettled={pdfExportSession.onAssetsSettled} /></article> : null}
+        {printNotice ? <p className="sr-only" role="status">{printNotice}</p> : null}
           <NoteHistoryPanel
             noteHistoryOpen={noteHistoryOpen}
             noteHistoryEntries={noteHistoryEntries}
@@ -1323,6 +1457,7 @@ export function ClassicShell({
           onRenameSelection={() => { onRenameSelection(treeContextMenu.target); closeTreeItemMenu(); }}
           onMoveActiveNote={() => { onMoveActiveNote(treeContextMenu.target); closeTreeItemMenu(); }}
           onDeleteSelection={() => { onDeleteSelection(treeContextMenu.target); closeTreeItemMenu(); }}
+          onExportNote={treeContextMenu.target.kind === "note" ? () => { void exportNote(treeContextMenu.target.path); closeTreeItemMenu(); } : undefined}
           siblings={treeSiblings(workspaceTree, treeContextMenu.target.path)}
           targetPath={treeContextMenu.target.path}
           orderPending={treeOrderPending}
@@ -1454,7 +1589,7 @@ function treeSiblings(items: WorkspaceTreeItem[], path: string): WorkspaceTreeIt
   return [];
 }
 
-function TreeContextMenu({ x, y, onClose, onCreateNote, onCreateFolder, onRenameSelection, onMoveActiveNote, onDeleteSelection, siblings, targetPath, onSetOrder, orderPending }: {
+function TreeContextMenu({ x, y, onClose, onCreateNote, onCreateFolder, onRenameSelection, onMoveActiveNote, onDeleteSelection, onExportNote, siblings, targetPath, onSetOrder, orderPending }: {
   x: number;
   y: number;
   onClose: () => void;
@@ -1463,6 +1598,7 @@ function TreeContextMenu({ x, y, onClose, onCreateNote, onCreateFolder, onRename
   onRenameSelection: () => void;
   onMoveActiveNote: () => void;
   onDeleteSelection: () => void;
+  onExportNote?: () => void;
   siblings: WorkspaceTreeItem[];
   targetPath: string;
   onSetOrder?: (orderedPaths: string[] | null) => void;
@@ -1496,6 +1632,7 @@ function TreeContextMenu({ x, y, onClose, onCreateNote, onCreateFolder, onRename
       {onCreateFolder ? <button type="button" role="menuitem" onClick={onCreateFolder}><Icon name="folder-plus" size={14} />Nueva carpeta</button> : null}
       <button type="button" role="menuitem" onClick={onRenameSelection}><Icon name="rename" size={14} />Renombrar</button>
       <button type="button" role="menuitem" onClick={onMoveActiveNote}><Icon name="move" size={14} />Mover</button>
+      {onExportNote ? <button type="button" role="menuitem" onClick={onExportNote}><Icon name="export" size={14} />Exportar PDF</button> : null}
       <button type="button" role="menuitem" className="context-menu__danger" onClick={onDeleteSelection}><Icon name="trash" size={14} />Eliminar</button>
       {onSetOrder ? <>
         <button type="button" role="menuitem" disabled={orderPending || index <= 0} onClick={() => move(-1)}><Icon name="arrow-up" size={14} />Subir</button>

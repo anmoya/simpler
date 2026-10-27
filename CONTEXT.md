@@ -36,6 +36,10 @@ _Avoid_: Filename, path
 The primary writing experience where the user edits Markdown source text directly, and the saved file content is exactly the Markdown text.
 _Avoid_: WYSIWYG, rich-text document
 
+**Rendered Note**:
+A read-only presentation of a note's Markdown content. It can be viewed alone or alongside Raw Markdown; both represent the same note.
+_Avoid_: Separate document, rich-text note
+
 **Standard Markdown**:
 Markdown syntax based on CommonMark and common GitHub-flavored features, without app-specific note syntax in the MVP.
 _Avoid_: Proprietary Markdown, custom blocks, wikilinks
@@ -51,6 +55,18 @@ _Avoid_: Documentation page, tutorial
 **Global Search**:
 Plain-text search across Markdown files in the active workspace, returning matching files and line references.
 _Avoid_: Semantic search, fuzzy finder
+
+**Recent Notes**:
+The seven most recently opened distinct notes on the current device across Workspaces, whether or not they were edited, offered as shortcuts for resuming work with their source Workspace identified. Unavailable entries remain identifiable and can be removed by the user.
+_Avoid_: Recently edited notes, Sync history
+
+**Welcome Screen**:
+An optional startup screen offering Recent Notes, enabled or disabled per device. Dismissing it reveals the last opened note; disabling it makes the app open directly on that note.
+_Avoid_: Onboarding, mandatory welcome
+
+**Manual Tree Order**:
+A user-defined sequence of notes, folders and image Attachments within their parent folder, expressing priority or workflow independently of filenames. It belongs to the Workspace's shared organization and travels through Sync.
+_Avoid_: Rename order, move between folders, recent-first order
 
 **Attachment**:
 An image file brought into the Workspace by pasting or dropping it into a note, stored as a real file in an `assets/` folder beside that note and referenced from the note as Standard Markdown. The note keeps a plain relative reference; nothing is embedded in the Markdown itself.
