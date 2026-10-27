@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 mod image_preview;
 mod tree_order;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -307,8 +307,20 @@ struct LocalWorkspaceMetadata {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FilesystemOperationResult {
-    tree: Vec<WorkspaceTreeItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tree: Option<Vec<WorkspaceTreeItem>>,
+    patch: WorkspaceTreePatch,
     item_path: String,
+}
+
+/// Describes how a single-file create/delete/move/rename operation changed
+/// the Workspace Tree, so the frontend can patch its in-memory tree instead
+/// of re-fetching and swapping in a full rebuild (see `read_workspace_tree`).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceTreePatch {
+    removed_paths: Vec<String>,
+    upserted_item: Option<WorkspaceTreeItem>,
 }
 
 #[cfg(not(test))]
@@ -451,12 +463,38 @@ struct GitHubAuthStatus {
 enum InstallKind {
     Appimage,
     Packaged,
+    MacosApp,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InstallKindResponse {
     install_kind: InstallKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Platform {
+    Macos,
+    Linux,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformResponse {
+    platform: Platform,
+}
+
+/// Reports the running platform so the frontend can ask capability
+/// questions ("does this platform need the clipboard workaround?") instead
+/// of sniffing the user agent. Compiled in via `cfg`, not detected at
+/// runtime, since the two are the same thing for a Tauri binary.
+fn get_platform() -> Platform {
+    if cfg!(target_os = "macos") {
+        Platform::Macos
+    } else {
+        Platform::Linux
+    }
 }
 
 #[cfg(not(test))]
@@ -480,11 +518,16 @@ impl EnvLookup for SystemEnvLookup {
     }
 }
 
-/// Reports whether the running binary is an AppImage (which can self-update)
-/// vs. a packaged deb/rpm install (which can only link out to the release
-/// page), by checking for the `APPIMAGE` env var AppImage's runtime sets.
+/// Reports whether the running binary is an AppImage (self-updates), a
+/// macOS .app bundle (also self-updates, ADR 0015), or a packaged deb/rpm
+/// install (can only link out to the release page). The macOS case doesn't
+/// need env-var detection the way AppImage does: every macOS build is a
+/// `.app`, whether freshly installed from the `.dmg` or already replaced
+/// in place by a previous self-update, so the platform alone decides it.
 fn get_install_kind(env: &impl EnvLookup) -> InstallKind {
-    if env.var("APPIMAGE").is_some() {
+    if cfg!(target_os = "macos") {
+        InstallKind::MacosApp
+    } else if env.var("APPIMAGE").is_some() {
         InstallKind::Appimage
     } else {
         InstallKind::Packaged
@@ -499,6 +542,13 @@ trait GitHubCredentialStore {
 
 struct SystemCredentialStore;
 
+#[cfg(any(
+    target_os = "linux",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
 impl GitHubCredentialStore for SystemCredentialStore {
     fn access_token(&self) -> Result<Option<String>, String> {
         let output = Command::new("secret-tool")
@@ -557,6 +607,74 @@ impl GitHubCredentialStore for SystemCredentialStore {
     fn clear_access_token(&self) -> Result<(), String> {
         let status = Command::new("secret-tool")
             .args(["clear", "service", "simpler", "account", "github"])
+            .status()
+            .map_err(|error| format!("failed to access the system keychain: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("failed to remove the GitHub credential from the system keychain".to_string())
+        }
+    }
+}
+
+// The macOS keychain, via the `security` CLI (ADR 0014) rather than
+// `secret-tool`, which is libsecret/Linux-only.
+#[cfg(target_os = "macos")]
+impl GitHubCredentialStore for SystemCredentialStore {
+    fn access_token(&self) -> Result<Option<String>, String> {
+        let output = Command::new("security")
+            .args(["find-generic-password", "-s", "simpler", "-a", "github", "-w"])
+            .output()
+            .map_err(|error| format!("failed to access the system keychain: {error}"))?;
+
+        // Unlike secret-tool's exit code 1, `security` uses 44
+        // (errSecItemNotFound) for "no credential stored yet" — a Mac with
+        // no GitHub connection made yet, not a broken keychain.
+        if output.status.code() == Some(44) {
+            return Ok(None);
+        }
+        if !output.status.success() {
+            return Err(
+                "failed to read the GitHub credential from the system keychain".to_string(),
+            );
+        }
+
+        Ok(
+            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|token| !token.is_empty()),
+        )
+    }
+
+    fn store_access_token(&self, token: &str) -> Result<(), String> {
+        // Unlike secret-tool store, `security add-generic-password` has no
+        // stdin form for the password — `-w` takes it directly as an argv
+        // value, which is visible to other processes on this machine via
+        // `ps` for as long as the command runs. There is no CLI flag that
+        // avoids this; accepted here on the standing assumption behind this
+        // whole store (ADR 0014): a single-developer, single-Mac audience.
+        let status = Command::new("security")
+            .args([
+                "add-generic-password",
+                "-s",
+                "simpler",
+                "-a",
+                "github",
+                "-w",
+                token,
+                "-U",
+            ])
+            .status()
+            .map_err(|error| format!("failed to access the system keychain: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("failed to store the GitHub credential in the system keychain".to_string())
+        }
+    }
+
+    fn clear_access_token(&self) -> Result<(), String> {
+        let status = Command::new("security")
+            .args(["delete-generic-password", "-s", "simpler", "-a", "github"])
             .status()
             .map_err(|error| format!("failed to access the system keychain: {error}"))?;
         if status.success() {
@@ -949,6 +1067,10 @@ pub fn dispatch_native_command(request: NativeCommandRequest) -> NativeCommandRe
         return native_response(request, get_install_kind_payload);
     }
 
+    if request.domain == NativeDomain::Update && request.action == "get-platform" {
+        return native_response(request, get_platform_payload);
+    }
+
     // "check-for-update" and "download-and-install-update" (Update domain)
     // need an AppHandle for tauri-plugin-updater and are handled in
     // commands::native_command via handle_update_command before reaching
@@ -967,6 +1089,13 @@ fn get_install_kind_payload(_: serde_json::Value) -> Result<serde_json::Value, S
     let install_kind = get_install_kind(&SystemEnvLookup);
     serde_json::to_value(InstallKindResponse { install_kind })
         .map_err(|_| "failed to serialize install kind".to_string())
+}
+
+fn get_platform_payload(_: serde_json::Value) -> Result<serde_json::Value, String> {
+    serde_json::to_value(PlatformResponse {
+        platform: get_platform(),
+    })
+    .map_err(|_| "failed to serialize platform".to_string())
 }
 
 fn github_auth_status_payload(_: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1094,6 +1223,11 @@ fn write_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, S
     let note_path = resolve_note_path(&payload.workspace_path, &payload.note_path)?;
     fs::write(&note_path, &payload.content)
         .map_err(|error| format!("failed to save note: {error}"))?;
+    update_search_index(
+        &PathBuf::from(&payload.workspace_path),
+        &[],
+        Some(&note_path),
+    );
     serde_json::to_value(NoteContent {
         content: payload.content,
     })
@@ -1114,7 +1248,7 @@ fn create_folder_payload(payload: serde_json::Value) -> Result<serde_json::Value
     }
 
     fs::create_dir(&folder_path).map_err(|error| format!("failed to create folder: {error}"))?;
-    workspace_operation_result(&workspace_path, &folder_path)
+    workspace_operation_result(&workspace_path, &folder_path, Vec::new(), Some(&folder_path))
 }
 
 fn create_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1131,7 +1265,7 @@ fn create_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
     }
 
     fs::write(&note_path, "").map_err(|error| format!("failed to create note: {error}"))?;
-    workspace_operation_result(&workspace_path, &note_path)
+    workspace_operation_result(&workspace_path, &note_path, Vec::new(), Some(&note_path))
 }
 
 fn save_attachment_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1155,11 +1289,9 @@ fn save_attachment_payload(payload: serde_json::Value) -> Result<serde_json::Val
     fs::write(&attachment_path, &bytes)
         .map_err(|error| format!("failed to save attachment: {error}"))?;
 
-    serde_json::to_value(FilesystemOperationResult {
-        tree: read_workspace_tree(&workspace_path, &workspace_path)?,
-        item_path: relative_workspace_path(&workspace_path, &attachment_path),
-    })
-    .map_err(|_| "failed to serialize filesystem response".to_string())
+    // Attachments never appear in the Workspace Tree (only Markdown notes do,
+    // per `is_markdown_note`), so this never changes the tree.
+    workspace_operation_result(&workspace_path, &attachment_path, Vec::new(), None)
 }
 
 const IMPORTABLE_IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
@@ -1199,11 +1331,9 @@ fn import_attachment_payload(payload: serde_json::Value) -> Result<serde_json::V
     fs::copy(&source_path, &attachment_path)
         .map_err(|error| format!("failed to import attachment: {error}"))?;
 
-    serde_json::to_value(FilesystemOperationResult {
-        tree: read_workspace_tree(&workspace_path, &workspace_path)?,
-        item_path: relative_workspace_path(&workspace_path, &attachment_path),
-    })
-    .map_err(|_| "failed to serialize filesystem response".to_string())
+    // Attachments never appear in the Workspace Tree (only Markdown notes do,
+    // per `is_markdown_note`), so this never changes the tree.
+    workspace_operation_result(&workspace_path, &attachment_path, Vec::new(), None)
 }
 
 fn attachment_timestamp() -> String {
@@ -1272,7 +1402,7 @@ fn rename_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
     fs::rename(&item_path, &target_path)
         .map_err(|error| format!("failed to rename item: {error}"))?;
     relocate_local_session_paths(&workspace_path, &item_path, &target_path)?;
-    workspace_operation_result(&workspace_path, &target_path)
+    workspace_operation_result(&workspace_path, &target_path, vec![item_path], Some(&target_path))
 }
 
 fn relocate_local_session_paths(
@@ -1326,7 +1456,7 @@ fn move_note_payload(payload: serde_json::Value) -> Result<serde_json::Value, St
     fs::rename(&note_path, &target_path)
         .map_err(|error| format!("failed to move note: {error}"))?;
     relocate_local_session_paths(&workspace_path, &note_path, &target_path)?;
-    workspace_operation_result(&workspace_path, &target_path)
+    workspace_operation_result(&workspace_path, &target_path, vec![note_path], Some(&target_path))
 }
 
 fn delete_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1376,7 +1506,7 @@ fn delete_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, 
         return Err(error);
     }
 
-    workspace_operation_result(&workspace_path, &parent_path)
+    workspace_operation_result(&workspace_path, &parent_path, vec![item_path], None)
 }
 
 static TRASH_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -1457,7 +1587,7 @@ fn restore_trash_item_payload(payload: serde_json::Value) -> Result<serde_json::
         let _ = fs::rename(&original_path, &trashed_path);
         return Err(error);
     }
-    workspace_operation_result(&workspace_path, &original_path)
+    workspace_operation_result(&workspace_path, &original_path, Vec::new(), Some(&original_path))
 }
 
 fn resolve_trash_entry_path(workspace_path: &Path, relative_path: &str) -> Result<PathBuf, String> {
@@ -1531,7 +1661,7 @@ fn move_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, St
     let target_path = target_folder.join(file_name);
 
     if target_path == item_path {
-        return workspace_operation_result(&workspace_path, &item_path);
+        return workspace_operation_result(&workspace_path, &item_path, Vec::new(), Some(&item_path));
     }
 
     if target_path.exists() {
@@ -1541,7 +1671,7 @@ fn move_item_payload(payload: serde_json::Value) -> Result<serde_json::Value, St
     fs::rename(&item_path, &target_path)
         .map_err(|error| format!("failed to move item: {error}"))?;
     relocate_local_session_paths(&workspace_path, &item_path, &target_path)?;
-    workspace_operation_result(&workspace_path, &target_path)
+    workspace_operation_result(&workspace_path, &target_path, vec![item_path], Some(&target_path))
 }
 
 fn global_search_payload(payload: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -1558,8 +1688,25 @@ fn global_search_payload(payload: serde_json::Value) -> Result<serde_json::Value
         .map_err(|_| "failed to serialize search results".to_string());
     }
 
+    let query = query.to_lowercase();
+    let key = search_index_key(&workspace_path);
+    let mut indexes = search_indexes()
+        .lock()
+        .map_err(|_| "failed to access search index".to_string())?;
+    if !indexes.contains_key(&key) {
+        let index = build_search_index(&workspace_path)?;
+        indexes.insert(key.clone(), index);
+    }
+    let index = indexes.get(&key).expect("index was just inserted");
+
+    let mut note_paths: Vec<&String> = index.keys().collect();
+    note_paths.sort();
+
     let mut results = Vec::new();
-    search_markdown_files(&workspace_path, &workspace_path, query, &mut results)?;
+    for note_path in note_paths {
+        search_indexed_content(note_path, &index[note_path], &query, &mut results);
+    }
+
     serde_json::to_value(GlobalSearchResults { results })
         .map_err(|_| "failed to serialize search results".to_string())
 }
@@ -1718,6 +1865,9 @@ fn git_sync_payload(payload: serde_json::Value) -> Result<serde_json::Value, Str
     let workspace_path = PathBuf::from(&payload.workspace_path);
     ensure_workspace_folder(&workspace_path)?;
     let result = sync_git_workspace(&workspace_path, &SystemGitCommandRunner)?;
+    // Sync can touch an unbounded set of files (pull/rebase), so the index
+    // is rebuilt from scratch rather than patched incrementally.
+    refresh_search_index(&workspace_path);
 
     serde_json::to_value(result).map_err(|_| "failed to serialize git sync result".to_string())
 }
@@ -1803,6 +1953,9 @@ fn resolve_git_conflict_payload(payload: serde_json::Value) -> Result<serde_json
         payload.resolution,
         &SystemGitCommandRunner,
     )?;
+    // Conflict resolution can rewrite arbitrary files via rebase --continue,
+    // so the index is rebuilt from scratch rather than patched incrementally.
+    refresh_search_index(&workspace_path);
 
     serde_json::to_value(result).map_err(|_| "failed to serialize conflict resolution".to_string())
 }
@@ -2537,10 +2690,13 @@ fn open_workspace(workspace_path: &Path) -> Result<OpenedWorkspace, String> {
         .unwrap_or("Workspace")
         .to_string();
 
+    let tree = read_workspace_tree(workspace_path, workspace_path)?;
+    refresh_search_index(workspace_path);
+
     Ok(OpenedWorkspace {
         name,
         path: workspace_path.to_string_lossy().to_string(),
-        tree: read_workspace_tree(workspace_path, workspace_path)?,
+        tree,
         metadata: read_workspace_metadata(workspace_path)?,
     })
 }
@@ -2647,15 +2803,67 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
         .map_err(|error| format!("failed to write workspace metadata: {error}"))
 }
 
+/// Builds a `FilesystemOperationResult` carrying only the delta a single-file
+/// operation made to the Workspace Tree (paths removed, plus the resulting
+/// node to upsert), rather than a full `read_workspace_tree` of the whole
+/// Workspace — `upsert_path`, when a folder, is walked to pick up its
+/// children, but nothing outside that subtree is touched.
 fn workspace_operation_result(
     workspace_path: &Path,
     item_path: &Path,
+    removed_paths: Vec<PathBuf>,
+    upsert_path: Option<&Path>,
 ) -> Result<serde_json::Value, String> {
+    let removed_paths: Vec<String> = removed_paths
+        .iter()
+        .map(|path| relative_workspace_path(workspace_path, path))
+        .collect();
+    update_search_index(workspace_path, &removed_paths, upsert_path);
+    let upserted_item = match upsert_path {
+        Some(path) => Some(build_workspace_tree_item(workspace_path, path)?),
+        None => None,
+    };
+
+    let metadata = fs::read_to_string(workspace_path.join(tree_order::METADATA_PATH)).ok().and_then(|content| tree_order::parse(&content).ok());
+    let tree = if metadata.is_some_and(|value| !value.manual_tree_order.is_empty()) { Some(read_workspace_tree(workspace_path, workspace_path)?) } else { None };
     serde_json::to_value(FilesystemOperationResult {
-        tree: read_workspace_tree(workspace_path, workspace_path)?,
+        tree,
         item_path: relative_workspace_path(workspace_path, item_path),
+        patch: WorkspaceTreePatch {
+            removed_paths,
+            upserted_item,
+        },
     })
     .map_err(|_| "failed to serialize filesystem response".to_string())
+}
+
+/// Builds a single Workspace Tree node for `item_path` (its `children`,
+/// scoped to that subtree, if it's a folder), for patching an existing tree
+/// without rebuilding it from the Workspace root.
+fn build_workspace_tree_item(root_path: &Path, item_path: &Path) -> Result<WorkspaceTreeItem, String> {
+    let name = item_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "item path must include a valid name".to_string())?
+        .to_string();
+    let metadata = fs::metadata(item_path)
+        .map_err(|error| format!("failed to read workspace entry metadata: {error}"))?;
+
+    if metadata.is_dir() {
+        Ok(WorkspaceTreeItem {
+            name,
+            path: relative_workspace_path(root_path, item_path),
+            kind: WorkspaceTreeItemKind::Folder,
+            children: scan_workspace_tree(root_path, item_path)?,
+        })
+    } else {
+        Ok(WorkspaceTreeItem {
+            name,
+            path: relative_workspace_path(root_path, item_path),
+            kind: WorkspaceTreeItemKind::Note,
+            children: Vec::new(),
+        })
+    }
 }
 
 fn ensure_workspace_folder(workspace_path: &Path) -> Result<(), String> {
@@ -2775,6 +2983,10 @@ fn scan_workspace_tree(
             .map_err(|error| format!("failed to read workspace entry metadata: {error}"))?;
 
         if metadata.is_dir() {
+            if is_ignored_directory(name) {
+                continue;
+            }
+
             items.push(WorkspaceTreeItem {
                 name: name.to_string(),
                 path: relative_workspace_path(root_path, &path),
@@ -2805,16 +3017,75 @@ fn scan_workspace_tree(
     Ok(items)
 }
 
-fn search_markdown_files(
+// Global Search's in-memory index: workspace path -> (relative note path ->
+// content). Built once on Workspace open and kept correct incrementally by
+// Local Save flushes and single-file create/rename/move/delete/restore
+// (via `workspace_operation_result`), with a full rebuild after Sync/conflict
+// resolution, since those can touch an unbounded set of files. A query reads
+// straight from this map instead of re-walking and re-reading the Workspace.
+type SearchIndex = HashMap<String, String>;
+
+static SEARCH_INDEXES: OnceLock<Mutex<HashMap<String, SearchIndex>>> = OnceLock::new();
+
+fn search_indexes() -> &'static Mutex<HashMap<String, SearchIndex>> {
+    SEARCH_INDEXES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn search_index_key(workspace_path: &Path) -> String {
+    workspace_path.to_string_lossy().to_string()
+}
+
+fn build_search_index(workspace_path: &Path) -> Result<SearchIndex, String> {
+    let mut entries = Vec::new();
+    collect_searchable_entries(workspace_path, workspace_path, &mut entries)?;
+    Ok(entries.into_iter().collect())
+}
+
+/// (Re)builds and stores the index for `workspace_path` from scratch. Used
+/// on Workspace open and after Sync/conflict resolution. Best-effort: a
+/// failure here must never fail the operation that triggered it — a later
+/// search simply rebuilds the index lazily instead.
+fn refresh_search_index(workspace_path: &Path) {
+    if let Ok(index) = build_search_index(workspace_path) {
+        if let Ok(mut indexes) = search_indexes().lock() {
+            indexes.insert(search_index_key(workspace_path), index);
+        }
+    }
+}
+
+/// Applies an incremental update to `workspace_path`'s index, if one exists
+/// yet (a workspace that was never opened/searched has none to update).
+fn update_search_index(workspace_path: &Path, removed_paths: &[String], upsert_path: Option<&Path>) {
+    let Ok(mut indexes) = search_indexes().lock() else {
+        return;
+    };
+    let Some(index) = indexes.get_mut(&search_index_key(workspace_path)) else {
+        return;
+    };
+
+    for removed_path in removed_paths {
+        let prefix = format!("{removed_path}/");
+        index.retain(|path, _| path != removed_path && !path.starts_with(&prefix));
+    }
+
+    if let Some(upsert_path) = upsert_path {
+        if let Ok(entries) = index_entries_for_item(workspace_path, upsert_path) {
+            for (path, content) in entries {
+                index.insert(path, content);
+            }
+        }
+    }
+}
+
+fn collect_searchable_entries(
     root_path: &Path,
     current_path: &Path,
-    query: &str,
-    results: &mut Vec<GlobalSearchResult>,
+    out: &mut Vec<(String, String)>,
 ) -> Result<(), String> {
     let mut entries = fs::read_dir(current_path)
-        .map_err(|error| format!("failed to search workspace: {error}"))?
+        .map_err(|error| format!("failed to index workspace: {error}"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to read workspace search entry: {error}"))?;
+        .map_err(|error| format!("failed to read workspace index entry: {error}"))?;
 
     entries.sort_by(|left, right| left.file_name().cmp(&right.file_name()));
 
@@ -2831,16 +3102,41 @@ fn search_markdown_files(
 
         let metadata = entry
             .metadata()
-            .map_err(|error| format!("failed to read workspace search metadata: {error}"))?;
+            .map_err(|error| format!("failed to read workspace index metadata: {error}"))?;
 
         if metadata.is_dir() {
-            search_markdown_files(root_path, &path, query, results)?;
+            if is_ignored_directory(name) {
+                continue;
+            }
+            collect_searchable_entries(root_path, &path, out)?;
         } else if metadata.is_file() && is_searchable_text_file(&path) {
-            search_note_file(root_path, &path, query, results)?;
+            let content = fs::read_to_string(&path)
+                .map_err(|error| format!("failed to index note: {error}"))?;
+            out.push((relative_workspace_path(root_path, &path), content));
         }
     }
 
     Ok(())
+}
+
+/// Collects index entries for a single upserted path: one entry if it's a
+/// searchable file, or a scoped walk of its contents if it's a folder —
+/// mirroring `build_workspace_tree_item`'s scoped-subtree approach so a
+/// single-file operation never re-walks the whole Workspace.
+fn index_entries_for_item(root_path: &Path, item_path: &Path) -> Result<Vec<(String, String)>, String> {
+    let metadata = fs::metadata(item_path)
+        .map_err(|error| format!("failed to read workspace entry metadata: {error}"))?;
+    let mut out = Vec::new();
+
+    if metadata.is_dir() {
+        collect_searchable_entries(root_path, item_path, &mut out)?;
+    } else if is_searchable_text_file(item_path) {
+        let content = fs::read_to_string(item_path)
+            .map_err(|error| format!("failed to index note: {error}"))?;
+        out.push((relative_workspace_path(root_path, item_path), content));
+    }
+
+    Ok(out)
 }
 
 const SEARCHABLE_TEXT_EXTENSIONS: [&str; 3] = ["md", "txt", "csv"];
@@ -2855,28 +3151,24 @@ fn is_searchable_text_file(path: &Path) -> bool {
         })
 }
 
-fn search_note_file(
-    root_path: &Path,
-    note_path: &Path,
+fn search_indexed_content(
+    note_path: &str,
+    content: &str,
     query: &str,
     results: &mut Vec<GlobalSearchResult>,
-) -> Result<(), String> {
-    let content =
-        fs::read_to_string(note_path).map_err(|error| format!("failed to search note: {error}"))?;
-    let query = query.to_lowercase();
-
+) {
     for (line_index, line_text) in content.lines().enumerate() {
         let normalized_line = line_text.to_lowercase();
         let mut from_index = 0;
 
         while from_index <= normalized_line.len() {
-            let Some(match_start) = normalized_line[from_index..].find(&query) else {
+            let Some(match_start) = normalized_line[from_index..].find(query) else {
                 break;
             };
             let match_start = from_index + match_start;
 
             results.push(GlobalSearchResult {
-                note_path: relative_workspace_path(root_path, note_path),
+                note_path: note_path.to_string(),
                 line_number: line_index + 1,
                 line_text: line_text.to_string(),
                 match_start,
@@ -2886,12 +3178,18 @@ fn search_note_file(
             from_index = match_start + query.len();
         }
     }
-
-    Ok(())
 }
 
 fn is_hidden_or_internal(name: &str) -> bool {
     name.starts_with('.')
+}
+
+const IGNORED_DIRECTORY_NAMES: [&str; 5] = ["node_modules", "target", "dist", "build", "vendor"];
+
+fn is_ignored_directory(name: &str) -> bool {
+    IGNORED_DIRECTORY_NAMES
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(name))
 }
 
 fn is_markdown_note(path: &Path) -> bool {
@@ -3230,10 +3528,24 @@ async fn handle_update_command(
 
 #[cfg(not(test))]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![commands::native_command])
+        // macOS only: the default Quit menu item's accelerator (Cmd+Q) is
+        // wired to the native `terminate:` selector, which exits the process
+        // directly and never reaches any Rust or JS code — see ADR 0014. The
+        // custom item below has the same accelerator but a plain click
+        // action instead, routed through here to the frontend's own close
+        // pipeline (Close Sync Prompt included) via a "quit-app" menu id.
+        .on_menu_event(|app_handle, event| {
+            if event.id().as_ref() == "quit-app" {
+                use tauri::{Emitter, Manager};
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.emit("simpler://quit-requested", ());
+                }
+            }
+        })
         .setup(|app| {
             // Root cause of window-close hangs on Linux/Wayland (see
             // .scratch/window-close-reliability): the compositor's
@@ -3291,18 +3603,94 @@ pub fn run() {
                     }
                 }
             }
+
+            // Swap the default menu's predefined Quit item (native
+            // `terminate:`, unreachable from Rust/JS — see the on_menu_event
+            // comment above) for one with the same Cmd+Q accelerator but a
+            // click action we can route through the frontend's close
+            // pipeline instead.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{Menu, MenuItem, MenuItemKind};
+
+                let menu = Menu::default(app.handle())?;
+                if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
+                    if let Some(MenuItemKind::Predefined(default_quit)) =
+                        app_menu.items()?.into_iter().last()
+                    {
+                        app_menu.remove(&default_quit)?;
+                    }
+                    let quit_item = MenuItem::with_id(
+                        app.handle(),
+                        "quit-app",
+                        "Quit Simpler",
+                        true,
+                        Some("CmdOrCtrl+Q"),
+                    )?;
+                    app_menu.append(&quit_item)?;
+                }
+                app.set_menu(menu)?;
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
             // Defense-in-depth: force the process to exit once the window is
             // actually destroyed, in case the platform's default
-            // exit-on-last-window-closed behavior doesn't fire.
+            // exit-on-last-window-closed behavior doesn't fire. Linux-only
+            // (see ADR 0014): on macOS the window is hidden, not destroyed,
+            // by the red traffic light, and a real quit (Cmd+Q or the in-app
+            // close button) already destroys through the frontend's own
+            // close pipeline, which the platform's default
+            // exit-when-no-windows-remain behavior picks up on its own.
+            #[cfg(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd"
+            ))]
             if let tauri::WindowEvent::Destroyed = event {
                 tauri::Manager::app_handle(window).exit(0);
             }
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd"
+            )))]
+            let _ = (window, event);
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run Simpler");
+        .build(tauri::generate_context!())
+        .expect("failed to build Simpler");
+
+    #[cfg(target_os = "macos")]
+    app.run(|app_handle, event| {
+        // macOS only: `applicationShouldHandleReopen` (clicking the Dock
+        // icon) with no visible windows — the window was hidden by the red
+        // traffic light (ADR 0014), never destroyed, so this just needs to
+        // show and focus it again rather than recreate anything. RunEvent
+        // has no `Reopen` variant at all outside macOS (it's cfg-gated
+        // inside the `tauri` crate itself), so this whole closure has to be
+        // macOS-only rather than matching on an event that never fires.
+        if let tauri::RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } = event
+        {
+            if !has_visible_windows {
+                use tauri::Manager;
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        }
+    });
+
+    #[cfg(not(target_os = "macos"))]
+    app.run(|_, _| {});
 }
 
 #[cfg(test)]
@@ -3327,15 +3715,52 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "macos"))]
     fn install_kind_is_appimage_when_appimage_env_var_is_set() {
         let env = StubEnvLookup(Some("/tmp/Simpler.AppImage"));
         assert_eq!(get_install_kind(&env), InstallKind::Appimage);
     }
 
     #[test]
+    #[cfg(not(target_os = "macos"))]
     fn install_kind_is_packaged_when_appimage_env_var_is_absent() {
         let env = StubEnvLookup(None);
         assert_eq!(get_install_kind(&env), InstallKind::Packaged);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn install_kind_is_macos_app_regardless_of_the_appimage_env_var() {
+        // A macOS build has no AppImage-style env-var signal at all; the
+        // platform alone decides it (see the get_install_kind doc comment).
+        assert_eq!(get_install_kind(&StubEnvLookup(None)), InstallKind::MacosApp);
+        assert_eq!(
+            get_install_kind(&StubEnvLookup(Some("/tmp/Simpler.AppImage"))),
+            InstallKind::MacosApp
+        );
+    }
+
+    #[test]
+    fn get_platform_matches_the_compile_target() {
+        let expected = if cfg!(target_os = "macos") {
+            Platform::Macos
+        } else {
+            Platform::Linux
+        };
+        assert_eq!(get_platform(), expected);
+    }
+
+    #[test]
+    fn get_platform_native_command_reports_the_running_platform() {
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Update,
+            action: "get-platform".to_string(),
+            payload: serde_json::Value::Null,
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert_eq!(data["platform"], serde_json::to_value(get_platform()).unwrap());
     }
 
     #[derive(Default)]
@@ -4498,6 +4923,56 @@ mod tests {
     }
 
     #[test]
+    fn opening_workspace_skips_ignored_non_note_directories_without_descending_into_them() {
+        let workspace = test_workspace("ignored_dirs");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::write(workspace.join("daily").join("today.md"), "# Today").unwrap();
+
+        // Build a large/deep fake node_modules tree; if the walk descended into
+        // it, this test would be slow and/or the assertion below would fail.
+        let mut deep_path = workspace.join("node_modules");
+        for index in 0..25 {
+            deep_path = deep_path.join(format!("package-{index}"));
+            fs::create_dir_all(&deep_path).unwrap();
+            for file_index in 0..20 {
+                fs::write(
+                    deep_path.join(format!("file-{file_index}.md")),
+                    "noise",
+                )
+                .unwrap();
+            }
+        }
+        fs::create_dir_all(workspace.join("target").join("debug")).unwrap();
+        fs::write(workspace.join("target").join("debug").join("build.md"), "noise").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+
+        assert!(response.ok);
+        assert_eq!(
+            response.data.unwrap()["tree"],
+            serde_json::json!([
+                {
+                    "name": "daily",
+                    "path": "daily",
+                    "kind": "folder",
+                    "children": [
+                        {
+                            "name": "today.md",
+                            "path": "daily/today.md",
+                            "kind": "note",
+                            "children": []
+                        }
+                    ]
+                }
+            ])
+        );
+    }
+
+    #[test]
     fn opening_workspace_creates_shared_and_local_metadata_without_touching_notes() {
         let workspace = test_workspace("metadata_creation");
         fs::write(workspace.join("today.md"), "# Today\n\nPortable body").unwrap();
@@ -5235,6 +5710,48 @@ mod tests {
     }
 
     #[test]
+    fn create_folder_patches_the_tree_incrementally_instead_of_a_full_rebuild() {
+        let workspace = test_workspace("create_folder_patch");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "create-folder".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "parentPath": "",
+                "folderName": "ideas",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({
+                "removedPaths": [],
+                "upsertedItem": {
+                    "name": "ideas",
+                    "path": "ideas",
+                    "kind": "folder",
+                    "children": []
+                }
+            })
+        );
+
+        // The patch must match what a full rebuild would have produced.
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "daily", "path": "daily", "kind": "folder", "children": [] },
+                { "name": "ideas", "path": "ideas", "kind": "folder", "children": [] },
+            ])
+        );
+    }
+
+    #[test]
     fn creates_markdown_notes_and_normalizes_missing_extension() {
         let workspace = test_workspace("create_note");
         fs::create_dir_all(workspace.join("daily")).unwrap();
@@ -5337,6 +5854,170 @@ mod tests {
         assert!(folder_response.ok);
         assert!(!workspace.join("daily").exists());
         assert!(workspace.join("journal").join("morning.md").exists());
+    }
+
+    #[test]
+    fn renaming_a_folder_patches_the_tree_with_the_renamed_subtree_and_no_full_rebuild() {
+        let workspace = test_workspace("rename_folder_patch");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::write(workspace.join("daily").join("today.md"), "# Today").unwrap();
+        fs::write(workspace.join("keep.md"), "# Keep").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "rename-item".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "itemPath": "daily",
+                "newName": "journal",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({
+                "removedPaths": ["daily"],
+                "upsertedItem": {
+                    "name": "journal",
+                    "path": "journal",
+                    "kind": "folder",
+                    "children": [
+                        { "name": "today.md", "path": "journal/today.md", "kind": "note", "children": [] }
+                    ]
+                }
+            })
+        );
+
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "journal", "path": "journal", "kind": "folder", "children": [
+                    { "name": "today.md", "path": "journal/today.md", "kind": "note", "children": [] }
+                ] },
+                { "name": "keep.md", "path": "keep.md", "kind": "note", "children": [] },
+            ])
+        );
+    }
+
+    #[test]
+    fn deleting_a_note_patches_the_tree_by_removing_only_the_deleted_path() {
+        let workspace = test_workspace("delete_note_patch");
+        fs::write(workspace.join("today.md"), "# Today").unwrap();
+        fs::write(workspace.join("keep.md"), "# Keep").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "delete-item".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "itemPath": "today.md",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({ "removedPaths": ["today.md"], "upsertedItem": null })
+        );
+
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "keep.md", "path": "keep.md", "kind": "note", "children": [] },
+            ])
+        );
+    }
+
+    #[test]
+    fn moving_a_note_patches_the_tree_and_matches_a_full_rebuild() {
+        let workspace = test_workspace("move_note_patch");
+        fs::create_dir_all(workspace.join("archive")).unwrap();
+        fs::write(workspace.join("today.md"), "# Today").unwrap();
+        fs::write(workspace.join("keep.md"), "# Keep").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "move-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "today.md",
+                "targetFolderPath": "archive",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({
+                "removedPaths": ["today.md"],
+                "upsertedItem": { "name": "today.md", "path": "archive/today.md", "kind": "note", "children": [] }
+            })
+        );
+
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "archive", "path": "archive", "kind": "folder", "children": [
+                    { "name": "today.md", "path": "archive/today.md", "kind": "note", "children": [] }
+                ] },
+                { "name": "keep.md", "path": "keep.md", "kind": "note", "children": [] },
+            ])
+        );
+    }
+
+    #[test]
+    fn moving_a_folder_via_move_item_patches_the_tree_and_matches_a_full_rebuild() {
+        let workspace = test_workspace("move_item_patch");
+        fs::create_dir_all(workspace.join("daily")).unwrap();
+        fs::create_dir_all(workspace.join("archive")).unwrap();
+        fs::write(workspace.join("daily").join("today.md"), "# Today").unwrap();
+        fs::write(workspace.join("keep.md"), "# Keep").unwrap();
+
+        let response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "move-item".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "itemPath": "daily",
+                "targetFolderPath": "archive",
+            }),
+        });
+
+        assert!(response.ok);
+        let data = response.data.unwrap();
+        assert!(data.get("tree").is_none(), "response must not carry a full tree");
+        assert_eq!(
+            data["patch"],
+            serde_json::json!({
+                "removedPaths": ["daily"],
+                "upsertedItem": { "name": "daily", "path": "archive/daily", "kind": "folder", "children": [
+                    { "name": "today.md", "path": "archive/daily/today.md", "kind": "note", "children": [] }
+                ] }
+            })
+        );
+
+        let full_tree = read_workspace_tree(&workspace, &workspace).unwrap();
+        assert_eq!(
+            serde_json::to_value(&full_tree).unwrap(),
+            serde_json::json!([
+                { "name": "archive", "path": "archive", "kind": "folder", "children": [
+                    { "name": "daily", "path": "archive/daily", "kind": "folder", "children": [
+                        { "name": "today.md", "path": "archive/daily/today.md", "kind": "note", "children": [] }
+                    ] }
+                ] },
+                { "name": "keep.md", "path": "keep.md", "kind": "note", "children": [] },
+            ])
+        );
     }
 
     #[test]
@@ -5798,6 +6479,133 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn opening_a_workspace_builds_the_search_index_used_by_later_queries() {
+        let workspace = test_workspace("search_index_open");
+        fs::write(workspace.join("today.md"), "# Today\n\nneedle here").unwrap();
+
+        let open_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        });
+        assert!(open_response.ok);
+
+        let search_response = dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "global-search".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "query": "needle" }),
+        });
+
+        assert!(search_response.ok);
+        assert_eq!(
+            search_response.data.unwrap()["results"],
+            serde_json::json!([
+                { "notePath": "today.md", "lineNumber": 3, "lineText": "needle here", "matchStart": 0, "matchEnd": 6 }
+            ])
+        );
+    }
+
+    #[test]
+    fn search_index_stays_correct_after_create_edit_delete_and_move_matching_a_full_rebuild() {
+        let workspace = test_workspace("search_index_incremental");
+        fs::write(workspace.join("keep.md"), "keep needle").unwrap();
+        fs::write(workspace.join("stale.md"), "needle to delete").unwrap();
+
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        })
+        .ok);
+
+        let search = |query: &str| -> serde_json::Value {
+            let response = dispatch_native_command(NativeCommandRequest {
+                domain: NativeDomain::Filesystem,
+                action: "global-search".to_string(),
+                payload: serde_json::json!({ "workspacePath": workspace, "query": query }),
+            });
+            assert!(response.ok);
+            response.data.unwrap()["results"].clone()
+        };
+
+        // create: a newly-created note isn't indexed until it has content, but
+        // the write-note flush that gives it content must be picked up.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "create-note".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "noteName": "fresh" }),
+        })
+        .ok);
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "write-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "fresh.md",
+                "content": "brand new needle",
+            }),
+        })
+        .ok);
+
+        // edit: overwriting an indexed note's content must replace, not append to, its entry.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "write-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "keep.md",
+                "content": "keep needle, edited",
+            }),
+        })
+        .ok);
+
+        // delete: a deleted note's content must no longer be searchable.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "delete-item".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "itemPath": "stale.md" }),
+        })
+        .ok);
+
+        // move: a moved note's results must report its new path, not the old one.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "create-folder".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace, "parentPath": "", "folderName": "archive" }),
+        })
+        .ok);
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Filesystem,
+            action: "move-note".to_string(),
+            payload: serde_json::json!({
+                "workspacePath": workspace,
+                "notePath": "fresh.md",
+                "targetFolderPath": "archive",
+            }),
+        })
+        .ok);
+
+        let incremental_results = search("needle");
+        assert_eq!(
+            incremental_results,
+            serde_json::json!([
+                { "notePath": "archive/fresh.md", "lineNumber": 1, "lineText": "brand new needle", "matchStart": 10, "matchEnd": 16 },
+                { "notePath": "keep.md", "lineNumber": 1, "lineText": "keep needle, edited", "matchStart": 5, "matchEnd": 11 },
+            ])
+        );
+
+        // A from-scratch rebuild (forced by reopening the Workspace) must
+        // agree exactly with the incrementally-updated index.
+        assert!(dispatch_native_command(NativeCommandRequest {
+            domain: NativeDomain::Workspace,
+            action: "open".to_string(),
+            payload: serde_json::json!({ "workspacePath": workspace }),
+        })
+        .ok);
+        assert_eq!(search("needle"), incremental_results);
     }
 
     fn test_workspace(name: &str) -> PathBuf {

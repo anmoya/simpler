@@ -6,7 +6,7 @@ GitHub Releases hosts both the update manifest and the build artifacts. The proj
 
 The ed25519 update-signing private key lives only as a GitHub Actions repository secret, used solely inside the release workflow to sign the AppImage and its update manifest. It's never generated or stored on a local machine or committed to the repo, so a compromised developer machine can't be used to publish a spoofed update; only the corresponding public key is committed, in `tauri.conf.json`, to verify signatures at install time.
 
-macOS is deferred — there's no Apple Developer account to sign or notarize a macOS build with, so no target, CI job, or signing key is added for it in this round. The update-manifest and signing-key design don't assume Linux-only, so a signed macOS target can be added later without reworking this pipeline.
+macOS is deferred — there's no Apple Developer account to sign or notarize a macOS build with, so no target, CI job, or signing key is added for it in this round. The update-manifest and signing-key design don't assume Linux-only, so a signed macOS target can be added later without reworking this pipeline. (Superseded on 2026-08-12 by ADR 0015: macOS ships **unsigned**, reusing this pipeline unchanged. The absence of an Apple identity is still a fact; it stopped being a reason to defer.)
 
 ## Status
 

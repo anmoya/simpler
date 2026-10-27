@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClassicShell } from "./ClassicShell";
@@ -6,6 +6,7 @@ import type { ClassicShellProps } from "./ClassicShell";
 
 const noop = () => undefined;
 const defaultProps: ClassicShellProps = {
+  platform: "linux",
   activeRoute: "workspace",
   workspaceTree: [],
   openFolderPaths: new Set(),
@@ -25,6 +26,7 @@ const defaultProps: ClassicShellProps = {
   noteHistoryLoading: false,
   noteHistoryError: null,
   themeMode: "light",
+  theme: "warm",
   uiZoom: 100,
   editorFontSize: 13.5,
   sidebarCollapsed: false,
@@ -38,6 +40,7 @@ const defaultProps: ClassicShellProps = {
   onOpenRecentWorkspace: noop,
   onRouteChange: noop,
   onThemeChange: noop,
+  onAppThemeChange: noop,
   onUiZoomChange: noop,
   onEditorFontSizeChange: noop,
   onSelectFolder: noop,
@@ -335,6 +338,45 @@ describe("ClassicShell", () => {
     expect(childrenWrapper).toHaveAttribute("aria-hidden", "true");
   });
 
+  it("does not mount a collapsed folder's descendant DOM nodes, and mounts them on expand", async () => {
+    const workspaceTree = [
+      {
+        name: "daily",
+        path: "daily",
+        kind: "folder" as const,
+        children: [{ name: "today.md", path: "daily/today.md", kind: "note" as const, children: [] }],
+      },
+    ];
+    const { rerender } = renderShell({ workspaceTree, openFolderPaths: new Set() });
+
+    expect(document.querySelector(".note-tree__folder-children")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "today.md" })).not.toBeInTheDocument();
+
+    rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={new Set(["daily"])} />);
+
+    expect(document.querySelector(".note-tree__folder-children")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "today.md" })).toBeInTheDocument();
+  });
+
+  it("removes a collapsed folder's descendant DOM nodes once the collapse transition finishes", async () => {
+    const workspaceTree = [
+      {
+        name: "daily",
+        path: "daily",
+        kind: "folder" as const,
+        children: [{ name: "today.md", path: "daily/today.md", kind: "note" as const, children: [] }],
+      },
+    ];
+    const { rerender } = renderShell({ workspaceTree, openFolderPaths: new Set(["daily"]) });
+    expect(document.querySelector(".note-tree__folder-children")).toBeInTheDocument();
+
+    rerender(<ClassicShell {...defaultProps} workspaceTree={workspaceTree} openFolderPaths={new Set()} />);
+
+    await waitFor(() => {
+      expect(document.querySelector(".note-tree__folder-children")).not.toBeInTheDocument();
+    });
+  });
+
   it("highlights the folder path down to the active note, and clears it with no note open", () => {
     const workspaceTree = [
       { name: "A", path: "A", kind: "folder" as const, children: [] },
@@ -556,16 +598,53 @@ describe("ClassicShell", () => {
     expect(container.firstChild).toHaveAttribute("data-mode", "light");
     expect(container.firstChild).toHaveAttribute("data-theme", "warm");
 
-    await userEvent.click(screen.getByRole("button", { name: "Switch to dark theme" }));
+    await userEvent.click(screen.getByRole("button", { name: "Switch to dark appearance" }));
 
     expect(onThemeChange).toHaveBeenCalledWith("dark");
 
     rerender(<ClassicShell {...defaultProps} themeMode="dark" onThemeChange={onThemeChange} />);
 
     expect(container.firstChild).toHaveAttribute("data-mode", "dark");
-    await userEvent.click(screen.getByRole("button", { name: "Switch to light theme" }));
+    await userEvent.click(screen.getByRole("button", { name: "Switch to light appearance" }));
 
     expect(onThemeChange).toHaveBeenCalledWith("light");
+  });
+
+  it("picks a named Theme from Settings, which drives data-theme independently of the Appearance Mode", async () => {
+    const onAppThemeChange = vi.fn();
+
+    const { rerender, container } = renderShell({ activeRoute: "settings", onAppThemeChange });
+
+    const themePicker = screen.getByRole("combobox", { name: "Tema" });
+    expect(themePicker).toHaveValue("warm");
+
+    await userEvent.selectOptions(themePicker, "ceramic");
+
+    expect(onAppThemeChange).toHaveBeenCalledWith("ceramic");
+
+    rerender(
+      <ClassicShell {...defaultProps} activeRoute="settings" theme="ceramic" onAppThemeChange={onAppThemeChange} />,
+    );
+
+    expect(container.firstChild).toHaveAttribute("data-theme", "ceramic");
+    expect(container.firstChild).toHaveAttribute("data-mode", "light");
+    expect(screen.getByRole("combobox", { name: "Tema" })).toHaveValue("ceramic");
+  });
+
+  it("cycles Themes from the Command Palette", async () => {
+    const user = userEvent.setup();
+    const onAppThemeChange = vi.fn();
+
+    renderShell({ theme: "ceramic", onAppThemeChange });
+
+    await user.keyboard("{Control>}k{/Control}");
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Command Palette" })).getByRole("button", {
+        name: "Switch Theme to Warm",
+      }),
+    );
+
+    expect(onAppThemeChange).toHaveBeenCalledWith("warm");
   });
 
   it("opens the Command Palette with Ctrl+K and runs available commands", async () => {
@@ -602,7 +681,7 @@ describe("ClassicShell", () => {
     await user.keyboard("{Control>}k{/Control}");
     await user.click(
       within(screen.getByRole("dialog", { name: "Command Palette" })).getByRole("button", {
-        name: "Switch to dark theme",
+        name: "Switch to dark appearance",
       }),
     );
 
@@ -1090,6 +1169,22 @@ describe("ClassicShell", () => {
       lineText: "needle one",
       matchStart: 0,
       matchEnd: 6,
+    });
+  });
+
+  describe("title bar", () => {
+    it("carries the platform on the title bar so macOS-only CSS can hide the app's own window controls", () => {
+      const { container } = render(<ClassicShell {...defaultProps} platform="macos" />);
+
+      expect(container.querySelector(".titlebar")).toHaveAttribute("data-platform", "macos");
+    });
+
+    it("defaults to Linux's own min/max/close controls being present in the DOM", () => {
+      const { container } = render(<ClassicShell {...defaultProps} platform="linux" />);
+
+      const titlebar = container.querySelector(".titlebar") as HTMLElement;
+      expect(titlebar).toHaveAttribute("data-platform", "linux");
+      expect(within(titlebar).getByRole("button", { name: "Minimizar" })).toBeInTheDocument();
     });
   });
 });

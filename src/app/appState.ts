@@ -1,8 +1,17 @@
 import type { AppRoute } from "./routes";
-import type { AdvancedGitStatus, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, SyncStatus as GitSyncStatus, TrashEntry } from "../native/commands";
+import type { AdvancedGitStatus, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, Platform, SyncStatus as GitSyncStatus, TrashEntry } from "../native/commands";
 
 export type SyncStatus = GitSyncStatus | "workspace-abierto" | "sincronizando" | "desconectado" | "error";
 export type ThemeMode = "light" | "dark";
+// Named Themes (colors, typography, shape). Each one defines both Appearance
+// Modes in `styles.css` under `[data-theme="…"][data-mode="…"]`; see ADR 0008.
+export const themes = ["warm", "ceramic"] as const;
+export type Theme = (typeof themes)[number];
+export const defaultTheme: Theme = "warm";
+export const themeLabels: Record<Theme, string> = {
+  warm: "Warm",
+  ceramic: "Mate Cerámico",
+};
 // Whole-app-shell zoom, independent of the editor font size (a separate control).
 // Discrete steps only, expressed as a percentage of the default 100%.
 export const uiZoomSteps = [70, 80, 90, 100, 110, 120, 130, 140, 150] as const;
@@ -58,6 +67,9 @@ export type UpdateNoticeState =
   | { kind: "update-available"; version: string | undefined };
 
 export interface AppState {
+  // Defaults to "linux" (the reference platform, ADR 0014) until the real
+  // value is reported by the native command bus at startup.
+  platform: Platform;
   activeRoute: AppRoute;
   workspace: WorkspaceSummary | null;
   recentWorkspaces: WorkspaceSummary[];
@@ -67,6 +79,7 @@ export interface AppState {
   activeNotePath: string | null;
   activeFolderPath: string;
   noteContent: string;
+  theme: Theme;
   themeMode: ThemeMode;
   // Whether the sidebar is showing its narrow icon rail instead of full content.
   // Currently only ever set by the manual toggle; a later ticket (auto-collapse
@@ -106,6 +119,7 @@ export interface FileSearchJump {
 }
 
 export const initialAppState: AppState = {
+  platform: "linux",
   activeRoute: "workspace",
   workspace: null,
   recentWorkspaces: [],
@@ -115,6 +129,7 @@ export const initialAppState: AppState = {
   activeNotePath: null,
   activeFolderPath: "",
   noteContent: "",
+  theme: defaultTheme,
   themeMode: "light",
   sidebarCollapsed: false,
   editorError: null,

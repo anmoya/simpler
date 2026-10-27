@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Josefin+Sans:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; -webkit-font-smoothing: antialiased; }
+    a { color: #C1592C; }
+    a:hover { color: #A6431F; }
+    [data-theme="nes"] * { font-family:'VT323',monospace !important; border-width:2px !important; }
+    [data-theme="nes"] [data-nes-title] { font-family:'Press Start 2P',monospace !important; font-size:11px !important; letter-spacing:0.5px !important; text-transform:uppercase !important; }
+    [data-theme="nes"] [data-nes-surface] { background:#1C1C1E !important; border-color:#000 !important; }
+    [data-theme="mate"] { caret-color:#3F7A44; }
+    [data-theme="mate"] input, [data-theme="mate"] textarea { caret-color:#3F7A44; }
+    [data-theme="mate"] ::selection { background:#C6CDBD; color:#2D1B12; }
+    [data-theme="mate"] a { color:#3F7A44; }
+    [data-theme="mate"] a:hover { color:#4F8F54; }
+    [data-theme="mate"] :focus-visible { outline:2px solid #5C7A5E; outline-offset:1px; }
+  </style>
+</helmet>
+<div data-theme="{{ theme }}" data-nes-surface="1" style="height:100vh; display:flex; flex-direction:column; font-family:'DM Sans',sans-serif; overflow:hidden; background:{{ c.chromeSunken }};">
+
+  <div data-nes-surface="1" style="height:54px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 18px; background:{{ c.chromeBg }}; border-bottom:1px solid {{ c.chromeBorder }};">
+    <div style="display:flex; align-items:center; gap:14px;">
+      <span data-nes-title="1" style="font-family:'Josefin Sans',sans-serif; font-weight:700; font-size:15px; letter-spacing:0.3px; color:{{ c.chromeTitle }};">Editor de Texto Personal</span>
+      <sc-if value="{{ isMate }}" hint-placeholder-val="{{ false }}">
+        <span style="width:8px; height:8px; border-radius:2px; background:{{ c.glaze }}; flex:none; box-shadow:0 0 0 2px {{ c.glazeSoft }};"></span>
+      </sc-if>
+      <div data-nes-surface="1" style="display:flex; gap:4px; background:{{ c.chromeSunken }}; padding:3px; border-radius:10px;">
+        <button data-nes-title="1" onClick="{{ setClasico }}" style="{{ tabStyleClasico }}">Clásico</button>
+        <button data-nes-title="1" onClick="{{ setEnfoque }}" style="{{ tabStyleEnfoque }}">Enfoque</button>
+        <button data-nes-title="1" onClick="{{ setEditorial }}" style="{{ tabStyleEditorial }}">Editorial</button>
+      </div>
+    </div>
+    <button data-nes-surface="1" onClick="{{ cycleTheme }}" style="display:flex; align-items:center; gap:8px; background:{{ c.chromeSunken }}; border:1px solid {{ c.chromeBorder }}; border-radius:999px; padding:6px 12px; color:{{ c.chromeBtnText }}; font-size:12px; font-family:'DM Sans',sans-serif; cursor:pointer;">
+      <sc-if value="{{ isLight }}" hint-placeholder-val="{{ true }}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M21 12.4A9 9 0 1 1 11.6 3a7 7 0 0 0 9.4 9.4Z" stroke="#E0B04E" stroke-width="2" stroke-linejoin="round"/></svg>
+      </sc-if>
+      <sc-if value="{{ isDark }}" hint-placeholder-val="{{ false }}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="2" y="8" width="20" height="9" rx="4" stroke="#E8433D" stroke-width="2"/><path d="M7 11v3M5.5 12.5h3" stroke="#E8433D" stroke-width="1.6" stroke-linecap="round"/><circle cx="15.5" cy="11.5" r="1" fill="#E8433D"/><circle cx="18.5" cy="13" r="1" fill="#E8433D"/></svg>
+      </sc-if>
+      <sc-if value="{{ isNes }}" hint-placeholder-val="{{ false }}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4.5" stroke="#C9932E" stroke-width="2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6" stroke="#C9932E" stroke-width="2" stroke-linecap="round"/></svg>
+      </sc-if>
+      <sc-if value="{{ isMate }}" hint-placeholder-val="{{ false }}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5.5 9h13v5a6.5 6.5 0 0 1-13 0Z" stroke="#212C1D" stroke-width="1.8" stroke-linejoin="round"/><path d="M15 9V4.5" stroke="#978171" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </sc-if>
+      <span>{{ themeLabel }}</span>
+    </button>
+  </div>
+
+  <div style="flex:1; position:relative; display:flex; overflow:hidden; background:{{ c.bg }};">
+
+    <div style="width:{{ sidebarWidth }}px; flex:none; display:flex; flex-direction:column; background:{{ c.sidebarBg }}; border-right:1px solid {{ c.border }}; transition:width .18s ease; overflow:hidden;">
+
+      <sc-if value="{{ isEnfoque }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; justify-content:flex-end; padding:10px 10px 0;">
+          <button onClick="{{ toggleSidebar }}" style="width:26px; height:26px; border-radius:8px; border:1px solid {{ c.border }}; background:{{ c.cardBg }}; display:flex; align-items:center; justify-content:center; cursor:pointer;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="{{ sidebarChevronPath }}" stroke="{{ c.textMuted }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showSidebarContent }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:14px 14px 10px; border-bottom:1px solid {{ c.divider }};">
+          <div data-nes-title="1" style="font-family:'Josefin Sans',sans-serif; font-weight:600; font-size:13.5px; color:{{ c.text }};">Notas</div>
+          <div style="font-family:'DM Mono',monospace; font-size:10px; color:{{ c.textLight }}; margin-top:1px;">/home/alfonso/Notas</div>
+          <button onClick="{{ openGithubModal }}" style="display:flex; align-items:center; gap:6px; background:none; border:none; padding:9px 0 0; cursor:pointer; color:{{ c.primary }}; font-family:'DM Sans',sans-serif; font-size:12px; font-weight:500;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21" stroke="{{ c.primary }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Clonar desde GitHub
+          </button>
+        </div>
+
+        <div style="display:flex; flex-direction:column; padding:8px 10px; gap:2px; border-bottom:1px solid {{ c.divider }};">
+          <div style="{{ navItemStyleWorkspace }}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M3 9h18" stroke="currentColor" stroke-width="1.7"/></svg>
+            Workspace
+          </div>
+          <div onClick="{{ toggleSyncPanel }}" style="{{ navItemStyleSync }}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 11A8 8 0 0 0 6.5 5.8M4 13a8 8 0 0 0 13.5 5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M4 5v5h5M20 19v-5h-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Sync
+          </div>
+          <div style="{{ navItemStyleSettings }}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V20a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H4a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H10a1.7 1.7 0 0 0 1-1.5V4a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V10a1.7 1.7 0 0 0 1.5 1H20a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.5 1Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+            Configuración
+          </div>
+        </div>
+
+        <sc-if value="{{ syncPanelOpen }}" hint-placeholder-val="{{ false }}">
+          <div style="margin:8px 12px; padding:10px 12px; background:{{ c.cardBg }}; border:1px solid {{ c.border }}; border-radius:12px;">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <span style="font-family:'DM Sans',sans-serif; font-size:12px; font-weight:600; color:{{ c.text }};">{{ syncStatusLabel }}</span>
+              <span style="width:7px; height:7px; border-radius:999px; background:{{ syncDotColor }};"></span>
+            </div>
+            <div style="font-family:'DM Mono',monospace; font-size:10.5px; color:{{ c.textLight }}; margin-top:3px;">{{ syncMeta }}</div>
+            <button onClick="{{ triggerSync }}" style="margin-top:8px; width:100%; font-size:11.5px; font-family:'DM Sans',sans-serif; font-weight:500; color:{{ c.onPrimary }}; background:{{ c.primary }}; border:none; border-radius:8px; padding:6px 0; cursor:pointer;">Sincronizar ahora</button>
+          </div>
+        </sc-if>
+
+        <div style="padding:16px 14px 8px;">
+          <div onClick="{{ openSearch }}" style="display:flex; align-items:center; gap:9px; background:{{ c.cardBg }}; border:1px solid {{ c.border }}; border-radius:14px; padding:10px 12px; cursor:pointer;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="{{ c.textMuted }}" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="{{ c.textMuted }}" stroke-width="2" stroke-linecap="round"/></svg>
+            <span style="font-size:13px; color:{{ c.textMuted }};">Buscar en todos los archivos…</span>
+          </div>
+        </div>
+        <div style="flex:1; overflow-y:auto; padding:6px 10px 16px;">
+          <sc-for list="{{ folderList }}" as="folder" hint-placeholder-count="3">
+            <div onDragOver="{{ folder.onDragOver }}" onDragLeave="{{ folder.onDragLeave }}" onDrop="{{ folder.onDrop }}" style="{{ folder.wrapStyle }}">
+              <div style="display:flex; align-items:center; gap:8px; padding:9px 8px; margin-top:6px;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" stroke="{{ c.editorialText }}" stroke-width="1.8" stroke-linejoin="round"/></svg>
+                <span style="font-family:'DM Sans',sans-serif; font-weight:600; font-size:13px; color:{{ c.editorialText }};">{{ folder.name }}</span>
+              </div>
+              <sc-for list="{{ folder.files }}" as="file" hint-placeholder-count="2">
+                <div draggable="true" onDragStart="{{ file.onDragStart }}" onDragEnd="{{ file.onDragEnd }}" onClick="{{ file.onClick }}" style="{{ file.rowStyle }}">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style="flex:none;"><path d="M7 3h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="{{ file.iconColor }}" stroke-width="1.6" stroke-linejoin="round"/><path d="M14 3v4h4" stroke="{{ file.iconColor }}" stroke-width="1.6" stroke-linejoin="round"/></svg>
+                  <span style="{{ file.textStyle }}">{{ file.name }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ showIconRail }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; align-items:center; gap:10px; padding:14px 0;">
+          <sc-for list="{{ folderList }}" as="folder" hint-placeholder-count="3">
+            <div title="{{ folder.name }}" style="width:38px; height:38px; border-radius:12px; background:{{ c.cardBg }}; border:1px solid {{ c.border }}; display:flex; align-items:center; justify-content:center;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" stroke="{{ c.editorialText }}" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="flex:1; display:flex; flex-direction:column; min-width:0; position:relative;">
+      <div style="flex:none; padding:14px 24px; border-bottom:1px solid {{ c.border }}; display:flex; align-items:baseline; gap:8px;">
+        <span style="font-family:'DM Mono',monospace; font-size:12px; color:{{ c.textLight }};">{{ activeFolderName }} /</span>
+        <span data-nes-title="1" style="font-family:'Josefin Sans',sans-serif; font-weight:600; font-size:16px; color:{{ c.editorialTitle }};">{{ activeFile.name }}</span>
+      </div>
+
+      <div ref="{{ editorRef }}" style="flex:1; overflow-y:auto; padding:20px 0 40px;">
+        <sc-for list="{{ lines }}" as="line" hint-placeholder-count="10">
+          <div style="{{ line.rowStyle }}">
+            <span style="width:34px; flex:none; text-align:right; font-family:'DM Mono',monospace; font-size:12px; color:{{ line.gutterColor }};">{{ line.n }}</span>
+            <span>{{ line.node }}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ showBottomBar }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:none; border-top:1px solid {{ c.border }}; background:{{ c.sidebarBg }}; padding:9px 20px; display:flex; align-items:center; justify-content:space-between; gap:16px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span data-nes-title="1" style="font-family:'DM Mono',monospace; font-size:10.5px; font-weight:500; letter-spacing:0.5px; text-transform:uppercase; color:{{ c.primary }}; background:{{ c.primaryPale }}; padding:3px 8px; border-radius:999px;">NORMAL</span>
+            <span style="font-family:'DM Mono',monospace; font-size:11.5px; color:{{ c.textMuted }};">{{ lineCount }} líneas</span>
+          </div>
+
+          <sc-if value="{{ isGoto }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-family:'DM Mono',monospace; font-size:13px; color:{{ c.primary }};">:</span>
+              <input autoFocus="{{ true }}" value="{{ vimInput }}" onChange="{{ onVimInputChange }}" onKeyDown="{{ onVimKeyDown }}" placeholder="número de línea" style="width:120px; font-family:'DM Mono',monospace; font-size:12.5px; background:{{ c.cardBg }}; border:1px solid {{ c.primary }}; border-radius:8px; padding:5px 8px; color:{{ c.text }}; outline:none;"></input>
+              <span style="font-size:11px; color:{{ c.textLight }};">↵ ir · Esc cancelar</span>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ isFind }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-family:'DM Mono',monospace; font-size:13px; color:{{ c.amber }};">/</span>
+              <input autoFocus="{{ true }}" value="{{ vimInput }}" onChange="{{ onVimInputChange }}" onKeyDown="{{ onVimKeyDown }}" placeholder="buscar en el archivo" style="width:160px; font-family:'DM Mono',monospace; font-size:12.5px; background:{{ c.cardBg }}; border:1px solid {{ c.amber }}; border-radius:8px; padding:5px 8px; color:{{ c.text }}; outline:none;"></input>
+              <span style="font-size:11px; color:{{ c.textMuted }};">{{ findActivePos }}/{{ findMatchCount }}</span>
+              <button onClick="{{ findPrev }}" style="width:20px; height:20px; border-radius:6px; border:1px solid {{ c.border }}; background:{{ c.cardBg }}; cursor:pointer; display:flex; align-items:center; justify-content:center;">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M18 15l-6-6-6 6" stroke="{{ c.textMuted }}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button onClick="{{ findNext }}" style="width:20px; height:20px; border-radius:6px; border:1px solid {{ c.border }}; background:{{ c.cardBg }}; cursor:pointer; display:flex; align-items:center; justify-content:center;">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="{{ c.textMuted }}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button onClick="{{ closeVim }}" style="font-size:11px; color:{{ c.textLight }}; background:none; border:none; cursor:pointer;">Esc</button>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ showVimLegend }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <button onClick="{{ goTop }}" style="{{ chipBtnStyle }}">gg → inicio</button>
+              <button onClick="{{ goBottom }}" style="{{ chipBtnStyle }}">G → final</button>
+              <button onClick="{{ openGoto }}" style="{{ chipBtnStyle }}">:N → ir a línea</button>
+              <button onClick="{{ openFind }}" style="{{ chipBtnStyle }}">/ → buscar</button>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isEnfoque }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:none; padding:8px 20px; border-top:1px solid {{ c.border }}; display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-family:'DM Mono',monospace; font-size:11px; color:{{ c.textLight }};">{{ lineCount }} líneas</span>
+          <button onClick="{{ openGoto }}" style="width:30px; height:30px; border-radius:999px; background:{{ c.primary }}; border:none; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:{{ c.shadowSm }};">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h10M4 18h6" stroke="{{ c.onPrimary }}" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+
+        <sc-if value="{{ vimModeActive }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; left:50%; bottom:60px; transform:translateX(-50%); background:{{ c.cardBg }}; border:1px solid {{ c.border }}; border-radius:16px; box-shadow:{{ c.shadowMd }}; padding:10px 14px; display:flex; align-items:center; gap:10px; z-index:20;">
+            <sc-if value="{{ isGoto }}" hint-placeholder-val="{{ false }}">
+              <span style="font-family:'DM Mono',monospace; color:{{ c.primary }};">:</span>
+            </sc-if>
+            <sc-if value="{{ isFind }}" hint-placeholder-val="{{ false }}">
+              <span style="font-family:'DM Mono',monospace; color:{{ c.amber }};">/</span>
+            </sc-if>
+            <input autoFocus="{{ true }}" value="{{ vimInput }}" onChange="{{ onVimInputChange }}" onKeyDown="{{ onVimKeyDown }}" placeholder="{{ vimPlaceholder }}" style="width:180px; font-family:'DM Mono',monospace; font-size:13px; background:transparent; border:none; outline:none; color:{{ c.text }};"></input>
+            <sc-if value="{{ isFind }}" hint-placeholder-val="{{ false }}">
+              <span style="font-size:11px; color:{{ c.textMuted }};">{{ findActivePos }}/{{ findMatchCount }}</span>
+            </sc-if>
+            <button onClick="{{ closeVim }}" style="background:none; border:none; cursor:pointer; color:{{ c.textLight }}; font-size:11px;">Esc</button>
+          </div>
+        </sc-if>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ isEditorial }}" hint-placeholder-val="{{ false }}">
+      <div style="width:230px; flex:none; background:{{ c.cardBg }}; border-left:1px solid {{ c.border }}; padding:18px 16px; overflow-y:auto;">
+        <div data-nes-title="1" style="font-family:'DM Sans',sans-serif; font-weight:600; font-size:11px; letter-spacing:1.4px; text-transform:uppercase; color:{{ c.textMuted }}; margin-bottom:12px;">Índice</div>
+        <sc-for list="{{ headings }}" as="h" hint-placeholder-count="3">
+          <div onClick="{{ h.onClick }}" style="{{ h.rowStyle }}">{{ h.text }}</div>
+        </sc-for>
+        <sc-if value="{{ noHeadings }}" hint-placeholder-val="{{ false }}">
+          <div style="font-size:12px; color:{{ c.textLight }};">Sin encabezados en este archivo.</div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ searchOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeSearch }}" style="position:absolute; inset:0; background:rgba(20,16,12,0.45); display:flex; align-items:flex-start; justify-content:center; padding-top:70px; z-index:50;">
+        <div onClick="{{ stop }}" style="width:560px; max-height:70%; background:{{ c.cardBg }}; border-radius:20px; box-shadow:{{ c.shadowMd }}; display:flex; flex-direction:column; overflow:hidden; border:1px solid {{ c.border }};">
+          <div style="display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid {{ c.border }};">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="{{ c.textMuted }}" stroke-width="2"/><path d="M20 20l-3.5-3.5" stroke="{{ c.textMuted }}" stroke-width="2" stroke-linecap="round"/></svg>
+            <input autoFocus="{{ true }}" value="{{ globalQuery }}" onChange="{{ onGlobalQueryChange }}" placeholder="Buscar en todos los archivos…" style="flex:1; border:none; outline:none; background:transparent; font-size:15px; color:{{ c.text }}; font-family:'DM Sans',sans-serif;"></input>
+            <button onClick="{{ closeSearch }}" style="background:none; border:none; cursor:pointer; color:{{ c.textLight }};">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="{{ c.textLight }}" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+          <div style="overflow-y:auto; padding:6px 8px;">
+            <sc-for list="{{ globalResults }}" as="r" hint-placeholder-count="0">
+              <div onClick="{{ r.onClick }}" style="padding:10px 10px; border-radius:12px; cursor:pointer;" style-hover="{{ resultHoverStyle }}">
+                <div style="font-family:'DM Mono',monospace; font-size:10.5px; color:{{ c.textLight }};">{{ r.folderName }} / {{ r.fileName }} · línea {{ r.n }}</div>
+                <div style="font-size:13.5px; color:{{ c.text }}; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ r.line }}</div>
+              </div>
+            </sc-for>
+            <sc-if value="{{ showNoResults }}" hint-placeholder-val="{{ false }}">
+              <div style="padding:24px; text-align:center; font-size:13px; color:{{ c.textLight }};">Sin resultados.</div>
+            </sc-if>
+            <sc-if value="{{ showSearchPrompt }}" hint-placeholder-val="{{ true }}">
+              <div style="padding:24px; text-align:center; font-size:13px; color:{{ c.textLight }};">Escribe para buscar en Diario, Trabajo y Recetas.</div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ githubModalOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeGithubModal }}" style="position:absolute; inset:0; background:rgba(20,16,12,0.45); display:flex; align-items:flex-start; justify-content:center; padding-top:70px; z-index:50;">
+        <div onClick="{{ stop }}" style="width:440px; background:{{ c.cardBg }}; border-radius:20px; box-shadow:{{ c.shadowMd }}; overflow:hidden; border:1px solid {{ c.border }};">
+          <div style="display:flex; align-items:center; gap:10px; padding:16px 18px; border-bottom:1px solid {{ c.border }};">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21" stroke="{{ c.text }}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span style="font-family:'Josefin Sans',sans-serif; font-weight:600; font-size:15px; color:{{ c.text }};">Clonar desde GitHub</span>
+          </div>
+          <div style="padding:18px;">
+            <label style="font-family:'DM Sans',sans-serif; font-size:11.5px; font-weight:500; color:{{ c.textMuted }};">URL del repositorio</label>
+            <input autoFocus="{{ true }}" value="{{ githubRepoUrl }}" onChange="{{ onGithubUrlChange }}" placeholder="https://github.com/usuario/notas.git" style="display:block; width:100%; margin-top:6px; box-sizing:border-box; font-family:'DM Mono',monospace; font-size:12.5px; background:{{ c.bg }}; border:1px solid {{ c.border }}; border-radius:10px; padding:9px 11px; color:{{ c.text }}; outline:none;"></input>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:16px;">
+              <button onClick="{{ closeGithubModal }}" style="font-size:12.5px; font-family:'DM Sans',sans-serif; color:{{ c.textMuted }}; background:none; border:none; cursor:pointer; padding:8px 12px;">Cancelar</button>
+              <button onClick="{{ cloneRepo }}" style="font-size:12.5px; font-family:'DM Sans',sans-serif; font-weight:600; color:{{ c.onPrimary }}; background:{{ c.primary }}; border:none; border-radius:8px; cursor:pointer; padding:8px 16px;">Clonar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+  </div>
+  <div style="flex:none; height:26px; display:flex; align-items:center; justify-content:space-between; padding:0 16px; background:{{ c.sidebarBg }}; border-top:1px solid {{ c.border }}; font-family:'DM Mono',monospace; font-size:10.5px; color:{{ c.textLight }};">
+    <span>{{ syncStatusLabel }}</span>
+    <span>Escritorio</span>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;defaultVariant&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;clasico&quot;,&quot;tsType&quot;:&quot;'clasico'|'enfoque'|'editorial'&quot;,&quot;options&quot;:[&quot;clasico&quot;,&quot;enfoque&quot;,&quot;editorial&quot;],&quot;section&quot;:&quot;Layout&quot;},&quot;defaultTheme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;mate&quot;,&quot;tsType&quot;:&quot;'mate'|'light'|'dark'|'nes'&quot;,&quot;options&quot;:[&quot;mate&quot;,&quot;light&quot;,&quot;dark&quot;,&quot;nes&quot;],&quot;section&quot;:&quot;Layout&quot;},&quot;showVimLegend&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Editor&quot;}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.FOLDERS = [
+      { id: 'diario', name: 'Diario' },
+      { id: 'trabajo', name: 'Trabajo' },
+      { id: 'recetas', name: 'Recetas' },
+    ];
+    this.LINE_H = 27;
+    this.editorRef = React.createRef();
+    this.state = {
+      variant: props.defaultVariant || 'clasico',
+      theme: ['light', 'dark', 'nes', 'mate'].includes(props.defaultTheme) ? props.defaultTheme : 'mate',
+      sidebarCollapsed: false,
+      files: [
+        { id: 'f1', folderId: 'diario', name: '2026-07-29.md', content: "# Diario — 29 de julio\n\nHoy terminé de escribir las notas de la reunión de producto. El equipo quedó conforme con el nuevo enfoque para el roadmap del tercer trimestre.\n\n## Pendientes\n- Revisar el borrador del roadmap Q3\n- Llamar a la panadería por el pedido de masa madre\n- Ordenar las fotos del viaje a Chiloé\n- Responder el correo de Marcela\n\n## Ideas sueltas\nUn día tranquilo, sin sorpresas. Mañana toca cerrar el informe de gastos antes del mediodía.\n\n> La constancia vence lo que la dicha no alcanza.\n\n## Notas técnicas\n- Usar `git rebase -i` para limpiar el historial antes de abrir el PR\n- Preguntar por el precio del arriendo en el centro\n- Probar el atajo **:42** para saltar directo a una línea\n\nMañana: reunión a las diez, luego bloque de escritura libre." },
+        { id: 'f2', folderId: 'diario', name: '2026-07-15.md', content: "# Diario — 15 de julio\n\nSemana tranquila. Terminé de ordenar el inventario de fotos.\n\n- Comprar más cajas de cartón\n- Revisar el contrato de arriendo\n\nBuen ánimo en general." },
+        { id: 'f3', folderId: 'trabajo', name: 'notas-reunion.md', content: "# Notas — Reunión de Producto\n\n## Asistentes\n- Andrea\n- Marcela\n- Tomás\n\n## Acuerdos\n- Priorizar el buscador global\n- Dejar el modo oscuro para la siguiente iteración\n\nPróxima reunión: martes 4 de agosto." },
+        { id: 'f4', folderId: 'trabajo', name: 'roadmap-q3.md', content: "# Roadmap Q3\n\n## Objetivo\nConsolidar el editor de texto personal antes de fin de trimestre.\n\n## Fase 1\n- Estructura de carpetas a un nivel\n- Buscador dentro del archivo\n\n## Fase 2\n- Atajos estilo vim\n- Modo oscuro\n\n## Fase 3\n- Sincronización entre dispositivos" },
+        { id: 'f5', folderId: 'recetas', name: 'pan-de-masa-madre.md', content: "# Pan de Masa Madre\n\n## Ingredientes\n- 500 g harina\n- 350 g agua\n- 100 g masa madre activa\n- 10 g sal\n\n## Pasos\n- Mezclar harina y agua, reposar 30 minutos\n- Añadir masa madre y sal, amasar\n- Fermentar 4 horas con pliegues cada 30 minutos\n- Hornear a 230°C por 40 minutos\n\n> El pan bueno necesita tiempo, no prisa." },
+      ],
+      activeFileId: 'f1',
+      searchOpen: false,
+      globalQuery: '',
+      vimMode: null,
+      vimInput: '',
+      highlightLine: null,
+      findQuery: '',
+      findMatches: [],
+      findActiveIndex: 0,
+      dragFileId: null,
+      dragOverFolderId: null,
+      syncPanelOpen: false,
+      syncState: 'synced',
+      githubModalOpen: false,
+      githubRepoUrl: '',
+    };
+  }
+
+  getActiveFile() { return this.state.files.find(f => f.id === this.state.activeFileId) || this.state.files[0]; }
+
+  triggerSync() {
+    this.setState({ syncState: 'syncing' });
+    clearTimeout(this._syncTimer);
+    this._syncTimer = setTimeout(() => this.setState({ syncState: 'synced' }), 1200);
+  }
+
+  openFile(id) { this.setState({ activeFileId: id, highlightLine: null, vimMode: null, findQuery: '', vimInput: '' }); }
+
+  moveFile(fileId, folderId) {
+    this.setState(s => ({
+      files: s.files.map(f => f.id === fileId ? { ...f, folderId } : f),
+      dragFileId: null, dragOverFolderId: null,
+    }));
+  }
+
+  scrollTo(n) {
+    const el = this.editorRef.current;
+    if (!el) return;
+    const target = (n - 1) * this.LINE_H - el.clientHeight / 2 + this.LINE_H;
+    el.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+  }
+
+  jumpToLine(n) {
+    const lines = this.getActiveFile().content.split('\n');
+    const clamped = Math.max(1, Math.min(n, lines.length));
+    this.setState({ highlightLine: clamped, vimMode: null, vimInput: '' });
+    this.scrollTo(clamped);
+    clearTimeout(this._hlTimer);
+    this._hlTimer = setTimeout(() => this.setState(s => s.highlightLine === clamped ? { highlightLine: null } : null), 2200);
+  }
+
+  goTop() { this.jumpToLine(1); }
+  goBottom() { this.jumpToLine(this.getActiveFile().content.split('\n').length); }
+  openGoto() { this.setState({ vimMode: 'goto', vimInput: '' }); }
+  openFind() { this.setState({ vimMode: 'find', vimInput: '', findQuery: '', findMatches: [], findActiveIndex: 0 }); }
+  closeVim() { this.setState({ vimMode: null, vimInput: '', findQuery: '' }); }
+
+  handleVimChange(v) {
+    this.setState({ vimInput: v });
+    if (this.state.vimMode === 'find') {
+      const lines = this.getActiveFile().content.split('\n');
+      const q = v.toLowerCase();
+      const matches = q ? lines.map((l, i) => ({ l, i })).filter(x => x.l.toLowerCase().includes(q)).map(x => x.i + 1) : [];
+      this.setState({ findQuery: v, findMatches: matches, findActiveIndex: 0 });
+      if (matches.length) this.scrollTo(matches[0]);
+    }
+  }
+
+  handleVimKey(e) {
+    if (e.key === 'Enter') {
+      if (this.state.vimMode === 'goto') {
+        const n = parseInt(this.state.vimInput, 10);
+        if (!isNaN(n)) this.jumpToLine(n);
+      } else if (this.state.vimMode === 'find') {
+        this.findNext();
+      }
+    } else if (e.key === 'Escape') {
+      this.closeVim();
+    }
+  }
+
+  findNext() {
+    const { findMatches, findActiveIndex } = this.state;
+    if (!findMatches.length) return;
+    const next = (findActiveIndex + 1) % findMatches.length;
+    this.setState({ findActiveIndex: next });
+    this.scrollTo(findMatches[next]);
+  }
+
+  findPrev() {
+    const { findMatches, findActiveIndex } = this.state;
+    if (!findMatches.length) return;
+    const prev = (findActiveIndex - 1 + findMatches.length) % findMatches.length;
+    this.setState({ findActiveIndex: prev });
+    this.scrollTo(findMatches[prev]);
+  }
+
+  parseInline(text, query, c) {
+    const regex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+    const rawParts = [];
+    let last = 0, m;
+    while ((m = regex.exec(text))) {
+      if (m.index > last) rawParts.push({ s: text.slice(last, m.index), type: 'text' });
+      const tok = m[0];
+      rawParts.push(tok.startsWith('**') ? { s: tok.slice(2, -2), type: 'bold' } : { s: tok.slice(1, -1), type: 'code' });
+      last = m.index + tok.length;
+    }
+    if (last < text.length) rawParts.push({ s: text.slice(last), type: 'text' });
+    return rawParts.map((p, i) => {
+      let node = p.s;
+      if (query && p.s.toLowerCase().includes(query)) {
+        const idx = p.s.toLowerCase().indexOf(query);
+        node = React.createElement(React.Fragment, { key: 'q' + i },
+          p.s.slice(0, idx),
+          React.createElement('mark', { key: 'm' + i, style: { background: c.findHighlightBg, color: c.text, borderRadius: 3, padding: '0 2px', boxShadow: '0 0 0 1px ' + c.findHighlightBorder } }, p.s.slice(idx, idx + query.length)),
+          p.s.slice(idx + query.length)
+        );
+      }
+      if (p.type === 'bold') return React.createElement('strong', { key: i, style: { fontWeight: 600 } }, node);
+      if (p.type === 'code') return React.createElement('code', { key: i, style: { fontFamily: "'DM Mono',monospace", background: c.codeBg, borderRadius: 4, padding: '1px 5px', fontSize: 13 } }, node);
+      return React.createElement(React.Fragment, { key: i }, node);
+    });
+  }
+
+  buildLines(c) {
+    const file = this.getActiveFile();
+    const query = this.state.vimMode === 'find' ? this.state.findQuery.toLowerCase() : '';
+    const rawLines = file.content.split('\n');
+    return rawLines.map((raw, idx) => {
+      const n = idx + 1;
+      let node;
+      if (raw.startsWith('## ')) {
+        node = React.createElement('span', { style: { fontFamily: "'Josefin Sans',sans-serif", fontWeight: 600, fontSize: 17, color: c.editorialTitle } }, this.parseInline(raw.slice(3), query, c));
+      } else if (raw.startsWith('# ')) {
+        node = React.createElement('span', { style: { fontFamily: "'Josefin Sans',sans-serif", fontWeight: 700, fontSize: 20, color: c.editorialTitle } }, this.parseInline(raw.slice(2), query, c));
+      } else if (raw.startsWith('> ')) {
+        node = React.createElement('span', { style: { fontStyle: 'italic', color: c.textMuted, borderLeft: '2px solid ' + c.quoteBorder, paddingLeft: 10 } }, this.parseInline(raw.slice(2), query, c));
+      } else if (raw.startsWith('- ')) {
+        node = React.createElement('span', { style: { color: c.text } }, '•  ', this.parseInline(raw.slice(2), query, c));
+      } else if (raw.trim() === '') {
+        node = React.createElement('span', null, '');
+      } else {
+        node = React.createElement('span', { style: { color: c.text } }, this.parseInline(raw, query, c));
+      }
+      const isHl = this.state.highlightLine === n;
+      const rowStyle = {
+        display: 'flex', gap: 16, padding: '0 24px', height: this.LINE_H, lineHeight: this.LINE_H + 'px',
+        background: isHl ? c.lineHighlightBg : 'transparent',
+        fontSize: 15, fontFamily: "'DM Sans',sans-serif", whiteSpace: 'pre',
+      };
+      return { n, node, rowStyle, gutterColor: isHl ? c.primary : c.textLight };
+    });
+  }
+
+  getHeadings(c) {
+    const file = this.getActiveFile();
+    return file.content.split('\n').map((raw, idx) => ({ raw, n: idx + 1 })).filter(x => /^#{1,2} /.test(x.raw)).map(x => {
+      const level = x.raw.startsWith('## ') ? 2 : 1;
+      return {
+        n: x.n, level, text: x.raw.replace(/^#{1,2} /, ''),
+        onClick: () => this.jumpToLine(x.n),
+        rowStyle: {
+          padding: level === 1 ? '8px 6px' : '6px 6px 6px 16px',
+          fontFamily: "'Josefin Sans',sans-serif", fontWeight: level === 1 ? 600 : 400,
+          fontSize: level === 1 ? 14.5 : 13, color: level === 1 ? c.editorialTitle : c.editorialText,
+          cursor: 'pointer', borderRadius: 8,
+        },
+      };
+    });
+  }
+
+  getGlobalResults() {
+    const q = this.state.globalQuery.toLowerCase();
+    if (!q) return [];
+    const out = [];
+    this.state.files.forEach(f => {
+      const folder = this.FOLDERS.find(fo => fo.id === f.folderId);
+      f.content.split('\n').forEach((line, idx) => {
+        if (line.trim() && line.toLowerCase().includes(q) && out.length < 30) {
+          const n = idx + 1;
+          out.push({
+            fileId: f.id, fileName: f.name, folderName: folder ? folder.name : '', n, line,
+            onClick: () => { this.openFile(f.id); this.setState({ searchOpen: false }); setTimeout(() => this.jumpToLine(n), 60); },
+          });
+        }
+      });
+    });
+    return out;
+  }
+
+  renderVals() {
+    const theme = this.state.theme;
+    const dark = theme === 'dark';
+    const isNes = theme === 'nes';
+    const PALETTES = {
+      dark: {
+        bg: '#241A14', sidebarBg: '#2B2019', cardBg: '#332419', border: '#4A3626', divider: '#3D2E22',
+        text: '#F3E8DC', textMuted: '#C2AC96', textLight: '#8C7360',
+        editorialTitle: '#E3A165', editorialText: '#D9B48C',
+        primary: '#D9713F', primaryLight: '#C1592C', primaryPale: '#4A2E1E',
+        amber: '#E0B04E', codeBg: 'rgba(255,255,255,0.07)',
+        findHighlightBg: 'rgba(224,176,78,0.28)', findHighlightBorder: '#E0B04E',
+        lineHighlightBg: 'rgba(217,113,63,0.18)', quoteBorder: '#4A3626',
+        shadowSm: '0 1px 2px rgba(0,0,0,0.3)', shadowMd: '0 4px 14px rgba(0,0,0,0.35)',
+        onPrimary: '#FFFFFF',
+        chromeBg: '#332419', chromeSunken: '#2B2019', chromeBorder: '#4A3626',
+        chromeTitle: '#F3EDE5', chromeBtnText: '#D8D3CB', tabIdle: '#B7A488', tabActiveText: '#F3EDE5',
+      },
+      light: {
+        bg: '#F4E9D8', sidebarBg: '#F8EFE1', cardBg: '#FBF3E7', border: '#E4D2B8', divider: '#E9DAC0',
+        text: '#2E2117', textMuted: '#8C7360', textLight: '#B7A488',
+        editorialTitle: '#A6431F', editorialText: '#8C4A2A',
+        primary: '#C1592C', primaryLight: '#A6431F', primaryPale: '#F3DCC9',
+        amber: '#C9932E', codeBg: 'rgba(0,0,0,0.045)',
+        findHighlightBg: '#FBEBC9', findHighlightBorder: '#C9932E',
+        lineHighlightBg: 'rgba(193,89,44,0.12)', quoteBorder: '#DCC7A8',
+        shadowSm: '0 1px 2px rgba(60,50,30,0.06), 0 3px 6px rgba(60,50,30,0.05)',
+        shadowMd: '0 2px 4px rgba(60,50,30,0.08), 0 8px 16px rgba(60,50,30,0.10)',
+        onPrimary: '#FFFFFF',
+        chromeBg: '#332419', chromeSunken: '#2B2019', chromeBorder: '#4A3626',
+        chromeTitle: '#F3EDE5', chromeBtnText: '#D8D3CB', tabIdle: '#B7A488', tabActiveText: '#F3EDE5',
+      },
+      mate: {
+        bg: '#E8E1D3', sidebarBg: '#D3CBBE', cardBg: '#EFE9DC', border: '#BEBFBD', divider: '#C9C8C4',
+        text: '#2D1B12', textMuted: '#5A473B', textLight: '#736A62', steel: '#9DA1A3',
+        editorialTitle: '#3F7A44', editorialText: '#5C7A5E',
+        primary: '#3F7A44', primaryLight: '#4F8F54', primaryPale: '#DCEBDA',
+        amber: '#1F6E5C', codeBg: '#E1D8C7', glaze: '#1F6E5C', glazeSoft: '#CFE3DB',
+        findHighlightBg: '#CFE3DB', findHighlightBorder: '#1F6E5C',
+        lineHighlightBg: 'rgba(63,122,68,0.12)', quoteBorder: '#B9793B',
+        shadowSm: '0 1px 2px rgba(45,27,18,0.06)',
+        shadowMd: '0 1px 2px rgba(45,27,18,0.06), 0 6px 18px rgba(45,27,18,0.07)',
+        onPrimary: '#F4F0E6',
+        chromeBg: '#D3CBBE', chromeSunken: '#D9D2C6', chromeBorder: '#C6C3BF',
+        chromeTitle: '#2D1B12', chromeBtnText: '#5A473B', tabIdle: '#7A6D63', tabActiveText: '#3F7A44',
+      },
+      nes: {
+        bg: '#232326', sidebarBg: '#1C1C1E', cardBg: '#3A3A3D', border: '#000000', divider: '#000000',
+        text: '#EDEDED', textMuted: '#B7B7B7', textLight: '#7A7A7A',
+        editorialTitle: '#E8433D', editorialText: '#E8433D',
+        primary: '#E8433D', primaryLight: '#C9382E', primaryPale: '#4A1E1B',
+        amber: '#D9A62E', codeBg: 'rgba(255,255,255,0.08)',
+        findHighlightBg: 'rgba(217,166,46,0.3)', findHighlightBorder: '#D9A62E',
+        lineHighlightBg: 'rgba(232,67,61,0.18)', quoteBorder: '#000000',
+        shadowSm: '2px 2px 0 rgba(0,0,0,0.6)', shadowMd: '4px 4px 0 rgba(0,0,0,0.7)',
+        onPrimary: '#FFFFFF',
+        chromeBg: '#332419', chromeSunken: '#2B2019', chromeBorder: '#4A3626',
+        chromeTitle: '#F3EDE5', chromeBtnText: '#D8D3CB', tabIdle: '#B7A488', tabActiveText: '#F3EDE5',
+      },
+    };
+    const c = PALETTES[theme] || PALETTES.light;
+
+    const variant = this.state.variant;
+    const isClasico = variant === 'clasico';
+    const isEnfoque = variant === 'enfoque';
+    const isEditorial = variant === 'editorial';
+    const activeTabBg = isNes ? '#000000' : (dark ? '#4A3626' : (theme === 'mate' ? '#ECE7E1' : '#FBF3E7'));
+    const tabBase = { border: 'none', background: 'transparent', color: c.tabIdle, fontSize: 12, fontFamily: "'DM Sans',sans-serif", fontWeight: 500, padding: '6px 12px', borderRadius: 8, cursor: 'pointer' };
+    const tabActive = { ...tabBase, background: activeTabBg, color: c.tabActiveText, fontWeight: 600, boxShadow: theme === 'mate' ? `inset 0 -2px 0 ${c.glaze}` : 'none' };
+
+    const activeFile = this.getActiveFile();
+    const activeFolder = this.FOLDERS.find(f => f.id === activeFile.folderId);
+
+    const folderList = this.FOLDERS.map(folder => {
+      const isDragOver = this.state.dragOverFolderId === folder.id;
+      return {
+        ...folder,
+        wrapStyle: { borderRadius: 12, background: isDragOver ? c.primaryPale : 'transparent', transition: 'background .12s' },
+        onDragOver: (e) => { e.preventDefault(); if (this.state.dragOverFolderId !== folder.id) this.setState({ dragOverFolderId: folder.id }); },
+        onDragLeave: () => this.setState(s => s.dragOverFolderId === folder.id ? { dragOverFolderId: null } : null),
+        onDrop: (e) => { e.preventDefault(); if (this.state.dragFileId) this.moveFile(this.state.dragFileId, folder.id); },
+        files: this.state.files.filter(f => f.folderId === folder.id).map(f => {
+          const isActive = f.id === this.state.activeFileId;
+          const isDragging = this.state.dragFileId === f.id;
+          return {
+            ...f,
+            onClick: () => this.openFile(f.id),
+            onDragStart: () => this.setState({ dragFileId: f.id }),
+            onDragEnd: () => this.setState({ dragFileId: null, dragOverFolderId: null }),
+            rowStyle: {
+              display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px 7px 22px', margin: '1px 0',
+              borderRadius: 9, cursor: 'grab', opacity: isDragging ? 0.4 : 1,
+              background: isActive ? c.primaryPale : 'transparent',
+            },
+            iconColor: isActive ? c.primary : (c.steel || c.textLight),
+            textStyle: { fontFamily: "'DM Mono',monospace", fontSize: 12.5, color: isActive ? c.editorialTitle : c.textMuted, fontWeight: isActive ? 500 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+          };
+        }),
+      };
+    });
+
+    const lines = this.buildLines(c);
+    const headings = this.getHeadings(c);
+    const globalResults = this.getGlobalResults();
+
+    let sidebarWidth;
+    if (isEnfoque) sidebarWidth = this.state.sidebarCollapsed ? 64 : 220;
+    else if (isEditorial) sidebarWidth = 240;
+    else sidebarWidth = 260;
+
+    const chipBtnStyle = {
+      fontSize: 11, fontFamily: "'DM Mono',monospace", color: c.textMuted, background: c.cardBg,
+      border: '1px solid ' + c.border, borderRadius: 8, padding: '4px 9px', cursor: 'pointer',
+    };
+
+    return {
+      c, theme, isLight: theme === 'light', isDark: dark, isNes, isMate: theme === 'mate',
+      themeLabel: isNes ? 'NES' : (dark ? 'Oscuro' : (theme === 'mate' ? 'Mate Cerámico' : 'Claro')),
+      tabStyleClasico: isClasico ? tabActive : tabBase,
+      tabStyleEnfoque: isEnfoque ? tabActive : tabBase,
+      tabStyleEditorial: isEditorial ? tabActive : tabBase,
+      setClasico: () => this.setState({ variant: 'clasico' }),
+      setEnfoque: () => this.setState({ variant: 'enfoque' }),
+      setEditorial: () => this.setState({ variant: 'editorial' }),
+      cycleTheme: () => this.setState(s => ({ theme: s.theme === 'mate' ? 'light' : s.theme === 'light' ? 'dark' : s.theme === 'dark' ? 'nes' : 'mate' })),
+      toggleSidebar: () => this.setState(s => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      sidebarChevronPath: this.state.sidebarCollapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6',
+      isClasico, isEnfoque, isEditorial,
+      showBottomBar: isClasico || isEditorial,
+      showSidebarContent: !(isEnfoque && this.state.sidebarCollapsed),
+      showIconRail: isEnfoque && this.state.sidebarCollapsed,
+      sidebarWidth,
+      folderList,
+      activeFile, activeFolderName: activeFolder ? activeFolder.name : '',
+      lines, editorRef: this.editorRef, lineCount: lines.length,
+      headings, noHeadings: headings.length === 0,
+      openGoto: () => this.openGoto(), openFind: () => this.openFind(),
+      goTop: () => this.goTop(), goBottom: () => this.goBottom(),
+      vimMode: this.state.vimMode, vimModeActive: !!this.state.vimMode,
+      isGoto: this.state.vimMode === 'goto', isFind: this.state.vimMode === 'find',
+      vimPlaceholder: this.state.vimMode === 'find' ? 'buscar…' : 'línea…',
+      vimInput: this.state.vimInput,
+      onVimInputChange: (e) => this.handleVimChange(e.target.value),
+      onVimKeyDown: (e) => this.handleVimKey(e),
+      closeVim: () => this.closeVim(),
+      findMatchCount: this.state.findMatches.length,
+      findActivePos: this.state.findMatches.length ? (this.state.findActiveIndex + 1) : 0,
+      findNext: () => this.findNext(), findPrev: () => this.findPrev(),
+      chipBtnStyle,
+      showVimLegend: this.props.showVimLegend !== false,
+      searchOpen: this.state.searchOpen,
+      openSearch: () => this.setState({ searchOpen: true, globalQuery: '' }),
+      closeSearch: () => this.setState({ searchOpen: false }),
+      stop: (e) => e.stopPropagation(),
+      globalQuery: this.state.globalQuery,
+      onGlobalQueryChange: (e) => this.setState({ globalQuery: e.target.value }),
+      globalResults, showNoResults: this.state.globalQuery.length > 0 && globalResults.length === 0,
+      showSearchPrompt: this.state.globalQuery.length === 0,
+      resultHoverStyle: { background: c.primaryPale },
+      syncPanelOpen: this.state.syncPanelOpen,
+      toggleSyncPanel: () => this.setState(s => ({ syncPanelOpen: !s.syncPanelOpen })),
+      triggerSync: () => this.triggerSync(),
+      syncStatusLabel: this.state.syncState === 'syncing' ? 'Sincronizando…' : 'Sincronizado',
+      syncDotColor: this.state.syncState === 'syncing' ? c.amber : c.primary,
+      syncMeta: 'Última sincronización hace 12 min · GitHub',
+      navItemStyleWorkspace: { display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12.5, fontWeight: 600, color: c.editorialTitle, background: c.primaryPale },
+      navItemStyleSync: { display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12.5, fontWeight: 500, color: this.state.syncPanelOpen ? c.editorialTitle : c.textMuted, background: this.state.syncPanelOpen ? c.primaryPale : 'transparent', cursor: 'pointer' },
+      navItemStyleSettings: { display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12.5, fontWeight: 500, color: c.textMuted, cursor: 'pointer' },
+      githubModalOpen: this.state.githubModalOpen,
+      openGithubModal: () => this.setState({ githubModalOpen: true }),
+      closeGithubModal: () => this.setState({ githubModalOpen: false }),
+      githubRepoUrl: this.state.githubRepoUrl,
+      onGithubUrlChange: (e) => this.setState({ githubRepoUrl: e.target.value }),
+      cloneRepo: () => this.setState({ githubModalOpen: false, githubRepoUrl: '', syncState: 'synced' }),
+    };
+  }
+}
+</script>
+</body>
+</html>

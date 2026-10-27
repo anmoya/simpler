@@ -9,6 +9,9 @@ import {
   type DialogRequest,
   type EditorError,
   type ThemeMode,
+  type Theme,
+  themes,
+  defaultTheme,
   type TreeMode,
   type UiZoom,
   uiZoomSteps,
@@ -17,7 +20,7 @@ import {
   editorFontSizeSteps,
   defaultEditorFontSize,
 } from "./appState";
-import { expandPathToItem, expandPathToNote, focusActiveNote, restoreOpenFolderPaths, toggleFolder } from "./workspaceTreeState";
+import { applyWorkspaceTreePatch, expandPathToItem, expandPathToNote, focusActiveNote, restoreOpenFolderPaths, toggleFolder } from "./workspaceTreeState";
 import type { AppRoute } from "./routes";
 import {
   createAutomaticSyncScheduler,
@@ -25,6 +28,7 @@ import {
   type AutomaticSyncTrigger,
 } from "./automaticSyncScheduler";
 import { createUpdateScheduler, type UpdateScheduler } from "./updateScheduler";
+import { createLocalSaveScheduler, type LocalSaveScheduler } from "./localSaveScheduler";
 import {
   createFolder,
   createNote,
@@ -37,6 +41,8 @@ import {
   disconnectGitHub,
   downloadAndInstallUpdate,
   getInstallKind,
+  getPlatform,
+  isMacOS,
   githubRemote,
   gitSync,
   gitStatus,
@@ -113,6 +119,7 @@ export function App() {
   const [appState, setAppState] = useState<AppState>(() => ({
     ...initialAppState,
     recentWorkspaces: readRecentWorkspaces(),
+    theme: readTheme(),
     themeMode: readThemeMode(),
     sidebarCollapsed: readSidebarCollapsed(),
   }));
@@ -190,11 +197,15 @@ export function App() {
   const globalSearchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncWorkspaceRef = useRef<(trigger: AutomaticSyncTrigger) => void>(() => undefined);
   const schedulerRef = useRef<AutomaticSyncScheduler | null>(null);
+  const localSaveSchedulerRef = useRef<LocalSaveScheduler | null>(null);
   // Set right before a decided close (via performClose) calls currentWindow.close(),
   // which re-triggers onCloseRequested below — without this, that listener's own
   // appClosing() call would silently re-run Sync after the Close Sync Prompt already
   // decided to skip it, contradicting the user's "close without sync" choice.
   const skipCloseRequestedSyncRef = useRef(false);
+  // Read through a ref by the mount-once "simpler://quit-requested" listener
+  // below, which would otherwise close over the first render's closeWindow.
+  const closeWindowRef = useRef<() => void | Promise<void>>(() => undefined);
 
   appStateRef.current = appState;
 
@@ -206,6 +217,31 @@ export function App() {
       },
     });
   }
+
+  if (localSaveSchedulerRef.current === null) {
+    localSaveSchedulerRef.current = createLocalSaveScheduler({
+      write: (content) => flushLocalSave(content),
+    });
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await getPlatform();
+        if (!cancelled && response?.ok && response.data) {
+          setAppState((current) => ({ ...current, platform: response.data!.platform }));
+        }
+      } catch {
+        // Leave the default ("linux") platform for this session if detection fails.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const updateSchedulerRef = useRef<UpdateScheduler | null>(null);
 
@@ -275,7 +311,8 @@ export function App() {
           return;
         }
         const installKind = response?.ok && response.data ? response.data.installKind : "packaged";
-        updateSchedulerRef.current = createUpdateScheduler({ installKind, requestCheck, requestDownload });
+        const canSelfUpdate = installKind === "appimage" || installKind === "macos-app";
+        updateSchedulerRef.current = createUpdateScheduler({ canSelfUpdate, requestCheck, requestDownload });
         updateSchedulerRef.current.appOpened();
         applySchedulerState();
       } catch {
@@ -301,7 +338,11 @@ export function App() {
   useEffect(() => {
     const requestCloseSync = () => {
       try {
-        schedulerRef.current?.appClosing();
+        // Best-effort: `beforeunload` can't block on this, so the flush and
+        // the resulting appClosing() request are fired without awaiting them.
+        void (localSaveSchedulerRef.current?.flush() ?? Promise.resolve()).then(() => {
+          schedulerRef.current?.appClosing();
+        });
       } catch {
         // A throwing app-closing sync must never block the window from closing.
       }
@@ -318,18 +359,22 @@ export function App() {
       }
 
       return waitOrTimeout(
-        new Promise<void>((resolve, reject) => {
-          try {
-            Promise.resolve(schedulerRef.current?.appClosing()).then(() => resolve(), reject);
-          } catch (error) {
-            reject(error);
-          }
-        }),
+        (localSaveSchedulerRef.current?.flush() ?? Promise.resolve()).then(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              try {
+                Promise.resolve(schedulerRef.current?.appClosing()).then(() => resolve(), reject);
+              } catch (error) {
+                reject(error);
+              }
+            }),
+        ),
         closeFallbackMs,
       );
     };
 
     let unlistenClose: (() => void) | null = null;
+    let unlistenQuitRequested: (() => void) | null = null;
     try {
       const currentWindow = getCurrentWindow();
       void currentWindow
@@ -338,11 +383,39 @@ export function App() {
           // plugin's own post-handler destroy() call, which is one of the
           // suspected hang points (see .scratch/window-close-reliability).
           event.preventDefault();
+
+          // macOS only (ADR 0011 amendment, ADR 0014): this fires for the
+          // in-app close button and Cmd+Q too (both funnel through
+          // performClose()'s currentWindow.close() call below), but only
+          // those set skipCloseRequestedSyncRef first. An unset flag here
+          // means this CloseRequested came from the native red traffic
+          // light instead — hide rather than sync-and-destroy, since the
+          // process staying alive isn't a loss (Local Save already wrote
+          // the file) and a sync prompt on every red-light click a Mac
+          // user makes dozens of times a day would be pure noise.
+          if (isMacOS(appStateRef.current.platform) && !skipCloseRequestedSyncRef.current) {
+            void currentWindow.hide().catch(() => undefined);
+            return;
+          }
+
           await runAppClosingWithFallback();
           void currentWindow.destroy().catch(() => undefined);
         })
         .then((unlisten) => {
           unlistenClose = unlisten;
+        })
+        .catch(() => undefined);
+
+      // macOS only: Cmd+Q's accelerator is wired to a custom menu item
+      // (src-tauri/src/lib.rs) instead of the native Quit action, so it can
+      // run through the same closeWindow() the in-app close button uses —
+      // Close Sync Prompt included — rather than bypassing Rust/JS entirely.
+      void currentWindow
+        .listen("simpler://quit-requested", () => {
+          closeWindowRef.current();
+        })
+        .then((unlisten) => {
+          unlistenQuitRequested = unlisten;
         })
         .catch(() => undefined);
     } catch {
@@ -352,6 +425,7 @@ export function App() {
     return () => {
       window.removeEventListener("beforeunload", requestCloseSync);
       unlistenClose?.();
+      unlistenQuitRequested?.();
       schedulerRef.current?.dispose();
     };
   }, []);
@@ -414,7 +488,12 @@ export function App() {
     }
   };
 
-  const closeWindow = () => {
+  const closeWindow = async () => {
+    // Local Save's write is debounced, so an edit made just before closing
+    // may not have reached the automatic Sync scheduler's pending-changes
+    // tracking yet — flush it first so the close decision below sees it.
+    if (!(await awaitLocalSave())) return;
+
     if (!(schedulerRef.current?.hasPendingChanges() ?? false)) {
       performClose();
       return;
@@ -427,6 +506,7 @@ export function App() {
 
     setCloseSyncPrompt({ kind: "choice" });
   };
+  closeWindowRef.current = closeWindow;
 
   const waitForSyncBeforeClose = async () => {
     if (!(schedulerRef.current?.prepareManualSync() ?? true)) {
@@ -623,9 +703,10 @@ export function App() {
   const awaitLocalSave = async () => {
     // A newer edit can arrive while a preceding write is finishing.
     while (true) {
+      await localSaveSchedulerRef.current?.flush();
       const pending = pendingLocalSaveRef.current;
       const saved = await pending;
-      if (pending !== pendingLocalSaveRef.current) continue;
+      if (pending !== pendingLocalSaveRef.current || localSaveSchedulerRef.current?.hasPendingChanges()) continue;
       return saved;
     }
   };
@@ -731,9 +812,6 @@ export function App() {
     setAppState((current) => ({
       ...current,
       activeFolderPath: folderPath,
-      activeNotePath: null,
-      noteContent: "",
-      editorError: null,
       workspaceError: null,
       fileSearchJump: null,
     }));
@@ -912,39 +990,65 @@ export function App() {
     setAppState((current) => ({ ...current, attachmentError: message }));
   };
 
-  const changeNoteContent = (content: string): Promise<boolean> => {
-    const workspace = appState.workspace;
-    const activeNotePath = appState.activeNotePath;
-    if (!workspace || !activeNotePath) return Promise.resolve(false);
-    setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
+  // Marks the Workspace as having local changes and advances the automatic
+  // Sync scheduler right away, independent of the debounced disk write below —
+  // Local Save's write timing and Sync's own scheduling are separate concerns.
+  const markLocalChangePending = () => {
+    setAppState((current) => ({
+      ...current,
+      syncStatus: current.syncStatus === "sincronizado" ? "cambios-locales" : current.syncStatus,
+    }));
+    schedulerRef.current?.localSave();
+  };
 
-    // Serialize writes so a slow older save cannot overwrite a later edit.
+  const performLocalSave = async (content: string) => {
+    const workspace = appStateRef.current.workspace;
+    const activeNotePath = appStateRef.current.activeNotePath;
+
+    if (!workspace || !activeNotePath) {
+      return false;
+    }
+
+    const response = await writeNote(workspace.path, activeNotePath, content);
+
+    if (!response.ok) {
+      setAppState((current) => ({
+        ...current,
+        workspaceError: response.error ?? "No se pudo guardar la nota",
+      }));
+      return false;
+    }
+
+    return true;
+  };
+
+  // The Local Save debounce module's flush target: only here — once a save
+  // is actually due, not on every keystroke — does the editor's content get
+  // reported into AppState, so typing itself never re-renders the sidebar,
+  // Workspace Tree, or Command Palette (ticket 05).
+  const flushLocalSave = async (content: string) => {
     const save = pendingLocalSaveRef.current.then(async () => {
       try {
-        const response = await writeNote(workspace.path, activeNotePath, content);
-        if (!response.ok) {
-          if (activeWorkspacePathRef.current === workspace.path) {
-            setAppState((current) => ({ ...current, workspaceError: response.error ?? "No se pudo guardar la nota" }));
-          }
-          return false;
-        }
-        if (activeWorkspacePathRef.current === workspace.path) {
-          setAppState((current) => ({
-            ...current,
-            syncStatus: current.syncStatus === "sincronizado" ? "cambios-locales" : current.syncStatus,
-          }));
-          schedulerRef.current?.localSave();
-        }
+        if (!(await performLocalSave(content))) return false;
+        setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
+        markLocalChangePending();
         return true;
       } catch {
-        if (activeWorkspacePathRef.current === workspace.path) {
-          setAppState((current) => ({ ...current, workspaceError: "No se pudo guardar la nota" }));
-        }
+        setAppState((current) => ({ ...current, workspaceError: "No se pudo guardar la nota" }));
         return false;
       }
     });
     pendingLocalSaveRef.current = save;
-    return save;
+    await save;
+  };
+
+  const changeNoteContent = (content: string) => {
+    if (!appState.workspace || !appState.activeNotePath) {
+      return false;
+    }
+
+    localSaveSchedulerRef.current?.edit(content);
+    return true;
   };
 
   const closeNoteHistory = () => {
@@ -1007,7 +1111,12 @@ export function App() {
     if (noteHistoryPanel.previewContent === null) {
       return;
     }
-    if (await changeNoteContent(noteHistoryPanel.previewContent)) {
+    const content = noteHistoryPanel.previewContent;
+    // Finish outstanding writes before replacing the note with its history.
+    if (!(await awaitLocalSave())) return;
+    setAppState((current) => ({ ...current, noteContent: content, editorError: null }));
+    if (await performLocalSave(content)) {
+      markLocalChangePending();
       closeNoteHistory();
     }
   };
@@ -1046,7 +1155,7 @@ export function App() {
       const openFolderPaths = expandPathToNote(
         appState.openFolderPaths,
         response.data.itemPath,
-        response.data.tree,
+        response.data.tree ?? applyWorkspaceTreePatch(appState.workspaceTree, response.data.patch),
         appState.treeMode,
       );
       setAppState((current) => ({ ...current, openFolderPaths, fileSearchJump: null }));
@@ -1175,12 +1284,12 @@ export function App() {
       return;
     }
     const current = appStateRef.current;
-    const openFolderPaths = expandPathToItem(current.openFolderPaths, response.data.itemPath, response.data.tree, current.treeMode);
+    const openFolderPaths = expandPathToItem(current.openFolderPaths, response.data.itemPath, response.data.tree ?? applyWorkspaceTreePatch(current.workspaceTree, response.data.patch), current.treeMode);
     persistWorkspaceTreeState(workspacePath, openFolderPaths, current.treeMode);
     setWorkspaceNotice(`Restaurado: ${response.data.itemPath}`);
     setAppState((current) => ({
       ...current,
-      workspaceTree: response.data!.tree,
+      workspaceTree: response.data!.tree ?? applyWorkspaceTreePatch(current.workspaceTree, response.data!.patch),
       openFolderPaths,
       activeRoute: "workspace",
       trashEntries: current.trashEntries.filter((entry) => entry.id !== id),
@@ -1191,6 +1300,11 @@ export function App() {
   const changeTheme = (themeMode: ThemeMode) => {
     saveThemeMode(themeMode);
     setAppState((current) => ({ ...current, themeMode }));
+  };
+
+  const changeAppTheme = (theme: Theme) => {
+    saveTheme(theme);
+    setAppState((current) => ({ ...current, theme }));
   };
 
   const changeUiZoom = (uiZoom: UiZoom) => {
@@ -1274,9 +1388,10 @@ export function App() {
   const runSyncWorkspace = async (trigger: AutomaticSyncTrigger): Promise<SyncOutcome> => {
     const workspacePath = appStateRef.current.workspace?.path ?? activeWorkspacePathRef.current;
 
-    if (!workspacePath) {
+    if (!workspacePath || !(await awaitLocalSave())) {
       return { ok: false };
     }
+    if (activeWorkspacePathRef.current !== workspacePath) return { ok: false };
 
     const currentSyncStatus = appStateRef.current.syncStatus;
     if (trigger !== "manual" && trigger !== "open" && !canRunAutomaticSync(currentSyncStatus)) {
@@ -1483,7 +1598,7 @@ export function App() {
 
     setAppState((current) => ({
       ...current,
-      workspaceTree: response.data!.tree,
+      workspaceTree: response.data!.tree ?? applyWorkspaceTreePatch(current.workspaceTree, response.data!.patch),
       workspaceError: null,
       syncStatus: "cambios-locales",
       ...selection(response.data!.itemPath),
@@ -1520,6 +1635,7 @@ export function App() {
 
   return (
     <ClassicShell
+      platform={appState.platform}
       activeRoute={appState.activeRoute}
       workspaceTree={appState.workspaceTree}
       openFolderPaths={appState.openFolderPaths}
@@ -1553,6 +1669,7 @@ export function App() {
       noteHistoryLoading={noteHistoryPanel.loading}
       noteHistoryError={noteHistoryPanel.error}
       themeMode={appState.themeMode}
+      theme={appState.theme}
       uiZoom={uiZoom}
       editorFontSize={editorFontSize}
       sidebarCollapsed={appState.sidebarCollapsed}
@@ -1566,6 +1683,7 @@ export function App() {
       onOpenRecentWorkspace={(path) => void openWorkspaceAtPath(path)}
       onRouteChange={openRoute}
       onThemeChange={changeTheme}
+      onAppThemeChange={changeAppTheme}
       onUiZoomChange={changeUiZoom}
       onEditorFontSizeChange={changeEditorFontSize}
       onSelectFolder={selectFolder}
@@ -1649,6 +1767,7 @@ export function App() {
 
 const recentWorkspacesStorageKey = "simpler.recentWorkspaces";
 const themeModeStorageKey = "simpler.themeMode";
+const themeStorageKey = "simpler.theme";
 const sidebarCollapsedStorageKey = "simpler.sidebarCollapsed";
 
 function readThemeMode(): ThemeMode {
@@ -1665,6 +1784,23 @@ function saveThemeMode(themeMode: ThemeMode) {
     localStorage.setItem(themeModeStorageKey, themeMode);
   } catch {
     // localStorage may be unavailable (e.g. private browsing); the app still works, just unpersisted.
+  }
+}
+
+function readTheme(): Theme {
+  try {
+    const value = localStorage.getItem(themeStorageKey);
+    return themes.includes(value as Theme) ? (value as Theme) : defaultTheme;
+  } catch {
+    return defaultTheme;
+  }
+}
+
+function saveTheme(theme: Theme) {
+  try {
+    localStorage.setItem(themeStorageKey, theme);
+  } catch {
+    // Same as saveThemeMode: unpersisted is an acceptable degradation.
   }
 }
 

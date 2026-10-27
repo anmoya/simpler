@@ -209,9 +209,9 @@ pub(super) fn set_order_payload(payload: serde_json::Value) -> Result<serde_json
     }
     write(workspace, &metadata)?;
     drop(guard);
-    serde_json::to_value(super::FilesystemOperationResult {
-        tree: super::read_workspace_tree(workspace, workspace)?,
-        item_path: request.parent_path,
-    })
+    serde_json::to_value(serde_json::json!({
+        "tree": super::read_workspace_tree(workspace, workspace)?,
+        "itemPath": request.parent_path,
+    }))
     .map_err(|error| error.to_string())
 }

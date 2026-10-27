@@ -17,7 +17,11 @@ echo "==> Bumping package.json and src-tauri/tauri.conf.json"
 npm run release -- "$VERSION"
 
 echo "==> Bumping src-tauri/Cargo.toml"
-sed -i "0,/^version = \".*\"$/s//version = \"$VERSION\"/" src-tauri/Cargo.toml
+# -i.bak + rm rather than bare -i: BSD sed (macOS) requires an extension
+# argument after -i, GNU sed (Linux) treats a bare -i "..." as the pattern
+# and errors — this form works portably on both.
+sed -i.bak "0,/^version = \".*\"$/s//version = \"$VERSION\"/" src-tauri/Cargo.toml
+rm -f src-tauri/Cargo.toml.bak
 
 echo "==> Syncing src-tauri/Cargo.lock"
 cargo check --manifest-path src-tauri/Cargo.toml >/dev/null

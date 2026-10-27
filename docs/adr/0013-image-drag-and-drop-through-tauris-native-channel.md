@@ -18,7 +18,7 @@ Image drops are handled on Tauri's native drag-drop channel (`getCurrentWebview(
 
 Consequences worth stating plainly:
 
-- **macOS and Windows are consciously left uncovered** for image drag-and-drop. Simpler is Linux-first. Should either platform be targeted, the DOM path has to be reconsidered — this is a recorded decision, not an oversight.
+- **macOS and Windows are consciously left uncovered** for image drag-and-drop. Simpler is Linux-first. Should either platform be targeted, the DOM path has to be reconsidered — this is a recorded decision, not an oversight. (macOS is now targeted — see the amendment at the bottom of this file.)
 - The drop position arrives in **physical window pixels** and is divided by the monitor scale factor. No title-bar offset is subtracted: the window runs with `decorations: false` and draws its own title bar *inside* the webview, so the window origin and the viewport origin coincide. Re-enabling system decorations would break that assumption.
 - The channel is window-wide, so drops landing outside the editor's rect are ignored.
 
@@ -29,3 +29,13 @@ Consequences worth stating plainly:
 What *is* covered automatically is the logic that can fail on its own, isolated from the channel: path recognition (`src/attachments/droppedImagePath.test.ts`) and the coordinate translation (`src/attachments/nativeDropChannel.test.ts`).
 
 One note the extension list depends on: `importableImageExtensions` in `droppedImagePath.ts` must stay in step with `IMPORTABLE_IMAGE_EXTENSIONS` in `src-tauri/src/lib.rs`. Recognising an extension the backend then rejects turns a drop that should be a silent no-op into a visible error.
+
+## Amendment (2026-08-12): macOS
+
+macOS is now a supported platform (ADR 0014), so "consciously left uncovered" no longer describes a settled position — it describes an untested one. Tauri's native drag-drop channel is cross-platform, so there is reason to expect `onDragDropEvent` fires on macOS with no code change at all; there is no evidence either way.
+
+**Status: unverified.** This section is filled in with the result of dragging a real image from Finder into a note on a real Mac, and by nothing else. That is the whole point of this ADR: a passing suite is not evidence here, and a synthetic event only re-asserts our own logic.
+
+The `titleBarStyle: "Overlay"` choice for macOS (ADR 0014) was made specifically to keep this file's coordinate assumption intact — the webview still spans the full window, so window origin and viewport origin still coincide and no title-bar offset is subtracted.
+
+If the drop turns out not to fire on macOS, it becomes its own ticket rather than a rushed patch inside the platform-support round.

@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   open: vi.fn(),
   destroy: vi.fn(async () => undefined),
+  hide: vi.fn(async () => undefined),
   closeRequestedHandler: null as null | ((event: { preventDefault: () => void }) => unknown),
+  quitRequestedHandler: null as null | (() => unknown),
   appClosingOverride: null as null | (() => void),
 }));
 
@@ -41,15 +43,40 @@ vi.mock("@tauri-apps/api/window", () => ({
     toggleMaximize: async () => undefined,
     close: async () => undefined,
     destroy: mocks.destroy,
+    hide: mocks.hide,
+    listen: async (event: string, handler: () => unknown) => {
+      if (event === "simpler://quit-requested") {
+        mocks.quitRequestedHandler = handler;
+      }
+      return () => {
+        mocks.quitRequestedHandler = null;
+      };
+    },
   }),
 }));
+
+// CodeMirror mounts its contenteditable DOM node in a useEffect that fires
+// after the "markdown-editor" container itself is in the DOM, so a bare
+// querySelector immediately after opening a note is a race — flaky under
+// CI's scheduling even when reliably fast on a local machine. Poll instead.
+async function findEditableElement(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]");
+    if (!editable) {
+      throw new Error("markdown editor contenteditable not mounted yet");
+    }
+    return editable as HTMLElement;
+  });
+}
 
 describe("App", () => {
   beforeEach(() => {
     mocks.invoke.mockReset();
     mocks.open.mockReset();
     mocks.destroy.mockClear();
+    mocks.hide.mockClear();
     mocks.closeRequestedHandler = null;
+    mocks.quitRequestedHandler = null;
     mocks.appClosingOverride = null;
     localStorage.clear();
     localStorage.setItem("simpler.showWelcome", "false");
@@ -58,6 +85,30 @@ describe("App", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("keeps the active note when flushing a pending edit fails during navigation", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: ["a.md", "b.md"].map((path) => ({ name: path, path, kind: "note", children: [] })), metadata: { lastNotePath: "a.md", githubWizardPostponed: true } });
+      if (request.action === "read-note") return reply({ content: "Initial" });
+      if (request.action === "write-note") return Promise.resolve({ ok: false, error: "Disk full" });
+      if (request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      return reply({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editable = await findEditableElement();
+    await user.click(editable);
+    await user.type(editable, "{End} change");
+    await user.click(screen.getByRole("button", { name: "b.md" }));
+    expect(await screen.findByText("Disk full")).toBeInTheDocument();
+    expect(editable).toHaveTextContent("Initial change");
+    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "read-note").map(([, { request }]) => request.payload.notePath)).toEqual(["a.md"]);
   });
 
   it("keeps the latest note and typing focus when an older note read finishes after rapid navigation", async () => {
@@ -80,10 +131,10 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    await screen.findByText("# Initial A");
+    await waitFor(() => expect(screen.getByTestId("markdown-editor")).toHaveTextContent("# Initial A"));
     await user.click(screen.getByRole("button", { name: "b.md" }));
     await user.click(screen.getByRole("button", { name: "c.md" }));
-    await screen.findByText("# Latest C");
+    await waitFor(() => expect(screen.getByTestId("markdown-editor")).toHaveTextContent("# Latest C"));
     const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
     editable.focus();
     await user.keyboard("X");
@@ -611,7 +662,7 @@ describe("App", () => {
     await user.click(editable);
     await user.type(editable, "{End} unsaved");
     const editedContent = screen.getByTestId("markdown-editor").textContent;
-    expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "write-note")).toBe(true);
+    await waitFor(() => expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "write-note")).toBe(true));
     const imageButton = screen.getByRole("button", { name: "photo.png" });
     await user.click(imageButton);
     const preview = screen.getByRole("dialog", { name: "Vista previa de imagen" });
@@ -1064,7 +1115,13 @@ describe("App", () => {
           ok: true,
           domain: "filesystem",
           action: "restore-trash-item",
-          data: { tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }], itemPath: "today.md" },
+          data: {
+            patch: {
+              removedPaths: [],
+              upsertedItem: { name: "today.md", path: "today.md", kind: "note", children: [] },
+            },
+            itemPath: "today.md",
+          },
           error: null,
         });
       }
@@ -1868,11 +1925,108 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.type(editable, "{End}\nChanged");
 
-    expect(screen.getByRole("contentinfo", { name: "Workspace status" })).toHaveTextContent("Cambios locales");
+    // Local Save is debounced, so the status only flips once the pending
+    // edit actually flushes to disk — not synchronously on each keystroke.
+    await waitFor(
+      () =>
+        expect(screen.getByRole("contentinfo", { name: "Workspace status" })).toHaveTextContent("Cambios locales"),
+      { timeout: 2000 },
+    );
+  });
+
+  it("does not touch the sidebar's Workspace Tree DOM while typing, only once a save flushes", async () => {
+    const user = userEvent.setup();
+    const writes: string[] = [];
+    mocks.open.mockResolvedValue("/tmp/notes");
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      if (request.domain === "workspace" && request.action === "open") {
+        return Promise.resolve({
+          ok: true,
+          domain: "workspace",
+          action: "open",
+          data: {
+            name: "notes",
+            path: "/tmp/notes",
+            tree: [{ name: "today.md", path: "today.md", kind: "note", children: [] }],
+            metadata: { lastNotePath: "today.md" },
+          },
+          error: null,
+        });
+      }
+
+      if (request.domain === "filesystem" && request.action === "read-note") {
+        return Promise.resolve({
+          ok: true,
+          domain: "filesystem",
+          action: "read-note",
+          data: { content: "# Today" },
+          error: null,
+        });
+      }
+
+      if (request.domain === "filesystem" && request.action === "write-note") {
+        writes.push(request.payload.content);
+        return Promise.resolve({
+          ok: true,
+          domain: "filesystem",
+          action: "write-note",
+          data: { content: request.payload.content },
+          error: null,
+        });
+      }
+
+      if (request.domain === "workspace" && request.action === "remember-note") {
+        return Promise.resolve({
+          ok: true,
+          domain: "workspace",
+          action: "remember-note",
+          data: { lastNotePath: request.payload.notePath },
+          error: null,
+        });
+      }
+
+      if (request.domain === "git" && request.action === "status") {
+        return Promise.resolve({
+          ok: true,
+          domain: "git",
+          action: "status",
+          data: { isRepository: true, hasRemote: true, syncStatus: "sincronizado" },
+          error: null,
+        });
+      }
+
+      throw new Error(`unexpected native command ${request.domain}/${request.action}`);
+    });
+
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editable = await findEditableElement();
+
+    const sidebarTree = document.querySelector(".note-tree");
+    expect(sidebarTree).not.toBeNull();
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(sidebarTree!, { childList: true, subtree: true, attributes: true, characterData: true });
+
+    editable.focus();
+    await user.type(editable, "{End}\nMore typing here");
+
+    // The debounced write hasn't flushed yet, so AppState (and therefore the
+    // sidebar) must not have been touched — only the editor's own DOM changed.
+    expect(mutations).toHaveLength(0);
+    expect(screen.getByTestId("markdown-editor").textContent).toContain("More typing here");
+    expect(writes).toHaveLength(0);
+
+    // Once the debounce flushes, the content reaches disk (and AppState).
+    await waitFor(() => expect(writes).toEqual(["# Today\nMore typing here"]));
+
+    observer.disconnect();
   });
 
   it("previews note history and restores a version through Local Save before normal Sync", async () => {
@@ -2448,7 +2602,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    const editable = await findEditableElement();
     editable.focus();
     await user.type(editable, "{End}\nClose me");
     window.dispatchEvent(new Event("beforeunload"));
@@ -2572,7 +2726,7 @@ describe("App", () => {
     async function openWorkspaceAndMakePending(user: ReturnType<typeof userEvent.setup>) {
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
       await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-      const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+      const editable = await findEditableElement();
       editable.focus();
       await user.type(editable, "{End}\nmore text");
     }
@@ -2737,7 +2891,7 @@ describe("App", () => {
 
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-mode", "light");
 
-    await user.click(screen.getByRole("button", { name: "Switch to dark theme" }));
+    await user.click(screen.getByRole("button", { name: "Switch to dark appearance" }));
 
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-mode", "dark");
     expect(localStorage.getItem("simpler.themeMode")).toBe("dark");
@@ -2746,6 +2900,25 @@ describe("App", () => {
     render(<App />);
 
     expect(document.querySelector(".app-shell")).toHaveAttribute("data-mode", "dark");
+  });
+
+  it("persists the selected Theme and restores it on the next launch", async () => {
+    const user = userEvent.setup();
+
+    const { unmount } = render(<App />);
+
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-theme", "warm");
+
+    await user.keyboard("{Control>}k{/Control}");
+    await user.click(screen.getByRole("button", { name: "Switch Theme to Mate Cerámico" }));
+
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-theme", "ceramic");
+    expect(localStorage.getItem("simpler.theme")).toBe("ceramic");
+
+    unmount();
+    render(<App />);
+
+    expect(document.querySelector(".app-shell")).toHaveAttribute("data-theme", "ceramic");
   });
 
   it("changes UI zoom via keyboard shortcuts, clamps it, and persists it across restarts", async () => {
@@ -2810,5 +2983,46 @@ describe("App", () => {
     render(<App />);
 
     expect(localStorage.getItem("simpler.editorFontSize")).toBe("11");
+  });
+
+  describe("macOS window lifecycle", () => {
+    function mockMacOSPlatform() {
+      mocks.invoke.mockImplementation((_command: string, { request }) => {
+        if (request.domain === "update" && request.action === "get-platform") {
+          return Promise.resolve({ ok: true, domain: "update", action: "get-platform", data: { platform: "macos" }, error: null });
+        }
+        return Promise.resolve({ ok: false, domain: request.domain, action: request.action, data: null, error: "not mocked" });
+      });
+    }
+
+    it("hides rather than syncs-and-destroys when the red traffic light triggers close-requested with no prior decision", async () => {
+      mockMacOSPlatform();
+      const { container } = render(<App />);
+
+      await waitFor(() => expect(mocks.closeRequestedHandler).not.toBeNull());
+      // getPlatform() resolving is a separate async effect from onCloseRequested
+      // registration — wait for it to actually land before relying on it below,
+      // or this races (and did, once, in CI).
+      await waitFor(() => expect(container.querySelector(".titlebar")).toHaveAttribute("data-platform", "macos"));
+
+      await mocks.closeRequestedHandler!({ preventDefault: vi.fn() });
+
+      await waitFor(() => expect(mocks.hide).toHaveBeenCalledTimes(1));
+      expect(mocks.destroy).not.toHaveBeenCalled();
+    });
+
+    it("routes the Cmd+Q menu event through the same close pipeline as the in-app close button", async () => {
+      mockMacOSPlatform();
+      render(<App />);
+
+      await waitFor(() => expect(mocks.quitRequestedHandler).not.toBeNull());
+
+      mocks.quitRequestedHandler!();
+
+      // No pending changes and no open Workspace: closeWindow() goes straight
+      // to performClose(), which destroys rather than hides.
+      await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(1));
+      expect(mocks.hide).not.toHaveBeenCalled();
+    });
   });
 });

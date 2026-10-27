@@ -42,6 +42,12 @@ button {
     sans-serif;
   --font-family-heading: "Josefin Sans", var(--font-family-body);
   --font-family-mono: "DM Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  /*
+   * Raw Markdown body text in the editor, as opposed to `--font-family-body`
+   * which drives the surrounding UI chrome. They coincide unless a Theme
+   * separates them (Mate Cerámico pairs a serif prose face with a sans UI).
+   */
+  --font-family-prose: var(--font-family-body);
 
   display: grid;
   grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
@@ -102,6 +108,7 @@ button {
   --color-find-highlight-border: #c9932e;
   --color-line-highlight-bg: rgb(193 89 44 / 12%);
   --color-quote-border: #dcc7a8;
+  --color-markdown-mark: #b7a488;
   --shadow-float: 0 1px 2px rgb(60 50 30 / 6%), 0 3px 6px rgb(60 50 30 / 5%);
   --shadow-pop: 0 2px 4px rgb(60 50 30 / 8%), 0 8px 16px rgb(60 50 30 / 10%);
 }
@@ -132,8 +139,107 @@ button {
   --color-find-highlight-border: #e0b04e;
   --color-line-highlight-bg: rgb(217 113 63 / 18%);
   --color-quote-border: #4a3626;
+  --color-markdown-mark: #8a7259;
   --shadow-float: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 35%);
   --shadow-pop: 0 4px 14px rgb(0 0 0 / 35%), 0 12px 32px rgb(0 0 0 / 40%);
+}
+
+/*
+ * Mate Cerámico. Four materials plus one accent: raw ceramic (the surfaces),
+ * yerba green (accent, caret, focus, selection, headings), wood (quote bars,
+ * live borders, markdown marks), brushed steel (metadata, informational
+ * states) and a ceramic-glaze teal reserved for Global Search — the find
+ * highlight is deliberately teal, never green, so search results read as
+ * distinct from navigation/selection state. Typography splits prose (serif)
+ * from UI chrome (sans), which is why `--font-family-prose` exists as a
+ * token separate from `--font-family-body`.
+ */
+.app-shell[data-theme="ceramic"] {
+  --font-family-body: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-family-heading: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-family-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --font-family-prose: var(--font-family-heading);
+}
+
+.app-shell[data-theme="ceramic"][data-mode="light"] {
+  --color-background: #d9d2c6;
+  --color-sidebar: #d3cbbe;
+  --color-sidebar-selected: #dcebda;
+  --color-editor: #e8e1d3;
+  --color-status: #d9d2c6;
+  --color-border: #bebfbd;
+  --color-border-subtle: rgb(45 27 18 / 8%);
+  --color-border-strong: #b9793b;
+  --color-divider: #c9c8c4;
+  --color-text: #2d1b12;
+  --color-muted: #736a62;
+  --color-muted-light: #9c948c;
+  --color-subtle: #efe9dc;
+  --color-control: #efe9dc;
+  --color-active: #dcebda;
+  --color-accent: #3f7a44;
+  --color-accent-hover: #4f8f54;
+  --color-accent-strong: #2c5a31;
+  --color-accent-soft: #dcebda;
+  --color-accent-ring: rgb(92 122 94 / 30%);
+  --color-error: #7a4034;
+  --color-heading: #3f7a44;
+  --color-heading-text: #5a473b;
+  --color-amber: #8a6a3c;
+  --color-code-bg: #e1d8c7;
+  --color-search-accent: #1f6e5c;
+  --color-search-bg: #cfe3db;
+  --color-find-highlight-bg: #cfe3db;
+  --color-find-highlight-border: #1f6e5c;
+  --color-line-highlight-bg: rgb(63 122 68 / 12%);
+  --color-quote-border: #b9793b;
+  --color-markdown-mark: #b9793b;
+  --color-text-placeholder: #8a7f76;
+  --color-text-on-accent: #f4f0e6;
+  --color-steel: #9da1a3;
+  --color-success: #3f7a44;
+  --color-warning: #8a6a3c;
+  --color-info: #6e7477;
+  --color-hover-bg: #e2ded8;
+  --shadow-float: 0 1px 2px rgb(45 27 18 / 6%);
+  --shadow-pop: 0 1px 2px rgb(45 27 18 / 6%), 0 6px 18px rgb(45 27 18 / 7%);
+}
+
+/*
+ * The dark Appearance Mode reads as the same clay after firing: the greige
+ * turns to a warm near-black and yerba lifts to a sage that clears contrast
+ * against it, while wood and steel keep their exact roles.
+ */
+.app-shell[data-theme="ceramic"][data-mode="dark"] {
+  --color-background: #23211e;
+  --color-sidebar: #1d1b19;
+  --color-sidebar-selected: #343a2c;
+  --color-editor: #262421;
+  --color-status: #1d1b19;
+  --color-border: #423e39;
+  --color-border-subtle: rgb(0 0 0 / 26%);
+  --color-divider: #37342f;
+  --color-text: #e8e3dc;
+  --color-muted: #a79e94;
+  --color-muted-light: #7e766d;
+  --color-subtle: #2f2c28;
+  --color-control: #2f2c28;
+  --color-active: #343a2c;
+  --color-accent: #9cb489;
+  --color-accent-strong: #7e9a6c;
+  --color-accent-ring: rgb(156 180 137 / 28%);
+  --color-error: #e0a99b;
+  --color-heading: #e3d9c9;
+  --color-heading-text: #c4b7a5;
+  --color-amber: #c9a46a;
+  --color-code-bg: rgb(255 255 255 / 6%);
+  --color-find-highlight-bg: rgb(201 164 106 / 26%);
+  --color-find-highlight-border: #c9a46a;
+  --color-line-highlight-bg: rgb(156 180 137 / 14%);
+  --color-quote-border: #a98b76;
+  --color-markdown-mark: #a98b76;
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 32%);
+  --shadow-pop: 0 1px 2px rgb(0 0 0 / 32%), 0 6px 18px rgb(0 0 0 / 38%);
 }
 
 .titlebar {
@@ -141,7 +247,6 @@ button {
   grid-row: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 0 0 0 14px;
   border-bottom: 1px solid var(--color-border-subtle);
@@ -154,6 +259,11 @@ button {
 
 .titlebar__title {
   font-weight: 600;
+}
+
+.titlebar__drag-spacer {
+  flex: 1;
+  height: 100%;
 }
 
 .titlebar__controls {
@@ -180,6 +290,17 @@ button {
 .titlebar__controls button.titlebar__close:hover {
   background: var(--color-error);
   color: var(--color-background);
+}
+
+/* macOS (ADR 0014): the native traffic lights (titleBarStyle: "Overlay")
+   do the min/max/close job instead, so the app's own buttons are hidden and
+   the title gets left padding clear of them instead of sitting underneath. */
+.titlebar[data-platform="macos"] {
+  padding-left: 78px;
+}
+
+.titlebar[data-platform="macos"] .titlebar__controls {
+  display: none;
 }
 
 .sidebar {
@@ -298,6 +419,16 @@ button {
   position: relative;
 }
 
+/*
+ * Icon/toolbar button rule: any bare-icon button (sidebar rail, sidebar tabs,
+ * tree row, toolbar action, popover header, etc.) must join this selector
+ * group instead of being left unstyled or getting one-off CSS. Never ship a
+ * plain <button> with no className here — unstyled buttons pick up the
+ * browser's default border/background and visually clash with the rest of
+ * the toolbar. Add your new selector to all three lists below (base, hover,
+ * focus-visible) so it gets the shared transparent border, hover fill, and
+ * focus ring.
+ */
 .workspace-trigger,
 .sidebar-tab,
 .note-tree__item,
@@ -737,6 +868,120 @@ button {
   overflow: hidden;
 }
 
+.appearance-settings {
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.appearance-settings h2 {
+  margin: 0 0 10px;
+  color: var(--color-muted);
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.appearance-settings__themes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.appearance-settings__theme {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-control);
+  color: var(--color-text);
+  font-size: var(--font-size-meta);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.appearance-settings__theme:hover {
+  background: var(--color-subtle);
+}
+
+.appearance-settings__theme--active {
+  border-color: var(--color-accent);
+  background: var(--color-active);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.appearance-settings__swatches {
+  display: flex;
+  flex-shrink: 0;
+  gap: 3px;
+}
+
+.appearance-settings__swatch {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+}
+
+/*
+ * The preview swatches must show each Theme's own colors regardless of which
+ * Theme is currently applied, so they are literal values rather than tokens —
+ * and they show the values for the Appearance Mode currently in effect, since
+ * a Theme's light surface is unreadable as a sample on a dark shell.
+ */
+[data-theme-preview="warm"] .appearance-settings__swatch--surface {
+  background: #f4e9d8;
+}
+
+[data-theme-preview="warm"] .appearance-settings__swatch--accent {
+  background: #c1592c;
+}
+
+[data-theme-preview="warm"] .appearance-settings__swatch--detail {
+  background: #c9932e;
+}
+
+[data-mode="dark"] [data-theme-preview="warm"] .appearance-settings__swatch--surface {
+  background: #241a14;
+}
+
+[data-mode="dark"] [data-theme-preview="warm"] .appearance-settings__swatch--accent {
+  background: #d9713f;
+}
+
+[data-mode="dark"] [data-theme-preview="warm"] .appearance-settings__swatch--detail {
+  background: #e0b04e;
+}
+
+[data-theme-preview="ceramic"] .appearance-settings__swatch--surface {
+  background: #d8d4cf;
+}
+
+[data-theme-preview="ceramic"] .appearance-settings__swatch--accent {
+  background: #3f7a44;
+}
+
+[data-theme-preview="ceramic"] .appearance-settings__swatch--detail {
+  background: #b9793b;
+}
+
+[data-mode="dark"] [data-theme-preview="ceramic"] .appearance-settings__swatch--surface {
+  background: #23211e;
+}
+
+[data-mode="dark"] [data-theme-preview="ceramic"] .appearance-settings__swatch--accent {
+  background: #9cb489;
+}
+
+[data-mode="dark"] [data-theme-preview="ceramic"] .appearance-settings__swatch--detail {
+  background: #a98b76;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .note-tree__folder-children {
     transition: none;
@@ -1142,10 +1387,9 @@ button {
 }
 
 .command-palette {
-  top: 72px;
-  left: 50%;
-  transform: translateX(-50%);
-  transform-origin: top center;
+  position: static;
+  transform: none;
+  width: min(560px, calc(100vw - 48px));
 }
 
 .command-help {
@@ -1248,14 +1492,29 @@ button {
   text-transform: uppercase;
 }
 
-.command-popover__header button {
-  padding: 6px;
-  color: var(--color-muted);
+.command-popover__close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-subtle);
+  color: var(--color-text);
+}
+
+.command-popover__close:hover {
+  border-color: var(--color-accent);
+  background: var(--color-active);
+  color: var(--color-accent);
 }
 
 .command-list {
   display: grid;
   gap: 2px;
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
 }
 
 .command-list button,

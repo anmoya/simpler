@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, cloneElement } from "react";
+import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode, type DragEvent, type MouseEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactElement, cloneElement } from "react";
 import type { AppRoute } from "../app/routes";
 import type {
   CloseSyncPromptState,
@@ -13,8 +13,9 @@ import type {
   UpdateNoticeState,
   WorkspaceTreeItem,
 } from "../app/appState";
-import { uiZoomSteps, defaultUiZoom, editorFontSizeSteps, defaultEditorFontSize } from "../app/appState";
-import type { RemoteAwareness, AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, TrashEntry } from "../native/commands";
+import { uiZoomSteps, defaultUiZoom, editorFontSizeSteps, defaultEditorFontSize, themes, themeLabels } from "../app/appState";
+import type { Theme } from "../app/appState";
+import type { RemoteAwareness, AdvancedGitStatus, ConflictResolution, DeviceFlowInstructions, GitHubAuthStatus, GitHubRemote, GlobalSearchResult, NoteHistoryEntry, Platform, TrashEntry } from "../native/commands";
 import type { DialogRequest } from "../app/appState";
 import { WelcomeScreen } from "./WelcomeScreen";
 import type { RecentNote } from "../app/recentNotes";
@@ -46,6 +47,7 @@ interface ShellCommand {
 }
 
 export interface ClassicShellProps {
+  platform: Platform;
   activeRoute: AppRoute;
   workspaceTree: WorkspaceTreeItem[];
   openFolderPaths: ReadonlySet<string>;
@@ -80,6 +82,7 @@ export interface ClassicShellProps {
   noteHistoryLoading: boolean;
   noteHistoryError: string | null;
   themeMode: ThemeMode;
+  theme: Theme;
   uiZoom: UiZoom;
   editorFontSize: EditorFontSize;
   sidebarCollapsed: boolean;
@@ -93,6 +96,7 @@ export interface ClassicShellProps {
   onOpenRecentWorkspace: (workspacePath: string) => void;
   onRouteChange: (route: AppRoute) => void;
   onThemeChange: (themeMode: ThemeMode) => void;
+  onAppThemeChange: (theme: Theme) => void;
   onUiZoomChange: (uiZoom: UiZoom) => void;
   onEditorFontSizeChange: (editorFontSize: EditorFontSize) => void;
   onSelectFolder: (folderPath: string) => void;
@@ -158,6 +162,7 @@ const releasePageUrl = "https://github.com/anmoya/simpler/releases/latest";
 export function ClassicShell({
   editorFocusRequest,
   workspaceNotice,
+  platform,
   activeRoute,
   workspaceTree,
   openFolderPaths,
@@ -184,6 +189,7 @@ export function ClassicShell({
   noteHistoryLoading,
   noteHistoryError,
   themeMode,
+  theme,
   uiZoom,
   editorFontSize,
   sidebarCollapsed,
@@ -197,6 +203,7 @@ export function ClassicShell({
   onOpenRecentWorkspace,
   onRouteChange,
   onThemeChange,
+  onAppThemeChange,
   onUiZoomChange,
   onEditorFontSizeChange,
   onSelectFolder,
@@ -419,6 +426,9 @@ export function ClassicShell({
   const hasOpenWorkspace = canManageWorkspace;
   const hasNotes = workspaceTreeHasNotes(workspaceTree);
   const nextTheme = themeMode === "light" ? "dark" : "light";
+  // Themes cycle in declaration order so one command/shortcut reaches every
+  // Theme without needing a submenu; the Settings pane still offers direct picks.
+  const nextAppTheme = themes[(themes.indexOf(theme) + 1) % themes.length] ?? theme;
   const uiZoomIndex = uiZoomSteps.indexOf(uiZoom);
   const nextUiZoomIn = uiZoomSteps[Math.min(uiZoomSteps.length - 1, uiZoomIndex + 1)] ?? uiZoom;
   const nextUiZoomOut = uiZoomSteps[Math.max(0, uiZoomIndex - 1)] ?? uiZoom;
@@ -509,10 +519,17 @@ export function ClassicShell({
       },
       {
         id: "theme",
-        label: `Switch to ${nextTheme} theme`,
+        label: `Switch to ${nextTheme} appearance`,
         shortcut: "Ctrl/Cmd+Shift+T",
         available: true,
         run: () => onThemeChange(nextTheme),
+      },
+      {
+        id: "app-theme",
+        label: `Switch Theme to ${themeLabels[nextAppTheme]}`,
+        shortcut: "",
+        available: themes.length > 1,
+        run: () => onAppThemeChange(nextAppTheme),
       },
       {
         id: "zoom-in",
@@ -584,6 +601,7 @@ export function ClassicShell({
       canManageWorkspace,
       hasSelection,
       nextTheme,
+      nextAppTheme,
       nextUiZoomIn,
       nextUiZoomOut,
       nextEditorFontSizeIn,
@@ -598,6 +616,7 @@ export function ClassicShell({
       onRouteChange,
       onSyncWorkspace,
       onThemeChange,
+      onAppThemeChange,
       onUiZoomChange,
       onEditorFontSizeChange,
       uiZoom,
@@ -876,12 +895,13 @@ export function ClassicShell({
   return (
     <div
       className="app-shell"
-      data-theme="warm"
+      data-theme={theme}
       data-mode={themeMode}
       data-sidebar={effectiveSidebarCollapsed ? "collapsed" : "expanded"}
       style={{ "--ui-zoom": uiZoom / 100 } as CSSProperties}
     >
       <TitleBar
+        platform={platform}
         isMaximized={isWindowMaximized}
         onMinimize={onMinimizeWindow}
         onToggleMaximize={onToggleMaximizeWindow}
@@ -1142,8 +1162,8 @@ export function ClassicShell({
             </button>
             <button
               type="button"
-              title={`Switch to ${nextTheme} theme`}
-              aria-label={`Switch to ${nextTheme} theme`}
+              title={`Switch to ${nextTheme} appearance`}
+              aria-label={`Switch to ${nextTheme} appearance`}
               onClick={() => onThemeChange(nextTheme)}
             >
               <Icon name={themeMode === "light" ? "moon" : "sun"} />
@@ -1171,6 +1191,7 @@ export function ClassicShell({
                 </p>
               ) : null}
               <MarkdownEditor
+                platform={platform}
                 notePath={activeNotePath}
                 workspacePath={workspacePath}
                 value={noteContent}
@@ -1208,7 +1229,7 @@ export function ClassicShell({
           {([ ["appearance", "Apariencia"], ["editor", "Editor"], ["workspace", "Workspace"], ["sync", "Sync"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsTab === id} aria-controls={`settings-panel-${id}`} id={`settings-tab-${id}`} onClick={() => setSettingsTab(id)}>{label}</button>)}
         </div>
         {settingsTab === "appearance" ? <section role="tabpanel" id="settings-panel-appearance" aria-labelledby="settings-tab-appearance"><h3>Apariencia</h3>
-          <label>Tema<select value="warm" onChange={() => {}}><option value="warm">Warm</option></select></label>
+          <label>Tema<select value={theme} onChange={(event) => onAppThemeChange(event.target.value as Theme)}>{themes.map((option) => <option key={option} value={option}>{themeLabels[option]}</option>)}</select></label>
           <p>Warm conserva sus colores y formas en claro y oscuro.</p>
           <label>Modo de apariencia<select value={themeMode} onChange={(event) => onThemeChange(event.target.value as ThemeMode)}><option value="light">Claro</option><option value="dark">Oscuro</option></select></label>
           <p>Elige la apariencia de este computador.</p>
@@ -1585,7 +1606,9 @@ function WorkspaceMenu({ recentWorkspaces, onSelectRecent, onOpenWorkspace, onCl
       }}>
       <div className="command-popover__header">
         <h2>Workspaces</h2>
-        <button type="button" aria-label="Close Workspace menu" onClick={onClose}><Icon name="close" /></button>
+        <button type="button" className="command-popover__close" aria-label="Close Workspace menu" onClick={onClose}>
+          <Icon name="close" size={16} />
+        </button>
       </div>
       <button type="button" role="menuitem" className="workspace-menu__open" onClick={onOpenWorkspace}>
         <Icon name="folder" />Abrir carpeta
@@ -1631,26 +1654,22 @@ function CommandPalette({
   };
   const filtered = commands.filter((command) => normalize(`${command.label} ${command.shortcut} ${aliases[command.id] ?? ""}`).includes(normalize(query.trim())));
   return (
-    <div className="command-popover command-palette" role="dialog" aria-modal="false" aria-labelledby="command-palette-title">
-      <div className="command-popover__header">
-        <h2 id="command-palette-title">Command Palette</h2>
-        <button type="button" aria-label="Close Command Palette" onClick={onClose}>
-          Close
-        </button>
-      </div>
-      <input className="command-palette__search" type="search" aria-label="Buscar comandos" placeholder="Buscar comandos..." autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelected(0); }} onKeyDown={(event) => {
-        if (event.key === "ArrowDown" && filtered.length) { event.preventDefault(); setSelected((selected + 1) % filtered.length); }
-        if (event.key === "ArrowUp" && filtered.length) { event.preventDefault(); setSelected((selected + filtered.length - 1) % filtered.length); }
-        if (event.key === "Enter" && filtered[selected]) { event.preventDefault(); onRunCommand(filtered[selected]); }
-      }} />
-      <div className="command-list">
-        {filtered.length === 0 ? <p>No hay comandos que coincidan.</p> : null}
-        {filtered.map((command, index) => (
-          <button key={command.id} type="button" className={index === selected ? "command-palette__selected" : undefined} aria-label={command.label} onClick={() => onRunCommand(command)}>
-            <span>{command.label}</span>
-            <kbd>{command.shortcut}</kbd>
-          </button>
-        ))}
+    <div className="dialog-overlay" role="presentation" onClick={onClose}>
+      <div className="command-popover command-palette" role="dialog" aria-modal="true" aria-labelledby="command-palette-title" onClick={(event) => event.stopPropagation()}>
+        <div className="command-popover__header">
+          <h2 id="command-palette-title">Command Palette</h2>
+          <button type="button" className="command-popover__close" aria-label="Close Command Palette" onClick={onClose}><Icon name="close" size={16} />          </button>
+        </div>
+        <input className="command-palette__search" type="search" aria-label="Buscar comandos" placeholder="Buscar comandos..." autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelected(0); }} onKeyDown={(event) => { if (event.key === "ArrowDown" && filtered.length) { event.preventDefault(); setSelected((selected + 1) % filtered.length); } if (event.key === "ArrowUp" && filtered.length) { event.preventDefault(); setSelected((selected + filtered.length - 1) % filtered.length); } if (event.key === "Enter" && filtered[selected]) { event.preventDefault(); onRunCommand(filtered[selected]); } }} />
+        <div className="command-list">
+          {filtered.length === 0 ? <p>No hay comandos que coincidan.</p> : null}
+          {filtered.map((command, index) => (
+            <button key={command.id} type="button" className={index === selected ? "command-palette__selected" : undefined} aria-label={command.label} onClick={() => onRunCommand(command)}>
+              <span>{command.label}</span>
+              <kbd>{command.shortcut}</kbd>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1661,8 +1680,8 @@ function CommandHelp({ commands, onClose }: { commands: ShellCommand[]; onClose:
     <aside className="command-popover command-help" role="dialog" aria-modal="false" aria-labelledby="command-help-title">
       <div className="command-popover__header">
         <h2 id="command-help-title">Command Help</h2>
-        <button type="button" aria-label="Close Command Help" onClick={onClose}>
-          Close
+        <button type="button" className="command-popover__close" aria-label="Close Command Help" onClick={onClose}>
+          <Icon name="close" size={16} />
         </button>
       </div>
       <dl className="command-help__list">
@@ -1852,21 +1871,34 @@ function SyncWorkspacePanel({
 }
 
 function TitleBar({
+  platform,
   isMaximized,
   onMinimize,
   onToggleMaximize,
   onClose,
 }: {
+  platform: Platform;
   isMaximized: boolean;
   onMinimize: () => void;
   onToggleMaximize: () => void;
   onClose: () => void;
 }) {
   return (
-    <header className="titlebar" data-tauri-drag-region>
+    <header className="titlebar" data-platform={platform}>
+      {/* data-tauri-drag-region lives on the title and this spacer, not on
+          the header itself: on macOS the header's own padding-left reserves
+          space for the native traffic lights (titleBarStyle: "Overlay", ADR
+          0014), and a drag region covering that space swallows the click
+          before the native close/minimize/maximize buttons see it. Keeping
+          the attribute off the header keeps that strip plain background. */}
       <span className="titlebar__title" data-tauri-drag-region>
         Simpler
       </span>
+      <div className="titlebar__drag-spacer" data-tauri-drag-region />
+      {/* On macOS the native traffic lights (titleBarStyle: "Overlay", ADR 0014)
+          do this job; these buttons are hidden via [data-platform="macos"] in
+          styles.css rather than not rendered, so the drag region layout stays
+          the same shape on both platforms. */}
       <div className="titlebar__controls">
         <button type="button" title="Minimizar" aria-label="Minimizar" onClick={onMinimize}>
           <Icon name="window-minimize" size={12} />
@@ -1905,6 +1937,76 @@ function activeNoteAncestorFolderPaths(activeNotePath: string | null): ReadonlyS
     paths.add(cumulative);
   }
   return paths;
+}
+
+// Matches the `.note-tree__folder-children` CSS grid-rows transition
+// duration in styles.css, so a collapsed subtree stays mounted just long
+// enough for the collapse animation to finish before it's removed from the DOM.
+const FOLDER_COLLAPSE_TRANSITION_MS = 180;
+
+/**
+ * Lazily mounts a folder's descendant DOM nodes on expand, and unmounts them
+ * after the collapse transition finishes — rather than mounting everything
+ * up front and hiding collapsed subtrees via `inert`/`aria-hidden`, so a
+ * large Workspace doesn't pay DOM cost for content the user can't see.
+ * Still preserves the existing grid-rows collapse/expand transition: a
+ * newly-mounted subtree paints one frame at the collapsed row size before
+ * switching to the open size, so expanding animates in instead of popping open.
+ */
+function CollapsibleFolderChildren({ isOpen, children }: { isOpen: boolean; children: ReactNode }) {
+  const [isMounted, setIsMounted] = useState(isOpen);
+  const [isAnimatingOpen, setIsAnimatingOpen] = useState(isOpen);
+  const collapseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // A layout effect (rather than a passive effect) so a newly-expanded
+  // folder mounts synchronously within the same commit — tests and
+  // synchronous callers that read the DOM right after triggering an
+  // expand (e.g. revealing a note from Global Search) must not need to
+  // wait an extra tick for a deferred passive-effect flush.
+  useLayoutEffect(() => {
+    if (isOpen) {
+      if (collapseTimeoutRef.current !== null) {
+        clearTimeout(collapseTimeoutRef.current);
+        collapseTimeoutRef.current = null;
+      }
+      setIsMounted(true);
+      const frame = requestAnimationFrame(() => setIsAnimatingOpen(true));
+      return () => cancelAnimationFrame(frame);
+    }
+
+    setIsAnimatingOpen(false);
+    collapseTimeoutRef.current = setTimeout(() => {
+      collapseTimeoutRef.current = null;
+      setIsMounted(false);
+    }, FOLDER_COLLAPSE_TRANSITION_MS);
+
+    return () => {
+      if (collapseTimeoutRef.current !== null) {
+        clearTimeout(collapseTimeoutRef.current);
+        collapseTimeoutRef.current = null;
+      }
+    };
+  }, [isOpen]);
+
+  if (!isMounted) {
+    return null;
+  }
+
+  return (
+    <div
+      className={
+        isAnimatingOpen
+          ? "note-tree__folder-children note-tree__folder-children--open"
+          : "note-tree__folder-children"
+      }
+      aria-hidden={!isOpen}
+      // Keeps an in-transition folder's descendants out of tab order and the
+      // a11y tree while still letting the CSS grid-rows transition animate them.
+      inert={!isOpen || undefined}
+    >
+      <div className="note-tree__folder-children-inner">{children}</div>
+    </div>
+  );
 }
 
 function WorkspaceTree({
@@ -2029,19 +2131,7 @@ function WorkspaceTree({
             </div>
           )}
           {item.kind === "folder" && item.children.length > 0 ? (
-            <div
-              className={
-                isOpen
-                  ? "note-tree__folder-children note-tree__folder-children--open"
-                  : "note-tree__folder-children"
-              }
-              aria-hidden={!isOpen}
-              // Keeps a collapsed folder's descendants out of tab order and the
-              // a11y tree while still letting the CSS grid-rows transition
-              // animate them, instead of unmounting (which would jump-cut).
-              inert={!isOpen || undefined}
-            >
-              <div className="note-tree__folder-children-inner">
+            <CollapsibleFolderChildren isOpen={isOpen}>
                 <WorkspaceTree
                   items={item.children}
                   activeNotePath={activeNotePath}
@@ -2060,8 +2150,7 @@ function WorkspaceTree({
                   insertion={insertion}
                   dragEnabled={dragEnabled}
                 />
-              </div>
-            </div>
+            </CollapsibleFolderChildren>
           ) : null}
         </li>
         );
