@@ -123,6 +123,7 @@ export function App() {
   const [remoteCheckEnabled, setRemoteCheckEnabled] = useState(false);
   const [remoteAwareness, setRemoteAwareness] = useState<RemoteAwareness>({ checking: false, result: null, lastSuccessfulCheck: null });
   const remoteCheckRef = useRef<{ path: string; promise: Promise<void> } | null>(null);
+  const remoteCheckAfterSyncRef = useRef<string | null>(null);
   const syncInFlightRef = useRef(false);
   const remoteCheckRequestRef = useRef<(path: string) => Promise<void>>(async () => undefined);
   const [dialog, setDialog] = useState<DialogRequest | null>(null);
@@ -680,6 +681,8 @@ export function App() {
     setRemoteCheckEnabled(false);
     setRemoteAwareness({ checking: false, result: null, lastSuccessfulCheck: null });
     const statusPromise = refreshGitStatus(openedWorkspace.path, true);
+    const openedSyncStatus = await statusPromise;
+    if (navigationId !== navigationRequestRef.current) return false;
 
     const noteToOpen = requestedNotePath ?? openedWorkspace.metadata.lastNotePath;
     if (noteToOpen) {
@@ -692,8 +695,7 @@ export function App() {
     }
     if (navigationId !== navigationRequestRef.current) return false;
 
-    const [openedSyncStatus] = await Promise.all([
-      statusPromise,
+    await Promise.all([
       refreshGitHubRemote(openedWorkspace.path),
       refreshAdvancedGitStatus(openedWorkspace.path),
     ]);
@@ -1211,7 +1213,12 @@ export function App() {
   const checkWorkspaceRemote = (workspacePath: string): Promise<void> => {
     if (remoteCheckRef.current?.path === workspacePath) return remoteCheckRef.current.promise;
     if (remoteCheckRef.current) return remoteCheckRef.current.promise.then(() => checkWorkspaceRemote(workspacePath));
-    if (syncInFlightRef.current || activeWorkspacePathRef.current !== workspacePath) return Promise.resolve();
+    if (activeWorkspacePathRef.current !== workspacePath) return Promise.resolve();
+    if (syncInFlightRef.current) {
+      remoteCheckAfterSyncRef.current = workspacePath;
+      setRemoteAwareness((current) => ({ ...current, checking: true }));
+      return Promise.resolve();
+    }
     setRemoteAwareness((current) => ({ ...current, checking: true }));
     let promise: Promise<void>;
     promise = Promise.resolve().then(async () => {
@@ -1282,6 +1289,9 @@ export function App() {
     if (pendingCheck) await pendingCheck;
     if (activeWorkspacePathRef.current !== workspacePath) {
       syncInFlightRef.current = false;
+      const queuedPath = remoteCheckAfterSyncRef.current;
+      remoteCheckAfterSyncRef.current = null;
+      if (queuedPath) void checkWorkspaceRemote(queuedPath);
       return { ok: false };
     }
     setAppState((current) => ({ ...current, syncStatus: "sincronizando", workspaceError: null }));
@@ -1340,7 +1350,10 @@ export function App() {
       return { ok: false, error: "No se pudo sincronizar el Workspace" };
     } finally {
       syncInFlightRef.current = false;
-      if (activeWorkspacePathRef.current === workspacePath) void checkWorkspaceRemote(workspacePath);
+      const queuedPath = remoteCheckAfterSyncRef.current;
+      remoteCheckAfterSyncRef.current = null;
+      if (queuedPath) void checkWorkspaceRemote(queuedPath);
+      else if (activeWorkspacePathRef.current === workspacePath) void checkWorkspaceRemote(workspacePath);
     }
   };
 

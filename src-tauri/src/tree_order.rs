@@ -57,7 +57,7 @@ fn write(workspace: &Path, metadata: &SharedWorkspaceMetadata) -> Result<(), Str
         .map_err(|error| format!("failed to save Manual Tree Order: {error}"))
 }
 
-pub(super) fn apply(workspace: &Path, tree: &mut [WorkspaceTreeItem]) -> Result<(), String> {
+pub(super) fn apply(workspace: &Path, tree: &mut [WorkspaceTreeItem], git: &impl super::GitCommandRunner) -> Result<(), String> {
     let _guard = SHARED_ORDER
         .lock()
         .map_err(|_| "Manual Tree Order is unavailable".to_string())?;
@@ -66,7 +66,7 @@ pub(super) fn apply(workspace: &Path, tree: &mut [WorkspaceTreeItem]) -> Result<
         Err(error) => {
             // Only an actual unresolved Git conflict permits an uncustomized tree.
             // Do not reconcile or rewrite the conflict-markered shared file.
-            let conflicts = super::conflicted_sync_files(workspace, &super::SystemGitCommandRunner);
+            let conflicts = super::conflicted_sync_files(workspace, git);
             if conflicts.is_ok_and(|paths| paths.iter().any(|path| path == METADATA_PATH)) {
                 return Ok(());
             }

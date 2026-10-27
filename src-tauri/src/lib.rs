@@ -2746,7 +2746,7 @@ fn read_workspace_tree(
     current_path: &Path,
 ) -> Result<Vec<WorkspaceTreeItem>, String> {
     let mut tree = scan_workspace_tree(root_path, current_path)?;
-    tree_order::apply(root_path, &mut tree)?;
+    tree_order::apply(root_path, &mut tree, &SystemGitCommandRunner)?;
     Ok(tree)
 }
 
