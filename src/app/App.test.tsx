@@ -675,6 +675,28 @@ describe("App", () => {
     expect(screen.queryByTestId("markdown-editor")).not.toBeInTheDocument();
   });
 
+  it("shows a pending startup check in Welcome and reports a late result above the editor", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("simpler.showWelcome", "true");
+    localStorage.setItem("simpler.recentWorkspaces", JSON.stringify([{ name: "notes", path: "/tmp/notes" }]));
+    let finishCheck!: (result: unknown) => void;
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: [], metadata: { lastNotePath: null, githubWizardPostponed: true } });
+      if (request.domain === "git" && request.action === "status") return reply({ isRepository: true, hasRemote: true, syncStatus: "sincronizado", conflictedFiles: [] });
+      if (request.action === "check-remote") return new Promise((resolve) => { finishCheck = resolve; });
+      return reply({ remote: null });
+    });
+    render(<App />);
+    const welcome = screen.getByRole("region", { name: "Recientes" });
+    expect(await within(welcome).findByText("Comprobando actualizaciones…")).toBeInTheDocument();
+    await user.click(within(welcome).getByRole("button", { name: "Continuar" }));
+    finishCheck({ ok: true, data: { state: "incoming", ahead: 0, behind: 1, hasLocalChanges: true, message: null }, error: null });
+    expect(await screen.findByText("Hay cambios locales y remotos pendientes")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sincronizar — cambios remotos disponibles" })).toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "sync")).toBe(false);
+  });
+
   it("shows incoming remote changes and retries a disconnected check without syncing", async () => {
     const user = userEvent.setup();
     mocks.open.mockResolvedValue("/tmp/remote-notes");

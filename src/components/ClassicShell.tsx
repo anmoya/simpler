@@ -1171,7 +1171,8 @@ export function ClassicShell({
 
       <main className="editor-pane" aria-label="Markdown editor area">
         {isWelcomeOpen ? <WelcomeScreen notes={recentNotes} canCreate={canManageWorkspace} onOpen={onSelectRecentNote}
-          onRemove={onRemoveRecentNote} onContinue={onCloseRecentNotes} onCreate={onWelcomeCreateNote} onOpenFolder={onWelcomeOpenFolder} notice={welcomeNotice} /> : null}
+          onRemove={onRemoveRecentNote} onContinue={onCloseRecentNotes} onCreate={onWelcomeCreateNote} onOpenFolder={onWelcomeOpenFolder} notice={<>{welcomeNotice}<RemoteNotice awareness={remoteAwareness} localChanges={statusLabel === "Cambios locales"} onSync={onSyncWorkspace} showChecking /></>} /> : null}
+        {!isWelcomeOpen ? <RemoteNotice awareness={remoteAwareness} localChanges={statusLabel === "Cambios locales"} onSync={onSyncWorkspace} /> : null}
         <div className="editor-toolbar" inert={isWelcomeOpen || undefined} style={isWelcomeOpen ? { visibility: "hidden" } : undefined}>
           <Breadcrumb folderPath={activeFolderPath} notePath={activeNotePath} />
           {isFileSearchOpen ? (
@@ -2161,6 +2162,18 @@ function findPlainTextMatches(content: string, query: string): FileSearchJump[] 
 
     return matches;
   });
+}
+
+function RemoteNotice({ awareness, localChanges, onSync, showChecking = false }: {
+  awareness?: RemoteAwareness; localChanges: boolean; onSync: () => void; showChecking?: boolean;
+}) {
+  const result = awareness?.result;
+  const incoming = (result?.behind ?? 0) > 0 && (result?.state === "incoming" || result?.state === "diverged");
+  if (showChecking && awareness?.checking) return <div className="remote-notice" role="status">Comprobando actualizaciones…</div>;
+  if (!incoming) return null;
+  const message = localChanges || result?.hasLocalChanges || (result?.ahead ?? 0) > 0
+    ? "Hay cambios locales y remotos pendientes" : "Hay cambios remotos disponibles";
+  return <div className="remote-notice" role="status"><span>{message}</span><button type="button" onClick={onSync}>Sincronizar ahora</button></div>;
 }
 
 function RemoteSyncControl({ awareness, localChanges, syncing, onSync, onRetry }: {

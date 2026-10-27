@@ -679,6 +679,7 @@ export function App() {
     activeWorkspacePathRef.current = openedWorkspace.path;
     setRemoteCheckEnabled(false);
     setRemoteAwareness({ checking: false, result: null, lastSuccessfulCheck: null });
+    const statusPromise = refreshGitStatus(openedWorkspace.path, true);
 
     const noteToOpen = requestedNotePath ?? openedWorkspace.metadata.lastNotePath;
     if (noteToOpen) {
@@ -692,7 +693,7 @@ export function App() {
     if (navigationId !== navigationRequestRef.current) return false;
 
     const [openedSyncStatus] = await Promise.all([
-      refreshGitStatus(openedWorkspace.path),
+      statusPromise,
       refreshGitHubRemote(openedWorkspace.path),
       refreshAdvancedGitStatus(openedWorkspace.path),
     ]);
@@ -1243,7 +1244,6 @@ export function App() {
   useEffect(() => {
     const path = appState.workspace?.path;
     if (!path || !remoteCheckEnabled) return;
-    void remoteCheckRequestRef.current(path);
     const checkWhileActive = () => {
       if (document.visibilityState !== "hidden") void remoteCheckRequestRef.current(path);
     };
@@ -1344,11 +1344,14 @@ export function App() {
     }
   };
 
-  const refreshGitStatus = async (workspacePath: string) => {
+  const refreshGitStatus = async (workspacePath: string, checkOnOpen = false) => {
     try {
       const response = await gitStatus(workspacePath);
       if (activeWorkspacePathRef.current !== workspacePath) return null;
       setRemoteCheckEnabled(Boolean(response?.ok && response.data?.isRepository && response.data?.hasRemote));
+      if (checkOnOpen && response?.ok && response.data?.isRepository && response.data?.hasRemote) {
+        void remoteCheckRequestRef.current(workspacePath);
+      }
 
       if (!response.ok || !response.data) {
         setAppState((current) => ({
