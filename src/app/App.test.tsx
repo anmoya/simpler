@@ -287,7 +287,7 @@ describe("App", () => {
     const preview = await screen.findByRole("dialog", { name: "Vista previa de imagen" });
     expect(await within(preview).findByRole("img", { name: "a b.png" })).toBeInTheDocument();
     expect(mocks.invoke).toHaveBeenCalledWith("native_command", { request: { domain: "filesystem", action: "preview-image", payload: { workspacePath: "/tmp/notes", imagePath: "projects/assets/a b.png" } } });
-    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note")).toHaveLength(writesBeforePreview);
+    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note").map(([, { request }]) => request.payload)).toEqual([]);
     await user.keyboard("{Escape}");
     expect(editable).toHaveFocus();
     await user.keyboard("X");
