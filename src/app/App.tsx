@@ -123,6 +123,7 @@ export function App() {
   const [remoteCheckEnabled, setRemoteCheckEnabled] = useState(false);
   const [remoteAwareness, setRemoteAwareness] = useState<RemoteAwareness>({ checking: false, result: null, lastSuccessfulCheck: null });
   const remoteCheckRef = useRef<{ path: string; promise: Promise<void> } | null>(null);
+  const lastRemoteCheckRef = useRef<{ path: string; startedAt: number } | null>(null);
   const remoteCheckAfterSyncRef = useRef<string | null>(null);
   const syncInFlightRef = useRef(false);
   const remoteCheckRequestRef = useRef<(path: string) => Promise<void>>(async () => undefined);
@@ -1011,14 +1012,14 @@ export function App() {
     }
   };
 
-  const createFolderInSelection = async () => {
+  const createFolderInSelection = async (folderPath = appState.activeFolderPath) => {
     const folderName = await requestPrompt("Nombre de la carpeta");
     if (!folderName || !appState.workspace) {
       return;
     }
 
     if (!(await awaitLocalSave())) return;
-    const response = await createFolder(appState.workspace.path, appState.activeFolderPath, folderName);
+    const response = await createFolder(appState.workspace.path, folderPath, folderName);
     applyFilesystemOperation(response, (itemPath) => ({
       activeFolderPath: itemPath,
       activeNotePath: null,
@@ -1027,14 +1028,14 @@ export function App() {
     }));
   };
 
-  const createNoteInSelection = async () => {
+  const createNoteInSelection = async (folderPath = appState.activeFolderPath) => {
     const noteName = await requestPrompt("Nombre de la nota");
     if (!noteName || !appState.workspace) {
       return;
     }
 
     if (!(await awaitLocalSave())) return;
-    const response = await createNote(appState.workspace.path, appState.activeFolderPath, noteName);
+    const response = await createNote(appState.workspace.path, folderPath, noteName);
     applyFilesystemOperation(response, (itemPath) => ({
       activeFolderPath: parentFolderPath(itemPath),
       activeNotePath: itemPath,
@@ -1220,6 +1221,7 @@ export function App() {
       return Promise.resolve();
     }
     setRemoteAwareness((current) => ({ ...current, checking: true }));
+    lastRemoteCheckRef.current = { path: workspacePath, startedAt: Date.now() };
     let promise: Promise<void>;
     promise = Promise.resolve().then(async () => {
       try {
@@ -1252,7 +1254,8 @@ export function App() {
     const path = appState.workspace?.path;
     if (!path || !remoteCheckEnabled) return;
     const checkWhileActive = () => {
-      if (document.visibilityState !== "hidden") void remoteCheckRequestRef.current(path);
+      const last = lastRemoteCheckRef.current;
+      if (document.visibilityState !== "hidden" && (!last || last.path !== path || Date.now() - last.startedAt >= 120_000)) void remoteCheckRequestRef.current(path);
     };
     const interval = window.setInterval(checkWhileActive, 120_000);
     window.addEventListener("focus", checkWhileActive);

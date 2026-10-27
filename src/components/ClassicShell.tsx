@@ -106,8 +106,8 @@ export interface ClassicShellProps {
   onCloseNoteHistory: () => void;
   onSelectNoteHistoryEntry: (entry: NoteHistoryEntry) => void;
   onRestoreNoteHistoryEntry: () => void;
-  onCreateFolder: () => void;
-  onCreateNote: () => void;
+  onCreateFolder: (folderPath?: string) => void;
+  onCreateNote: (folderPath?: string) => void;
   onRenameSelection: (target?: TreeActionTarget) => void;
   onSetTreeOrder?: (parentPath: string, orderedPaths: string[] | null) => void;
   treeOrderPending?: boolean;
@@ -263,6 +263,7 @@ export function ClassicShell({
   };
   useEffect(() => { setImagePreview(null); }, [workspacePath]);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"appearance" | "editor" | "workspace" | "sync">("appearance");
   const [isCommandHelpOpen, setIsCommandHelpOpen] = useState(false);
   const settingsTriggerRef = useRef<HTMLButtonElement>(null);
   const settingsOriginRef = useRef<HTMLElement | null>(null);
@@ -907,15 +908,6 @@ export function ClassicShell({
             >
               <Icon name="search" size={18} />
             </button>
-            <button
-              type="button"
-              title="Sync now"
-              aria-label="Sync now"
-              onClick={onSyncWorkspace}
-              disabled={!canManageWorkspace}
-            >
-              <Icon name="sync" size={18} />
-            </button>
             <button type="button" ref={settingsTriggerRef} aria-label="Settings" title="Settings" aria-haspopup="dialog" onClick={openSettings}><Icon name="settings" size={18} /></button>
             <button
               type="button"
@@ -973,51 +965,17 @@ export function ClassicShell({
                   />
                 ) : null}
               </div>
-              <div className="sidebar__header-actions">
-                <div className="sidebar-tabs" role="tablist" aria-label="Sidebar panels">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={activeRoute === "trash"}
-                    aria-label="Trash"
-                    title="Trash"
-                    className={activeRoute === "trash" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
-                    onClick={() => onRouteChange(activeRoute === "trash" ? "workspace" : "trash")}
-                    disabled={!canManageWorkspace}
-                  >
-                    <Icon name="trash" />
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={activeRoute === "sync"}
-                    aria-label="Sync"
-                    title="Sync"
-                    className={activeRoute === "sync" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
-                    onClick={() => onRouteChange(activeRoute === "sync" ? "workspace" : "sync")}
-                  >
-                    <Icon name="sync" />
-                  </button>
-                  <button
-                    type="button"
-                    ref={settingsTriggerRef}
-                    aria-haspopup="dialog"
-                    aria-expanded={activeRoute === "settings"}
-                    aria-label="Settings"
-                    title="Settings"
-                    className={activeRoute === "settings" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"}
-                    onClick={openSettings}
-                  >
-                    <Icon name="settings" />
-                  </button>
-                  <button
-                    type="button"
-                    title="Collapse sidebar"
-                    aria-label="Collapse sidebar"
-                    onClick={handleToggleSidebarCollapse}
-                  >
-                    <Icon name="chevron-left" size={16} />
-                  </button>
+              <div className="tree-controls">
+                <div className="tree-controls__creation" aria-label="Workspace actions">
+                  <TreeTooltip text="Nueva nota"><button type="button" className="tree-controls__icon-button" aria-label="New note" onClick={() => onCreateNote()} disabled={!canManageWorkspace}><Icon name="note-plus" /></button></TreeTooltip>
+                  <TreeTooltip text="Nueva carpeta"><button type="button" className="tree-controls__icon-button" aria-label="New folder" onClick={() => onCreateFolder()} disabled={!canManageWorkspace}><Icon name="folder-plus" /></button></TreeTooltip>
+                  <TreeTooltip text="Papelera"><button type="button" role="tab" aria-selected={activeRoute === "trash"} aria-label="Trash" className={activeRoute === "trash" ? "sidebar-tab sidebar-tab--active" : "sidebar-tab"} onClick={() => onRouteChange(activeRoute === "trash" ? "workspace" : "trash")} disabled={!canManageWorkspace}><Icon name="trash" /></button></TreeTooltip>
+                </div>
+                <div className="tree-controls__view">
+                  <TreeTooltip text={treeMode === "accordion" ? "Modo acordeón: abrir una carpeta cierra sus hermanas. Cambiar a modo libre." : "Modo libre: abrir una carpeta conserva las demás abiertas. Cambiar a acordeón."}><button type="button" className="tree-controls__icon-button" aria-label="Workspace Tree Mode" aria-pressed={treeMode === "accordion"} onClick={() => onTreeModeChange(treeMode === "accordion" ? "free" : "accordion")} disabled={!canManageWorkspace}><Icon name="tree-mode" size={16} /></button></TreeTooltip>
+                  <TreeTooltip text="Enfocar nota activa: cerrar otras carpetas y mostrar la ruta de la nota activa."><button type="button" className="tree-controls__icon-button" aria-label="Focus Active Note" onClick={onFocusActiveNote} disabled={activeNotePath === null}><Icon name="target" size={16} /></button></TreeTooltip>
+                  <TreeTooltip text="Configuración"><button type="button" ref={settingsTriggerRef} aria-haspopup="dialog" aria-expanded={activeRoute === "settings"} aria-label="Settings" className="sidebar-tab" onClick={openSettings}><Icon name="settings" /></button></TreeTooltip>
+                  <TreeTooltip text="Cerrar barra lateral"><button type="button" className="sidebar-tab" aria-label="Collapse sidebar" onClick={handleToggleSidebarCollapse}><Icon name="chevron-left" size={16} /></button></TreeTooltip>
                 </div>
               </div>
             </header>
@@ -1062,37 +1020,6 @@ export function ClassicShell({
               </section>
             ) : (
               <>
-                <div className="tree-controls">
-                  <TreeTooltip text={treeMode === "accordion" ? "Modo acordeón: abrir una carpeta cierra sus hermanas. Cambiar a modo libre." : "Modo libre: abrir una carpeta conserva las demás abiertas. Cambiar a acordeón."}>
-                  <button
-                    type="button"
-                    className="tree-controls__icon-button"
-                    aria-label="Workspace Tree Mode"
-                    aria-pressed={treeMode === "accordion"}
-                    title={
-                      treeMode === "accordion"
-                        ? "Tree mode: Accordion (opening a folder collapses its siblings). Click for Free mode."
-                        : "Tree mode: Free (opening a folder never collapses others). Click for Accordion mode."
-                    }
-                    onClick={() => onTreeModeChange(treeMode === "accordion" ? "free" : "accordion")}
-                    disabled={!canManageWorkspace}
-                  >
-                    <Icon name="tree-mode" size={16} />
-                  </button>
-                  </TreeTooltip>
-                  <TreeTooltip text="Focus Active Note: cerrar otras carpetas y mostrar la ruta de la nota activa.">
-                  <button
-                    type="button"
-                    className="tree-controls__icon-button"
-                    aria-label="Focus Active Note"
-                    title="Focus Active Note: collapse everything except the path to the note you're editing."
-                    onClick={onFocusActiveNote}
-                    disabled={activeNotePath === null}
-                  >
-                    <Icon name="target" size={16} />
-                  </button>
-                  </TreeTooltip>
-                </div>
                 {isGlobalSearchOpen ? (
                   <div className="global-search" role="search" aria-label="Global Search">
                     <label className="global-search__field">
@@ -1127,14 +1054,6 @@ export function ClassicShell({
                     ) : null}
                   </div>
                 ) : null}
-                <div className="tree-actions" aria-label="Workspace actions">
-                  <button type="button" title="New note" aria-label="New note" onClick={onCreateNote} disabled={!canManageWorkspace}>
-                    <Icon name="note-plus" /><span>Nueva nota</span>
-                  </button>
-                  <button type="button" title="New folder" aria-label="New folder" onClick={onCreateFolder} disabled={!canManageWorkspace}>
-                    <Icon name="folder-plus" /><span>Nueva carpeta</span>
-                  </button>
-                </div>
                 {workspaceNotice ? <p className="workspace-action-notice" role="status" aria-label="Workspace action">{workspaceNotice}</p> : null}
                 {treeInsertion ? <p className="tree-order-status" role="status" aria-label="Destino de orden">Soltar {treeInsertion.side === "before" ? "antes" : "después"} de {treeInsertion.name}</p> : null}
                 {workspaceTree.length > 0 ? (
@@ -1171,7 +1090,7 @@ export function ClassicShell({
 
       <main className="editor-pane" aria-label="Markdown editor area">
         {isWelcomeOpen ? <WelcomeScreen notes={recentNotes} canCreate={canManageWorkspace} onOpen={onSelectRecentNote}
-          onRemove={onRemoveRecentNote} onContinue={onCloseRecentNotes} onCreate={onWelcomeCreateNote} onOpenFolder={onWelcomeOpenFolder} notice={<>{welcomeNotice}<RemoteNotice awareness={remoteAwareness} localChanges={statusLabel === "Cambios locales"} onSync={onSyncWorkspace} showChecking /></>} /> : null}
+          onRemove={onRemoveRecentNote} onContinue={onCloseRecentNotes} onCreate={onWelcomeCreateNote} onOpenFolder={onWelcomeOpenFolder} notice={<>{welcomeNotice}<RemoteNotice awareness={remoteAwareness} localChanges={statusLabel === "Cambios locales"} onSync={onSyncWorkspace} /></>} /> : null}
         {!isWelcomeOpen ? <RemoteNotice awareness={remoteAwareness} localChanges={statusLabel === "Cambios locales"} onSync={onSyncWorkspace} /> : null}
         <div className="editor-toolbar" inert={isWelcomeOpen || undefined} style={isWelcomeOpen ? { visibility: "hidden" } : undefined}>
           <Breadcrumb folderPath={activeFolderPath} notePath={activeNotePath} />
@@ -1285,25 +1204,29 @@ export function ClassicShell({
       </main>
 
       {activeRoute === "settings" ? <SettingsDialog onClose={closeSettings} returnFocusTo={settingsOriginRef.current ?? settingsTriggerRef.current}>
-        <section aria-labelledby="settings-appearance"><h3 id="settings-appearance">Apariencia</h3>
+        <div className="settings-dialog__tabs" role="tablist" aria-label="Secciones de configuración">
+          {([ ["appearance", "Apariencia"], ["editor", "Editor"], ["workspace", "Workspace"], ["sync", "Sync"] ] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={settingsTab === id} aria-controls={`settings-panel-${id}`} id={`settings-tab-${id}`} onClick={() => setSettingsTab(id)}>{label}</button>)}
+        </div>
+        {settingsTab === "appearance" ? <section role="tabpanel" id="settings-panel-appearance" aria-labelledby="settings-tab-appearance"><h3>Apariencia</h3>
+          <label>Tema<select value="warm" onChange={() => {}}><option value="warm">Warm</option></select></label>
           <p>Warm conserva sus colores y formas en claro y oscuro.</p>
-          <label>Appearance Mode<select value={themeMode} onChange={(event) => onThemeChange(event.target.value as ThemeMode)}><option value="light">Claro</option><option value="dark">Oscuro</option></select></label>
+          <label>Modo de apariencia<select value={themeMode} onChange={(event) => onThemeChange(event.target.value as ThemeMode)}><option value="light">Claro</option><option value="dark">Oscuro</option></select></label>
           <p>Elige la apariencia de este computador.</p>
           <label>Escala de interfaz<select value={uiZoom} onChange={(event) => onUiZoomChange(Number(event.target.value) as UiZoom)}>{uiZoomSteps.map((value) => <option key={value} value={value}>{value}%</option>)}</select></label>
           <p>Cambia el tamaño de toda la interfaz sin modificar las notas.</p>
-        </section>
-        <section aria-labelledby="settings-editor"><h3 id="settings-editor">Editor</h3>
+        </section> : null}
+        {settingsTab === "editor" ? <section role="tabpanel" id="settings-panel-editor" aria-labelledby="settings-tab-editor"><h3>Editor</h3>
           <label>Tamaño de letra<select value={editorFontSize} onChange={(event) => onEditorFontSizeChange(Number(event.target.value) as EditorFontSize)}>{editorFontSizeSteps.map((value) => <option key={value} value={value}>{value} px</option>)}</select></label>
           <p>Ajusta solo el texto del editor de Raw Markdown.</p>
-        </section>
-        <section aria-labelledby="settings-workspace"><h3 id="settings-workspace">Workspace</h3>
+        </section> : null}
+        {settingsTab === "workspace" ? <section role="tabpanel" id="settings-panel-workspace" aria-labelledby="settings-tab-workspace"><h3>Workspace</h3>
           <label className="settings-dialog__checkbox"><input type="checkbox" checked={showWelcome} onChange={(event) => onShowWelcomeChange(event.target.checked)} />Mostrar bienvenida al iniciar</label>
           <p>La bienvenida y Recientes se guardan solo en este computador.</p>
           <p className="settings-dialog__path">{workspacePath ?? "Abre una carpeta para configurar su árbol."}</p>
           <label>Workspace Tree Mode<select value={treeMode} disabled={!canManageWorkspace} onChange={(event) => onTreeModeChange(event.target.value as TreeMode)}><option value="free">Free Tree Mode</option><option value="accordion">Accordion Tree Mode</option></select></label>
           <p>Free mantiene abiertas otras carpetas; Accordion cierra las carpetas hermanas al abrir una.</p>
-        </section>
-        <section aria-labelledby="settings-sync"><h3 id="settings-sync">Sync</h3>
+        </section> : null}
+        {settingsTab === "sync" ? <section role="tabpanel" id="settings-panel-sync" aria-labelledby="settings-tab-sync"><h3>Sync</h3>
           <p>Sync usa las credenciales Git del sistema. La conexión GitHub de abajo es opcional.</p>
           <SyncWorkspacePanel canManageWorkspace={canManageWorkspace} statusLabel={statusLabel} workspaceName={workspaceName}
             onSyncWorkspace={onSyncWorkspace} githubRemote={githubRemote} advancedGit={advancedGit} syncEvents={syncEvents}
@@ -1313,7 +1236,7 @@ export function ClassicShell({
             showConfiguration />
           <GitHubAuthenticationPanel githubAuth={githubAuth} onBeginDeviceFlow={onBeginGitHubDeviceFlow}
             onCheckDeviceFlow={onCheckGitHubDeviceFlow} onStorePersonalAccessToken={onStoreGitHubPersonalAccessToken} onDisconnect={onDisconnectGitHub} />
-        </section>
+        </section> : null}
       </SettingsDialog> : null}
 
       <footer className="status-bar" aria-label="Workspace status">
@@ -1374,6 +1297,8 @@ export function ClassicShell({
           x={treeContextMenu.x}
           y={treeContextMenu.y}
           onClose={() => closeTreeItemMenu(true)}
+          onCreateNote={treeContextMenu.target.kind === "folder" ? () => { onCreateNote(treeContextMenu.target.path); closeTreeItemMenu(); } : undefined}
+          onCreateFolder={treeContextMenu.target.kind === "folder" ? () => { onCreateFolder(treeContextMenu.target.path); closeTreeItemMenu(); } : undefined}
           onRenameSelection={() => { onRenameSelection(treeContextMenu.target); closeTreeItemMenu(); }}
           onMoveActiveNote={() => { onMoveActiveNote(treeContextMenu.target); closeTreeItemMenu(); }}
           onDeleteSelection={() => { onDeleteSelection(treeContextMenu.target); closeTreeItemMenu(); }}
@@ -1508,10 +1433,12 @@ function treeSiblings(items: WorkspaceTreeItem[], path: string): WorkspaceTreeIt
   return [];
 }
 
-function TreeContextMenu({ x, y, onClose, onRenameSelection, onMoveActiveNote, onDeleteSelection, siblings, targetPath, onSetOrder, orderPending }: {
+function TreeContextMenu({ x, y, onClose, onCreateNote, onCreateFolder, onRenameSelection, onMoveActiveNote, onDeleteSelection, siblings, targetPath, onSetOrder, orderPending }: {
   x: number;
   y: number;
   onClose: () => void;
+  onCreateNote?: () => void;
+  onCreateFolder?: () => void;
   onRenameSelection: () => void;
   onMoveActiveNote: () => void;
   onDeleteSelection: () => void;
@@ -1544,6 +1471,8 @@ function TreeContextMenu({ x, y, onClose, onRenameSelection, onMoveActiveNote, o
           event.preventDefault(); event.stopPropagation(); onClose();
         }
       }}>
+      {onCreateNote ? <button type="button" role="menuitem" onClick={onCreateNote}><Icon name="note-plus" size={14} />Nueva nota</button> : null}
+      {onCreateFolder ? <button type="button" role="menuitem" onClick={onCreateFolder}><Icon name="folder-plus" size={14} />Nueva carpeta</button> : null}
       <button type="button" role="menuitem" onClick={onRenameSelection}><Icon name="rename" size={14} />Renombrar</button>
       <button type="button" role="menuitem" onClick={onMoveActiveNote}><Icon name="move" size={14} />Mover</button>
       <button type="button" role="menuitem" className="context-menu__danger" onClick={onDeleteSelection}><Icon name="trash" size={14} />Eliminar</button>
@@ -1688,6 +1617,19 @@ function CommandPalette({
   onRunCommand: (command: ShellCommand) => void;
   onClose: () => void;
 }) {
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState(0);
+  const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase();
+  const aliases: Record<string, string> = {
+    "open-workspace": "abrir carpeta espacio trabajo", "new-folder": "nueva carpeta", "new-note": "nueva nota",
+    rename: "renombrar cambiar nombre", "move-note": "mover nota", "sync-workspace": "sincronizar ahora",
+    workspace: "volver notas", sync: "sincronización sincronizar", settings: "configuración ajustes",
+    theme: "tema apariencia claro oscuro", "zoom-in": "aumentar escala", "zoom-out": "reducir escala",
+    "zoom-reset": "restablecer escala", "editor-font-size-in": "aumentar tamaño letra editor",
+    "editor-font-size-out": "reducir tamaño letra editor", "editor-font-size-reset": "restablecer tamaño letra editor",
+    "command-help": "ayuda comandos", "toggle-sidebar": "abrir cerrar barra lateral",
+  };
+  const filtered = commands.filter((command) => normalize(`${command.label} ${command.shortcut} ${aliases[command.id] ?? ""}`).includes(normalize(query.trim())));
   return (
     <div className="command-popover command-palette" role="dialog" aria-modal="false" aria-labelledby="command-palette-title">
       <div className="command-popover__header">
@@ -1696,9 +1638,15 @@ function CommandPalette({
           Close
         </button>
       </div>
+      <input className="command-palette__search" type="search" aria-label="Buscar comandos" placeholder="Buscar comandos..." autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setSelected(0); }} onKeyDown={(event) => {
+        if (event.key === "ArrowDown" && filtered.length) { event.preventDefault(); setSelected((selected + 1) % filtered.length); }
+        if (event.key === "ArrowUp" && filtered.length) { event.preventDefault(); setSelected((selected + filtered.length - 1) % filtered.length); }
+        if (event.key === "Enter" && filtered[selected]) { event.preventDefault(); onRunCommand(filtered[selected]); }
+      }} />
       <div className="command-list">
-        {commands.map((command) => (
-          <button key={command.id} type="button" aria-label={command.label} onClick={() => onRunCommand(command)}>
+        {filtered.length === 0 ? <p>No hay comandos que coincidan.</p> : null}
+        {filtered.map((command, index) => (
+          <button key={command.id} type="button" className={index === selected ? "command-palette__selected" : undefined} aria-label={command.label} onClick={() => onRunCommand(command)}>
             <span>{command.label}</span>
             <kbd>{command.shortcut}</kbd>
           </button>
@@ -1817,7 +1765,7 @@ function SyncWorkspacePanel({
         <button type="button" onClick={onConnectGitHubRemote} disabled={!canManageWorkspace}>
           Conectar remoto GitHub
         </button>
-      )) : <button type="button" onClick={onOpenSettings}>Configurar Sync</button>}
+      )) : null}
       <button
         type="button"
         onClick={onSyncWorkspace}
@@ -2164,12 +2112,11 @@ function findPlainTextMatches(content: string, query: string): FileSearchJump[] 
   });
 }
 
-function RemoteNotice({ awareness, localChanges, onSync, showChecking = false }: {
-  awareness?: RemoteAwareness; localChanges: boolean; onSync: () => void; showChecking?: boolean;
+function RemoteNotice({ awareness, localChanges, onSync }: {
+  awareness?: RemoteAwareness; localChanges: boolean; onSync: () => void;
 }) {
   const result = awareness?.result;
   const incoming = (result?.behind ?? 0) > 0 && (result?.state === "incoming" || result?.state === "diverged");
-  if (showChecking && awareness?.checking) return <div className="remote-notice" role="status">Comprobando actualizaciones…</div>;
   if (!incoming) return null;
   const message = localChanges || result?.hasLocalChanges || (result?.ahead ?? 0) > 0
     ? "Hay cambios locales y remotos pendientes" : "Hay cambios remotos disponibles";
@@ -2192,6 +2139,6 @@ function RemoteSyncControl({ awareness, localChanges, syncing, onSync, onRetry }
     title={explanation + lastCheck}
     aria-label={failed ? `${label} — reintentar` : incoming ? "Sincronizar — cambios remotos disponibles" : label}
     onClick={failed ? onRetry : onSync}>
-    <Icon name="sync" size={14} />{label}{incoming ? " · Cambios remotos" : ""}
+    <span className={awareness.checking ? "remote-sync-control__spinner" : undefined}><Icon name="sync" size={14} /></span>{awareness.checking ? null : label}{incoming && !awareness.checking ? " · Cambios remotos" : ""}
   </button>;
 }

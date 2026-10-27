@@ -184,7 +184,7 @@ describe("ClassicShell", () => {
 
     renderShell({ onRouteChange });
 
-    await userEvent.click(screen.getByRole("tab", { name: "Sync" }));
+    await userEvent.keyboard("{Control>}2{/Control}");
 
     expect(onRouteChange).toHaveBeenCalledWith("sync");
   });
@@ -211,13 +211,10 @@ describe("ClassicShell", () => {
     expect(onRestoreTrashItem).toHaveBeenCalledWith("trash-1");
   });
 
-  it("toggles a sidebar panel back to the note tree when its tab is active", async () => {
+  it("returns from Sync to the note tree with the workspace shortcut", async () => {
     const onRouteChange = vi.fn();
-
     renderShell({ activeRoute: "sync", onRouteChange });
-
-    await userEvent.click(screen.getByRole("tab", { name: "Sync" }));
-
+    await userEvent.keyboard("{Control>}1{/Control}");
     expect(onRouteChange).toHaveBeenCalledWith("workspace");
   });
 
@@ -230,6 +227,7 @@ describe("ClassicShell", () => {
     });
 
     renderShell({ activeRoute: "settings", onBeginGitHubDeviceFlow });
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Configuración" })).getByRole("tab", { name: "Sync" }));
 
     await userEvent.click(screen.getByRole("button", { name: "Connect with GitHub" }));
 
@@ -611,6 +609,20 @@ describe("ClassicShell", () => {
     expect(onThemeChange).toHaveBeenCalledWith("dark");
   });
 
+  it("filters commands and runs a result with the keyboard", async () => {
+    const user = userEvent.setup();
+    const onCreateNote = vi.fn();
+    renderShell({ canManageWorkspace: true, onCreateNote });
+    await user.keyboard("{Control>}k{/Control}");
+    const palette = screen.getByRole("dialog", { name: "Command Palette" });
+    const search = within(palette).getByRole("searchbox", { name: "Buscar comandos" });
+    expect(search).toHaveFocus();
+    await user.type(search, "nueva nota");
+    expect(within(palette).queryByRole("button", { name: "New folder" })).not.toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(onCreateNote).toHaveBeenCalledOnce();
+  });
+
   it("opens contextual Command Help from the palette and a keyboard shortcut", async () => {
     const user = userEvent.setup();
 
@@ -825,7 +837,7 @@ describe("ClassicShell", () => {
     expect(rail).toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: "Open Workspace" })).toBeInTheDocument();
     expect(within(rail).getByRole("button", { name: "Focus Global Search" })).toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: "Sync now" })).toBeInTheDocument();
+    expect(within(rail).queryByRole("button", { name: "Sync now" })).not.toBeInTheDocument();
 
     await user.click(within(rail).getByRole("button", { name: "Expand sidebar" }));
     expect(onToggleSidebarCollapse).toHaveBeenCalledTimes(2);

@@ -11,8 +11,12 @@ export function SettingsDialog({ children, onClose, returnFocusTo }: {
     const first = () => dialog?.querySelector<HTMLElement>("button:not(:disabled), select:not(:disabled), input:not(:disabled), summary, a[href], [tabindex='0']");
     first()?.focus();
     const contain = (event: FocusEvent) => { if (event.target instanceof Node && !dialog?.contains(event.target)) first()?.focus(); };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
+    };
     document.addEventListener("focusin", contain);
-    return () => { document.removeEventListener("focusin", contain); if (origin?.isConnected) origin.focus(); };
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => { document.removeEventListener("focusin", contain); document.removeEventListener("keydown", closeOnEscape, true); if (origin?.isConnected) origin.focus(); };
   }, []);
   return <div className="dialog-overlay" role="presentation">
     <div ref={ref} role="dialog" aria-modal="true" aria-label="Configuración" className="command-popover settings-dialog"

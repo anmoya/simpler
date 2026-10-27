@@ -347,6 +347,7 @@ describe("App", () => {
     mocks.invoke.mockResolvedValue({ ok: false, data: null, error: "Unavailable" });
     const first = render(<App />);
     await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("tab", { name: "Workspace" }));
     const preference = screen.getByRole("checkbox", { name: "Mostrar bienvenida al iniciar" });
     expect(preference).not.toBeChecked();
     await user.click(preference);
@@ -355,6 +356,7 @@ describe("App", () => {
     const restarted = render(<App />);
     expect(screen.getByRole("region", { name: "Recientes" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("tab", { name: "Workspace" }));
     await user.click(screen.getByRole("checkbox", { name: "Mostrar bienvenida al iniciar" }));
     await user.click(screen.getByRole("button", { name: "Cerrar configuración" }));
     expect(screen.queryByRole("region", { name: "Recientes" })).not.toBeInTheDocument();
@@ -423,9 +425,10 @@ describe("App", () => {
     const origin = screen.getByRole("button", { name: "Settings" });
     await user.click(origin);
     const dialog = screen.getByRole("dialog", { name: "Configuración" });
-    for (const name of ["Apariencia", "Editor", "Workspace", "Sync"]) expect(within(dialog).getByRole("heading", { name })).toBeInTheDocument();
-    await user.selectOptions(within(dialog).getByLabelText("Appearance Mode"), "dark");
+    for (const name of ["Apariencia", "Editor", "Workspace", "Sync"]) expect(within(dialog).getByRole("tab", { name })).toBeInTheDocument();
+    await user.selectOptions(within(dialog).getByLabelText("Modo de apariencia"), "dark");
     expect(localStorage.getItem("simpler.themeMode")).toBe("dark");
+    await user.click(within(dialog).getByRole("tab", { name: "Editor" }));
     await user.selectOptions(within(dialog).getByLabelText("Tamaño de letra"), "16");
     await user.click(dialog.parentElement!);
     expect(dialog).toBeInTheDocument();
@@ -439,7 +442,9 @@ describe("App", () => {
     expect(screen.queryByRole("dialog", { name: "Configuración" })).not.toBeInTheDocument();
     expect(origin).toHaveFocus();
     await user.click(origin);
-    expect(screen.getByLabelText("Appearance Mode")).toHaveValue("dark");
+    await user.click(screen.getByRole("tab", { name: "Apariencia" }));
+    expect(screen.getByLabelText("Modo de apariencia")).toHaveValue("dark");
+    await user.click(screen.getByRole("tab", { name: "Editor" }));
     expect(screen.getByLabelText("Tamaño de letra")).toHaveValue("16");
     await user.click(screen.getByRole("button", { name: "Cerrar configuración" }));
     expect(origin).toHaveFocus();
@@ -689,7 +694,7 @@ describe("App", () => {
     });
     render(<App />);
     const welcome = screen.getByRole("region", { name: "Recientes" });
-    expect(await within(welcome).findByText("Comprobando actualizaciones…")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Comprobando actualizaciones…" })).toBeInTheDocument();
     await user.click(within(welcome).getByRole("button", { name: "Continuar" }));
     finishCheck({ ok: true, data: { state: "incoming", ahead: 0, behind: 1, hasLocalChanges: true, message: null }, error: null });
     expect(await screen.findByText("Hay cambios locales y remotos pendientes")).toBeInTheDocument();
@@ -722,6 +727,8 @@ describe("App", () => {
     expect(sync).toHaveAttribute("title", expect.stringContaining("cambios locales y remotos"));
     expect(mocks.invoke.mock.calls.some(([, { request }]) => request.action === "sync")).toBe(false);
     fireEvent.focus(window);
+    expect(checks).toBe(2);
+    await user.click(sync);
     const disconnected = await screen.findByRole("button", { name: "Desconectado — reintentar" });
     expect(disconnected).toHaveAttribute("title", expect.stringContaining("Última comprobación correcta:"));
   });
@@ -775,6 +782,7 @@ describe("App", () => {
       if (request.domain === "git" && request.action === "github-remote") return reply({ remote: null });
       if (request.domain === "workspace" && ["remember-note", "remember-tree-state"].includes(request.action)) return reply({});
       if (request.domain === "filesystem" && request.action === "create-note") {
+        expect(request.payload.parentPath).toBe("project");
         return reply({ itemPath: "project/draft.md", tree: [{ ...folder, children: [{ name: "draft.md", path: "project/draft.md", kind: "note", children: [] }] }] });
       }
       if (request.domain === "filesystem" && request.action === "write-note") {
@@ -788,10 +796,10 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("button", { name: "project" }));
-    // Selection and expansion are separate: the selected destination stays collapsed.
+    // A context action targets this folder without selecting or expanding it first.
+    fireEvent.contextMenu(screen.getByRole("button", { name: "project" }));
     expect(screen.getByRole("button", { name: "Expand project" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "New note" }));
+    await user.click(screen.getByRole("menuitem", { name: "Nueva nota" }));
     await user.type(within(screen.getByRole("dialog", { name: "Nombre de la nota" })).getByRole("textbox"), "draft{Enter}");
     const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
     expect(editable).toHaveFocus();
@@ -969,6 +977,7 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "cloned-notes — Abrir o cambiar…" })).toBeInTheDocument();
     expect(screen.getByText("Abrir o cambiar…")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Configuración" })).getByRole("tab", { name: "Sync" }));
     expect(screen.getByText("https://github.com/simpler/notes.git")).toBeInTheDocument();
   });
 
@@ -998,6 +1007,7 @@ describe("App", () => {
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Configuración" })).getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByText("Advanced Git"));
 
     const advanced = screen.getByRole("region", { name: "Advanced Git details" });
@@ -1127,8 +1137,9 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.keyboard("{Control>}2{/Control}");
     await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Configuración" })).getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
 
     const urlInput = screen.getByLabelText("GitHub repository URL");
@@ -1150,6 +1161,7 @@ describe("App", () => {
     });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "GitHub Connection Wizard" })).not.toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Configuración" })).getByRole("tab", { name: "Sync" }));
     expect(screen.getByText("https://github.com/simpler/notes.git")).toBeInTheDocument();
   });
 
@@ -1202,8 +1214,9 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.keyboard("{Control>}2{/Control}");
     await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Configuración" })).getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
 
     await user.type(screen.getByLabelText("GitHub repository URL"), "https://github.com/simpler/notes.git");
@@ -1244,8 +1257,9 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getAllByRole("button", { name: "Abrir carpeta" })[0]);
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.keyboard("{Control>}2{/Control}");
     await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Configuración" })).getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
 
     await user.type(screen.getByLabelText("GitHub repository URL"), "https://gitlab.com/simpler/notes.git");
@@ -1349,6 +1363,7 @@ describe("App", () => {
       await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
       await user.click(screen.getByRole("button", { name: "Settings" }));
 
+      await user.click(within(screen.getByRole("dialog", { name: "Configuración" })).getByRole("tab", { name: "Sync" }));
       await waitFor(() => expect(screen.getByText("https://github.com/simpler/notes.git")).toBeInTheDocument());
       expect(screen.queryByRole("dialog", { name: "GitHub Connection Wizard" })).not.toBeInTheDocument();
     });
@@ -1361,9 +1376,9 @@ describe("App", () => {
       render(<App />);
       await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
       await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-      await user.click(screen.getByRole("tab", { name: "Sync" }));
+      await user.keyboard("{Control>}2{/Control}");
 
-      await waitFor(() => expect(screen.getByRole("button", { name: "Configurar Sync" })).toBeInTheDocument());
+      expect(screen.getByRole("region", { name: "Sync workspace" })).toBeInTheDocument();
       expect(screen.queryByRole("dialog", { name: "GitHub Connection Wizard" })).not.toBeInTheDocument();
     });
 
@@ -1410,8 +1425,9 @@ describe("App", () => {
       await user.click(screen.getByRole("button", { name: "Cancel" }));
       await waitFor(() => expect(screen.queryByRole("dialog", { name: "GitHub Connection Wizard" })).not.toBeInTheDocument());
 
-      await user.click(screen.getByRole("tab", { name: "Sync" }));
+      await user.keyboard("{Control>}2{/Control}");
       await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Configuración" })).getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Conectar remoto GitHub" }));
 
       expect(screen.getByRole("dialog", { name: "GitHub Connection Wizard" })).toBeInTheDocument();
@@ -1941,7 +1957,7 @@ describe("App", () => {
     await waitFor(() => expect(writes).toEqual(["# Chosen\n\nChosen words."]));
     expect(screen.getByTestId("markdown-editor").textContent).toContain("Chosen words.");
 
-    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.keyboard("{Control>}2{/Control}");
     await user.click(screen.getByRole("button", { name: "Sync now" }));
     await waitFor(() => expect(syncCalls).toBe(1));
   });
@@ -1998,7 +2014,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.keyboard("{Control>}2{/Control}");
     await user.click(screen.getByRole("button", { name: "Sync now" }));
 
     expect(mocks.invoke).toHaveBeenCalledWith("native_command", {
@@ -2077,9 +2093,9 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.keyboard("{Control>}2{/Control}");
     await user.click(screen.getByRole("button", { name: "Sync now" }));
-    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.keyboard("{Control>}1{/Control}");
 
     expect(screen.getByText("failed to pull remote changes before Sync push")).toBeInTheDocument();
     expect(screen.getByTestId("markdown-editor").textContent).toContain("Unsynced body");
@@ -2133,7 +2149,7 @@ describe("App", () => {
     render(<App />);
     await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
-    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.keyboard("{Control>}2{/Control}");
     await user.click(screen.getByRole("button", { name: "Sync now" }));
 
     expect(await screen.findByRole("region", { name: "Sync conflicts" })).toHaveTextContent("today.md");
@@ -2200,7 +2216,7 @@ describe("App", () => {
     await user.click(within(metadataRow).getByRole("button", { name: "Use remote" }));
     await waitFor(() => expect(within(region).queryByText(metadataPath)).not.toBeInTheDocument());
     expect(screen.queryByText("Invalid shared Workspace metadata")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    await user.keyboard("{Control>}1{/Control}");
     const other = screen.getByRole("button", { name: "other.md" });
     const today = screen.getByRole("button", { name: "today.md" });
     expect(other.compareDocumentPosition(today) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -2699,7 +2715,7 @@ describe("App", () => {
       render(<App />);
       await openWorkspaceAndMakePending(user);
 
-      await user.click(screen.getByRole("tab", { name: "Sync" }));
+      await user.keyboard("{Control>}2{/Control}");
       await user.click(screen.getByRole("button", { name: "Sync now" }));
       expect(await screen.findByRole("region", { name: "Sync conflicts" })).toBeInTheDocument();
 
