@@ -93,6 +93,7 @@ export interface GitHubCloneResult {
 }
 
 export type ConflictResolution = "local" | "remote" | "manual";
+export const sharedWorkspaceMetadataPath = ".simpler/workspace.json";
 
 export type GitHubAuthState = "connected" | "disconnected" | "pending" | "expired" | "failed";
 

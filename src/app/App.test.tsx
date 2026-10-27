@@ -2047,7 +2047,7 @@ describe("App", () => {
     await user.click(screen.getByRole("tab", { name: "Sync" }));
     await user.click(screen.getByRole("button", { name: "Sync now" }));
 
-    expect(await screen.findByRole("region", { name: "Conflicted Markdown files" })).toHaveTextContent("today.md");
+    expect(await screen.findByRole("region", { name: "Sync conflicts" })).toHaveTextContent("today.md");
     expect(screen.getByRole("button", { name: "Sync now" })).toBeDisabled();
 
     await user.click(screen.getByRole("button", { name: "Use local" }));
@@ -2059,6 +2059,68 @@ describe("App", () => {
       },
     });
     expect(await screen.findByRole("contentinfo", { name: "Workspace status" })).toHaveTextContent("Sincronizado");
+  });
+
+  it("resolves shared order in mixed Sync conflicts without treating metadata as a note", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    const metadataPath = ".simpler/workspace.json";
+    let unresolved = [metadataPath, "today.md"];
+    let orderResolved = false;
+    let invalidChoice = true;
+    let finishInvalidChoice!: () => void;
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.domain === "workspace" && request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: (orderResolved ? ["other.md", "today.md"] : ["today.md", "other.md"]).map((path) => ({ name: path, path, kind: "note", children: [] })), metadata: { lastNotePath: "today.md", githubWizardPostponed: true } });
+      if (request.action === "status") return reply({ isRepository: true, hasRemote: true, syncStatus: unresolved.length ? "conflicto" : "sincronizado", conflictedFiles: unresolved });
+      if (request.action === "github-remote") return reply({ remote: null });
+      if (request.action === "read-note") {
+        if (request.payload.notePath === metadataPath) throw new Error("Shared metadata must never open as a note");
+        return reply({ content: "Current writing" });
+      }
+      if (request.action === "write-note") return reply({ content: request.payload.content });
+      if (request.action === "resolve-conflict") {
+        if (request.payload.notePath === metadataPath && invalidChoice) {
+          invalidChoice = false;
+          return new Promise((resolve) => { finishInvalidChoice = () => resolve({ ok: false, domain: "git", action: "resolve-conflict", data: null, error: "Invalid shared Workspace metadata" }); });
+        }
+        if (request.payload.notePath === metadataPath) orderResolved = true;
+        unresolved = unresolved.filter((path) => path !== request.payload.notePath);
+        return reply({ status: unresolved.length ? "conflict" : "synced", message: "Sync resolution", conflictedFiles: unresolved });
+      }
+      return reply({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("X");
+    const currentText = editable.textContent;
+    await user.click(screen.getByRole("button", { name: "Resolver conflictos" }));
+    const region = screen.getByRole("region", { name: "Sync conflicts" });
+    const metadataRow = within(region).getAllByRole("listitem").find((row) => row.textContent?.includes(metadataPath))!;
+    expect(within(metadataRow).queryByRole("button", { name: "Edit manually" })).not.toBeInTheDocument();
+    expect(within(metadataRow).queryByRole("button", { name: "Mark manual resolution" })).not.toBeInTheDocument();
+    expect(within(region).getAllByRole("button", { name: "Edit manually" })).toHaveLength(1);
+    await user.click(within(metadataRow).getByRole("button", { name: "Use local" }));
+    await user.click(within(metadataRow).getByRole("button", { name: "Use remote" }));
+    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "resolve-conflict")).toHaveLength(1);
+    finishInvalidChoice();
+    expect(await screen.findByText("Invalid shared Workspace metadata")).toBeInTheDocument();
+    await user.click(within(metadataRow).getByRole("button", { name: "Use remote" }));
+    await waitFor(() => expect(within(region).queryByText(metadataPath)).not.toBeInTheDocument());
+    expect(screen.queryByText("Invalid shared Workspace metadata")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Sync" }));
+    const other = screen.getByRole("button", { name: "other.md" });
+    const today = screen.getByRole("button", { name: "today.md" });
+    expect(other.compareDocumentPosition(today) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]")).toBe(editable);
+    expect(editable.textContent).toBe(currentText);
+    await user.click(screen.getByRole("button", { name: "Resolver conflictos" }));
+    await user.click(screen.getByRole("button", { name: "Use local" }));
+    await waitFor(() => expect(screen.getByRole("contentinfo", { name: "Workspace status" })).toHaveTextContent("Sincronizado"));
+    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "read-note").map(([, { request }]) => request.payload.notePath)).toEqual(["today.md"]);
   });
 
   it("automatically Syncs on Workspace open when Git reports protected local changes", async () => {
@@ -2550,7 +2612,7 @@ describe("App", () => {
 
       await user.click(screen.getByRole("tab", { name: "Sync" }));
       await user.click(screen.getByRole("button", { name: "Sync now" }));
-      expect(await screen.findByRole("region", { name: "Conflicted Markdown files" })).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "Sync conflicts" })).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "Cerrar" }));
 

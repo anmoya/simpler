@@ -20,6 +20,7 @@ import { WelcomeScreen } from "./WelcomeScreen";
 import type { RecentNote } from "../app/recentNotes";
 import { SettingsDialog } from "./SettingsDialog";
 import { ImagePreviewDialog } from "./ImagePreviewDialog";
+import { sharedWorkspaceMetadataPath } from "../native/commands";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { NoteHistoryPanel } from "./NoteHistoryPanel";
 import { Icon } from "./icons";
@@ -1812,17 +1813,20 @@ function SyncWorkspacePanel({
         Sync now
       </button>
       {conflictedFiles.length > 0 ? (
-        <div className="sync-conflicts" role="region" aria-label="Conflicted Markdown files">
-          <span>Conflicted Markdown files</span>
+        <div className="sync-conflicts" role="region" aria-label="Sync conflicts">
+          <span>Sync conflicts</span>
           <ul>
             {conflictedFiles.map((notePath) => (
               <li key={notePath}>
                 <strong>{notePath}</strong>
+                {notePath === sharedWorkspaceMetadataPath ? <p>Manual Tree Order · organización compartida del Workspace</p> : null}
                 <div>
                   <button type="button" onClick={() => onResolveConflict(notePath, "local")}>Use local</button>
                   <button type="button" onClick={() => onResolveConflict(notePath, "remote")}>Use remote</button>
-                  <button type="button" onClick={() => onEditConflictManually(notePath)}>Edit manually</button>
-                  <button type="button" onClick={() => onResolveConflict(notePath, "manual")}>Mark manual resolution</button>
+                  {notePath !== sharedWorkspaceMetadataPath ? <>
+                    <button type="button" onClick={() => onEditConflictManually(notePath)}>Edit manually</button>
+                    <button type="button" onClick={() => onResolveConflict(notePath, "manual")}>Mark manual resolution</button>
+                  </> : null}
                 </div>
               </li>
             ))}
