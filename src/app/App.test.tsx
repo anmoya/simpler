@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -58,6 +58,75 @@ describe("App", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("keeps the latest note and typing focus when an older note read finishes after rapid navigation", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    let finishOldRead!: (response: unknown) => void;
+    const saved: string[] = [];
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: ["a.md", "b.md", "c.md"].map((path) => ({ name: path, path, kind: "note", children: [] })), metadata: { lastNotePath: "a.md", githubWizardPostponed: true } });
+      if (request.action === "read-note") {
+        if (request.payload.notePath === "b.md") return new Promise((resolve) => { finishOldRead = resolve; });
+        return reply({ content: request.payload.notePath === "c.md" ? "# Latest C" : "# Initial A" });
+      }
+      if (request.action === "write-note") { saved.push(request.payload.content); return reply({ content: request.payload.content }); }
+      if (request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      return reply({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    await screen.findByText("# Initial A");
+    await user.click(screen.getByRole("button", { name: "b.md" }));
+    await user.click(screen.getByRole("button", { name: "c.md" }));
+    await screen.findByText("# Latest C");
+    const editable = screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("X");
+    await waitFor(() => expect(saved).toContain("X# Latest C"));
+    await act(async () => finishOldRead({ ok: true, domain: "filesystem", action: "read-note", data: { content: "# Stale B" }, error: null }));
+    expect(editable).toHaveTextContent("X# Latest C");
+    expect(editable).toHaveFocus();
+    expect(screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]")).toBe(editable);
+    expect(screen.queryByText("# Stale B")).not.toBeInTheDocument();
+  });
+
+  it("reveals a restored image in its folder while preserving the active note and edits", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/tmp/notes");
+    const current = { name: "current.md", path: "current.md", kind: "note", children: [] };
+    const archive = { name: "archive", path: "archive", kind: "folder", children: [] };
+    const other = { name: "other", path: "other", kind: "folder", children: [] };
+    mocks.invoke.mockImplementation((_command: string, { request }) => {
+      const reply = (data: unknown) => Promise.resolve({ ok: true, domain: request.domain, action: request.action, data, error: null });
+      if (request.action === "open") return reply({ name: "notes", path: "/tmp/notes", tree: [archive, other, current], metadata: { lastNotePath: "current.md", githubWizardPostponed: true, treeMode: "accordion", openFolderPaths: ["other"] } });
+      if (request.action === "read-note") return reply({ content: "Current work" });
+      if (request.action === "write-note") return new Promise(() => {});
+      if (request.action === "status") return reply({ isRepository: false, hasRemote: false, syncStatus: "sin-git", conflictedFiles: [] });
+      if (request.action === "github-remote") return reply({ remote: null });
+      if (request.action === "list-trash") return reply({ entries: [{ id: "image-1", originalRelativePath: "archive/restored.png", trashedRelativePath: ".simpler/local/trash/image-1-restored.png", deletedAt: new Date().toISOString(), isDirectory: false }] });
+      if (request.action === "restore-trash-item") return reply({ itemPath: "archive/restored.png", tree: [{ ...archive, children: [{ name: "restored.png", path: "archive/restored.png", kind: "image", children: [] }] }, other, current] });
+      return reply({});
+    });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Abrir carpeta" }));
+    await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
+    const editable = (await screen.findByTestId("markdown-editor")).querySelector("[contenteditable=true]") as HTMLElement;
+    editable.focus();
+    await user.keyboard("X");
+    const content = editable.textContent;
+    await user.click(screen.getByRole("tab", { name: "Trash" }));
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+    expect(await screen.findByRole("button", { name: "restored.png" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Collapse archive" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand other" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Workspace action" })).toHaveTextContent("Restaurado: archive/restored.png");
+    expect(screen.getByTestId("markdown-editor").querySelector("[contenteditable=true]")).toBe(editable);
+    expect(editable.textContent).toBe(content);
   });
 
   it("persists a mixed sibling drag order without moving files or changing the active note", async () => {
@@ -975,8 +1044,6 @@ describe("App", () => {
     await user.click(screen.getByRole("menuitem", { name: "Abrir carpeta" }));
     await user.click(screen.getByRole("tab", { name: "Trash" }));
     await user.click(await screen.findByRole("button", { name: "Restore" }));
-    await user.click(screen.getByRole("tab", { name: "Trash" }));
-
     expect(await screen.findByRole("button", { name: "today.md" })).toBeInTheDocument();
     expect(mocks.invoke).toHaveBeenCalledWith("native_command", {
       request: { domain: "filesystem", action: "restore-trash-item", payload: { workspacePath: "/tmp/notes", id: "trash-1" } },

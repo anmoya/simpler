@@ -17,7 +17,7 @@ import {
   editorFontSizeSteps,
   defaultEditorFontSize,
 } from "./appState";
-import { expandPathToNote, focusActiveNote, restoreOpenFolderPaths, toggleFolder } from "./workspaceTreeState";
+import { expandPathToItem, expandPathToNote, focusActiveNote, restoreOpenFolderPaths, toggleFolder } from "./workspaceTreeState";
 import type { AppRoute } from "./routes";
 import {
   createAutomaticSyncScheduler,
@@ -132,6 +132,8 @@ export function App() {
   const [editorFontSize, setEditorFontSizeState] = useState<EditorFontSize>(() => readEditorFontSize());
   const [noteHistoryPanel, setNoteHistoryPanel] = useState<NoteHistoryPanelState>(closedNoteHistoryPanel);
   const [editorFocusRequest, setEditorFocusRequest] = useState(0);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
+  useEffect(() => setWorkspaceNotice(null), [appState.workspace?.path, appState.activeNotePath]);
   const [treeOrderPending, setTreeOrderPending] = useState(false);
   const treeOrderRequestRef = useRef(false);
 
@@ -1158,7 +1160,9 @@ export function App() {
     if (!appState.workspace) {
       return;
     }
-    const response = await restoreTrashItem(appState.workspace.path, id);
+    const workspacePath = appState.workspace.path;
+    const response = await restoreTrashItem(workspacePath, id);
+    if (appStateRef.current.workspace?.path !== workspacePath) return;
     if (!response.ok || !response.data) {
       setAppState((current) => ({
         ...current,
@@ -1166,9 +1170,15 @@ export function App() {
       }));
       return;
     }
+    const current = appStateRef.current;
+    const openFolderPaths = expandPathToItem(current.openFolderPaths, response.data.itemPath, response.data.tree, current.treeMode);
+    persistWorkspaceTreeState(workspacePath, openFolderPaths, current.treeMode);
+    setWorkspaceNotice(`Restaurado: ${response.data.itemPath}`);
     setAppState((current) => ({
       ...current,
       workspaceTree: response.data!.tree,
+      openFolderPaths,
+      activeRoute: "workspace",
       trashEntries: current.trashEntries.filter((entry) => entry.id !== id),
       workspaceError: null,
     }));
@@ -1516,6 +1526,7 @@ export function App() {
       activeFolderPath={appState.activeFolderPath}
       noteContent={appState.noteContent}
       editorFocusRequest={editorFocusRequest}
+      workspaceNotice={workspaceNotice}
       noteHistoryOpen={noteHistoryPanel.isOpen}
       noteHistoryEntries={noteHistoryPanel.entries}
       selectedNoteHistoryCommitId={noteHistoryPanel.selectedCommitId}

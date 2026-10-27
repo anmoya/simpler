@@ -72,6 +72,7 @@ export interface ClassicShellProps {
   activeFolderPath: string;
   noteContent: string;
   editorFocusRequest?: number;
+  workspaceNotice?: string | null;
   noteHistoryOpen: boolean;
   noteHistoryEntries: NoteHistoryEntry[];
   selectedNoteHistoryCommitId: string | null;
@@ -156,6 +157,7 @@ const releasePageUrl = "https://github.com/anmoya/simpler/releases/latest";
 
 export function ClassicShell({
   editorFocusRequest,
+  workspaceNotice,
   activeRoute,
   workspaceTree,
   openFolderPaths,
@@ -285,6 +287,15 @@ export function ClassicShell({
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const fileSearchInputRef = useRef<HTMLInputElement | null>(null);
   const editorContainerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const surface = editorContainerRef.current;
+    const reducedMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!surface || !activeNotePath || editorError || isWelcomeOpen || reducedMotion || typeof surface.animate !== "function") return;
+    // Only navigation starts this effect. Local Save keeps the view, selection,
+    // focus and scroll position intact; animation never gates editor input.
+    const animation = surface.animate([{ opacity: 0.86 }, { opacity: 1 }], { duration: 120, easing: "ease-out" });
+    return () => animation.cancel();
+  }, [workspacePath, activeNotePath, isWelcomeOpen]);
   const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; target: TreeActionTarget; trigger: HTMLElement } | null>(
     null,
   );
@@ -1014,7 +1025,7 @@ export function ClassicShell({
             {workspaceError ? <p className="workspace-error">{workspaceError}</p> : null}
 
             {activeRoute === "trash" ? (
-              <section className="sidebar-panel trash-panel" aria-label="Trash items">
+              <section key="trash" className="sidebar-panel trash-panel" aria-label="Trash items">
                 <h2>Trash</h2>
                 {trashEntries.length === 0 ? <p>Trash is empty.</p> : (
                   <ol>
@@ -1031,7 +1042,7 @@ export function ClassicShell({
                 )}
               </section>
             ) : activeRoute === "sync" ? (
-              <section className="sidebar-panel" aria-label="Sync workspace">
+              <section key="sync" className="sidebar-panel" aria-label="Sync workspace">
                 <SyncWorkspacePanel
                   canManageWorkspace={canManageWorkspace}
                   statusLabel={statusLabel}
@@ -1124,6 +1135,7 @@ export function ClassicShell({
                     <Icon name="folder-plus" /><span>Nueva carpeta</span>
                   </button>
                 </div>
+                {workspaceNotice ? <p className="workspace-action-notice" role="status" aria-label="Workspace action">{workspaceNotice}</p> : null}
                 {treeInsertion ? <p className="tree-order-status" role="status" aria-label="Destino de orden">Soltar {treeInsertion.side === "before" ? "antes" : "después"} de {treeInsertion.name}</p> : null}
                 {workspaceTree.length > 0 ? (
                   <WorkspaceTree
