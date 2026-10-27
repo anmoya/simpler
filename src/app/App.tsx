@@ -45,6 +45,7 @@ import {
   githubAuthStatus,
   pollGitHubDeviceFlow,
   resolveGitConflict,
+  sharedWorkspaceMetadataPath,
   restoreTrashItem,
   restartToApplyUpdate,
   globalSearch,
@@ -1403,32 +1404,44 @@ export function App() {
 
   const resolveConflict = async (notePath: string, resolution: ConflictResolution) => {
     const workspacePath = appState.workspace?.path;
-    if (!workspacePath) {
-      return;
-    }
+    if (!workspacePath || syncInFlightRef.current || (notePath === sharedWorkspaceMetadataPath && resolution === "manual")) return;
+    syncInFlightRef.current = true;
+    try {
+      if (!(await awaitLocalSave())) return;
+      const pendingCheck = remoteCheckRef.current?.promise;
+      if (pendingCheck) await pendingCheck;
+      if (activeWorkspacePathRef.current !== workspacePath) return;
+      setAppState((current) => ({ ...current, syncStatus: "sincronizando", workspaceError: null }));
+      const response = await resolveGitConflict(workspacePath, notePath, resolution);
+      if (activeWorkspacePathRef.current !== workspacePath) return;
+      if (!response.ok || !response.data) {
+        setAppState((current) => ({ ...current, syncStatus: "conflicto", workspaceError: response.error ?? "No se pudo resolver el conflicto" }));
+        return;
+      }
 
-    const response = await resolveGitConflict(workspacePath, notePath, resolution);
-    if (!response.ok || !response.data) {
-      setAppState((current) => ({ ...current, workspaceError: response.error ?? "No se pudo resolver el conflicto" }));
-      return;
+      const workspaceResponse = await loadWorkspace(workspacePath);
+      if (activeWorkspacePathRef.current !== workspacePath) return;
+      if (workspaceResponse.ok && workspaceResponse.data) {
+        setAppState((current) => ({ ...current, workspaceTree: workspaceResponse.data!.tree }));
+      } else {
+        setAppState((current) => ({ ...current, workspaceError: workspaceResponse.error ?? "No se pudo actualizar el Workspace" }));
+      }
+      if (response.data.status === "conflict") {
+        schedulerRef.current?.syncConflicted();
+        setAppState((current) => ({ ...current, syncStatus: "conflicto", conflictedFiles: response.data!.conflictedFiles ?? [] }));
+        return;
+      }
+      schedulerRef.current?.syncSucceeded();
+      await refreshGitStatus(workspacePath);
+    } catch (error) {
+      if (activeWorkspacePathRef.current === workspacePath) setAppState((current) => ({ ...current, syncStatus: "conflicto", workspaceError: error instanceof Error ? error.message : "No se pudo resolver el conflicto" }));
+    } finally {
+      syncInFlightRef.current = false;
     }
-
-    if (response.data.status === "conflict") {
-      schedulerRef.current?.syncConflicted();
-      setAppState((current) => ({ ...current, syncStatus: "conflicto", conflictedFiles: response.data!.conflictedFiles ?? [] }));
-      return;
-    }
-
-    schedulerRef.current?.syncSucceeded();
-    const workspaceResponse = await loadWorkspace(workspacePath);
-    if (workspaceResponse.ok && workspaceResponse.data) {
-      setAppState((current) => ({ ...current, workspaceTree: workspaceResponse.data!.tree }));
-    }
-    await refreshGitStatus(workspacePath);
   };
 
   const editConflictManually = async (notePath: string) => {
-    if (!appState.workspace) {
+    if (!appState.workspace || notePath === sharedWorkspaceMetadataPath) {
       return;
     }
     await openNoteInWorkspace(appState.workspace.path, notePath, null, true);
