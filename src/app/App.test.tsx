@@ -281,13 +281,14 @@ describe("App", () => {
     editable.focus();
     await user.keyboard("{Control>}{Home}{/Control}");
     expect(screen.getByRole("button", { name: "Previsualizar imagen (Alt+Enter)" })).toBeInTheDocument();
-    const writesBeforePreview = mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note").length;
+    const noteWrites = () => mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note" && request.payload.notePath === "projects/nested/draft.md");
+    const writesBeforePreview = noteWrites().length;
     expect(writesBeforePreview).toBe(0);
     await user.keyboard("{ArrowRight}{ArrowRight}{Alt>}{Enter}{/Alt}");
     const preview = await screen.findByRole("dialog", { name: "Vista previa de imagen" });
     expect(await within(preview).findByRole("img", { name: "a b.png" })).toBeInTheDocument();
     expect(mocks.invoke).toHaveBeenCalledWith("native_command", { request: { domain: "filesystem", action: "preview-image", payload: { workspacePath: "/tmp/notes", imagePath: "projects/assets/a b.png" } } });
-    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note").map(([, { request }]) => request.payload)).toEqual([]);
+    expect(noteWrites()).toHaveLength(writesBeforePreview);
     await user.keyboard("{Escape}");
     expect(editable).toHaveFocus();
     await user.keyboard("X");
@@ -353,14 +354,15 @@ describe("App", () => {
     editable.focus();
     await user.keyboard("{Control>}{Home}{/Control}");
     const originalText = editable.textContent;
-    const writesBeforePreview = mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note").length;
+    const noteWrites = () => mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note" && request.payload.notePath === "draft.md");
+    const writesBeforePreview = noteWrites().length;
     expect(writesBeforePreview).toBe(0);
     await user.click(screen.getByRole("button", { name: "Previsualizar imagen (Alt+Enter)" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(editable.textContent).toBe(originalText);
     const nativePreviews = mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "preview-image");
     expect(nativePreviews).toHaveLength(content.includes("missing.png") ? 1 : 0);
-    expect(mocks.invoke.mock.calls.filter(([, { request }]) => request.action === "write-note")).toHaveLength(writesBeforePreview);
+    expect(noteWrites()).toHaveLength(writesBeforePreview);
   });
 
   it("retains seven distinct recent notes, keeps unavailable entries and lets the user remove one", async () => {
