@@ -1679,7 +1679,7 @@ describe("App", () => {
         payload: { workspacePath: "/tmp/notes", notePath: "daily/today.md" },
       },
     });
-    expect(screen.getByTestId("markdown-editor").textContent).toContain("Restored body");
+    await waitFor(() => expect(screen.getByTestId("markdown-editor").textContent).toContain("Restored body"));
     expect(screen.getByRole("button", { name: "today.md" })).toBeInTheDocument();
     expect(screen.getByText("/tmp/notes")).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem("simpler.recentWorkspaces") ?? "[]")).toEqual([
